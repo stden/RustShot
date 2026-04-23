@@ -1,0 +1,179 @@
+[package]
+name = "rustshot"
+version = "0.1.0"
+edition = "2021"
+authors = ["RustShot Contributors"]
+description = "A screenshot and screen recording utility written in Rust"
+license = "MIT OR Apache-2.0"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "RustShot"
+path = "src/main.rs"
+
+[dependencies]
+screenshots = "0.8"
+image = "0.25"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+tray-icon = "0.22"
+global-hotkey = "0.7"
+winit = { version = "0.30", features = ["rwh_06"] }
+dirs = "6"
+arboard = "3"
+softbuffer = "0.4"
+log = "0.4"
+simplelog = "0.12"
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1"
+screenshots = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.51.1", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Workspace lints — централизованный конфиг clippy / rustc
+#
+# Назначение: перенести строгие правила из .gitlab-ci.yml сюда, чтобы
+#   1) локальный `cargo clippy` проверял тот же список, что и CI;
+#   2) правила были версионируемы как код (diff видит изменения lint-set'а);
+#   3) можно было подключать к каждому крейту одной строкой:
+#        [lints]
+#        workspace = true
+#
+# Пороги (cognitive-complexity, too-many-lines и т.п.) — в .clippy.toml.
+# Форматирование — в rustfmt.toml.
+# ═════════════════════════════════════════════════════════════════════════════
+
+[workspace.lints.rust]
+# ─── Безопасность ───────────────────────────────────────────────────────────
+# unsafe_code = "deny" — запрет на unsafe без явного локального разрешения.
+# Проект — системные утилиты, unsafe нужен только для FFI (libc, PyO3).
+# Там, где реально надо, ставим `#[allow(unsafe_code)]` поверх модуля/функции
+# с комментарием «почему».
+unsafe_code = "deny"
+
+# rust_2018_idioms — предупреждает об устаревшем синтаксисе 2015:
+#   - `extern crate` (в 2018+ не нужен)
+#   - `bare_trait_objects`: `Box<Trait>` → `Box<dyn Trait>`
+#   - `ellipsis_inclusive_range_patterns`: `1...5` → `1..=5`
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+# Предупреждение о непомеченных #[must_use] возвращаемых значениях, которые
+# игнорируются. Ловит баги вида: let _ = file.write(...) — потеря результата.
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+# ─── Группы правил (включены целиком, с низким приоритетом) ─────────────────
+# priority = -1 — группы применяются ПЕРВЫМИ, потом их перекрывают отдельные
+# `allow` ниже. Без priority clippy ругается на конфликт.
+#
+# Keep the default clippy lint set as the CI gate. The current codebase is not
+# pedantic/nursery-clean; enabling those groups under `-D warnings` turns broad
+# style preferences into blocking errors across production code and tests.
+pedantic = { level = "allow", priority = -1 }
+nursery = { level = "allow", priority = -1 }
+
+# These individual entries document lints that have been reviewed as noisy or
+# mismatched with the current code style. They are harmless while the full
+# pedantic/nursery groups remain disabled, and become explicit exceptions if
+# those groups are tightened again later.
+
+# Часть типов имеет имя, совпадающее с модулем. Это нормально:
+# mod config; pub struct Config { ... }
+module_name_repetitions = "allow"
+
+# Не требовать # Errors в doc'ах для fn -> Result<...>.
+# Ошибки описаны через thiserror в error.rs, дублировать в каждой сигнатуре
+# — шум.
+missing_errors_doc = "allow"
+
+# Не требовать # Panics в doc'ах. Паники локализованы (indexing, unwrap в
+# тестах), расписывать каждый случай в docstring избыточно.
+missing_panics_doc = "allow"
+
+# #[must_use] на каждой getter-функции — шум. Для критичных API добавляем
+# вручную там, где игнорирование результата — баг.
+must_use_candidate = "allow"
+
+# `if let Some(x) = opt { a } else { b }` vs `opt.map_or_else(|| b, |x| a)`.
+# if let обычно читается лучше, option combinators — только когда короче.
+option_if_let_else = "allow"
+
+# pub(crate) vs pub внутри crate-private модуля — стиль, clippy ошибочно
+# ругается на нормальные API-границы.
+redundant_pub_crate = "allow"
+
+# MutexGuard / RwLockGuard живёт до конца scope — нормально. nursery
+# предлагает явное drop() ради стиля, но ничего не оптимизирует.
+significant_drop_tightening = "allow"
+
+# Повторяем с .clippy.toml: cognitive_complexity уже лимитирован порогом.
+# Группа даёт дубликат с дефолтным порогом, выключаем на уровне группы.
+cognitive_complexity = "allow"
+
+# 1_000_000_000 vs 1000000000 — нормально в контексте: MOD = 10**9 + 7,
+# константы задачи. Требовать разделители в каждом числе — шум.
+unreadable_literal = "allow"
+
+# r#"..."# vs "\"..\"" — clippy предлагает r-strings, но в тестах с
+# одинарными кавычками читаемее escaped строки. Оставляем на усмотрение.
+needless_raw_string_hashes = "allow"
+
+# ─── Касты f32/f64/i64 → меньшие типы ───────────────────────────────────────
+# В системном коде (sysinfo возвращает u64 для памяти в KB → преобразуем в
+# f32 для %) эти касты осознанные. `as` оправдан, from() иногда недоступен.
+cast_precision_loss = "allow"       # u64 → f32: точность 24 бит мантиссы
+cast_sign_loss = "allow"            # i32 → u32 после проверки >= 0
+cast_possible_truncation = "allow"  # u64 → u32: сознательный выбор для UI
+
+# ─── Стилевые мелочи ────────────────────────────────────────────────────────
+# Локальные структуры/константы перед методами — норма читаемости:
+#   fn foo() {
+#       const MAX: u32 = 100;
+#       let x = ...;
+#       bar(x)        ← clippy хочет MAX перед всеми statement'ами
+#   }
+items_after_statements = "allow"
+
+# async fn, которая не использует .await — иногда нужна для единообразной
+# сигнатуры трейта/роутера (FastAPI-style handler'ы).
+unused_async = "allow"
+
+# _name как имя переменной — обычно «игнорирую», clippy ругается что имя
+# с подчёркиванием не используется. В сигнатурах обработчиков норма.
+used_underscore_binding = "allow"
+
+# Сравнение float'ов через == . Мы сравниваем только с константами (0.0,
+# sentinel значения), не результатами арифметики. В критичных местах —
+# вручную через abs() < EPSILON.
+float_cmp = "allow"
+
+[profile.dev]
+debug = 1
+strip = "debuginfo"
+split-debuginfo = "unpacked"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+split-debuginfo = "unpacked"

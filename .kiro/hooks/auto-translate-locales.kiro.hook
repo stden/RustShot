@@ -1,0 +1,24 @@
+{
+  "enabled": true,
+  "name": "Auto-Translate Localization Files",
+  "description": "Monitors changes to files containing user-facing text content (such as .json, .yaml, .yml, and primary-language .md files). When changes are detected, identifies new or modified text and generates translations for all configured target languages, maintaining proper context, meaning, and locale-specific conventions.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*.json",
+      "**/*.yaml",
+      "**/*.yml",
+      "**/locales/**",
+      "**/i18n/**",
+      "**/lang/**",
+      "*.md"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A localization or text-content file was just modified. Please:\n\n1. Identify the new or changed user-facing text strings in the edited file.\n2. Determine the primary language of the content (assume English if unclear).\n3. Check for corresponding translation files for other configured target languages (e.g., Russian .ru variants, or locale subdirectories like en/, ru/, de/, etc.).\n4. Generate translations for all target languages found in the project, ensuring:\n   - Translations preserve the original meaning and context.\n   - Locale-specific conventions are followed (date formats, number formats, pluralization rules, etc.).\n   - The same file structure and key format is maintained across all language files.\n   - Only the new or modified strings are translated — do not re-translate unchanged content.\n5. If no target language files exist yet, note this and suggest creating them based on the project's existing language patterns (this project uses .ru.md suffixes for Russian translations)."
+  },
+  "workspaceFolderName": "RustShot",
+  "shortName": "auto-translate-locales"
+}
