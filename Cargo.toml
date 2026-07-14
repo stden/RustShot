@@ -23,6 +23,10 @@ arboard = "3"
 softbuffer = "0.4"
 log = "0.4"
 simplelog = "0.12"
+# Used only by the MCP server (src/mcp.rs) to parse arbitrary JSON-RPC from
+# clients. Settings deliberately stay serde-free (see src/settings.rs) — that
+# schema is tiny and fixed; MCP request payloads are neither.
+serde_json = "1"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

@@ -29,6 +29,7 @@
 
 mod capture;
 mod cli;
+mod mcp;
 mod record;
 mod selection;
 mod settings;
@@ -126,6 +127,10 @@ struct Args {
     /// Run in CLI mode (single capture, no tray)
     #[arg(long)]
     cli: bool,
+
+    /// Run as an MCP server over stdio (exposes capture tools to an MCP client)
+    #[arg(long)]
+    mcp: bool,
 
     /// Interactive selection mode (internal use)
     #[arg(long, hide = true)]
@@ -866,6 +871,18 @@ fn main() {
     let format_explicit = cli_format_flag_present_in(std::env::args_os());
     debug!("CLI args: {:?}", args);
 
+    // The MCP server is its own top-level mode: it owns stdin/stdout for the
+    // JSON-RPC transport, so it must run before any tray/CLI routing.
+    if args.mcp {
+        info!("Starting MCP server on stdio");
+        if let Err(e) = mcp::run() {
+            error!("MCP server error: {}", e);
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     match decide_app_mode_with_format_explicit(&args, format_explicit) {
         cli::AppMode::SelectRecord => run_select_record(),
         cli::AppMode::Selection => run_selection(),
@@ -922,6 +939,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -964,6 +982,7 @@ mod tests {
             list: false,
             list_windows: true,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -991,6 +1010,7 @@ mod tests {
             // A handle value that is never a live window: capture must fail
             // cleanly rather than blit garbage.
             window_id: Some(u64::MAX),
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1011,6 +1031,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1028,6 +1049,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1045,6 +1067,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1062,6 +1085,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1079,6 +1103,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1096,6 +1121,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1113,6 +1139,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1137,6 +1164,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1182,6 +1210,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1747,6 +1776,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1764,6 +1794,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1798,6 +1829,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1832,6 +1864,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1869,6 +1902,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1906,6 +1940,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1935,6 +1970,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1968,6 +2004,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -1997,6 +2034,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2024,6 +2062,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2051,6 +2090,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -2078,6 +2118,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -2115,6 +2156,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -2210,6 +2252,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2227,6 +2270,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2244,6 +2288,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2261,6 +2306,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2278,6 +2324,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2297,6 +2344,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2321,6 +2369,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2345,6 +2394,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2369,6 +2419,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2394,6 +2445,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2419,6 +2471,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2439,6 +2492,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2522,6 +2576,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2546,6 +2601,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2590,6 +2646,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2609,6 +2666,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2651,6 +2709,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2708,6 +2767,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2754,6 +2814,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2783,6 +2844,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -2856,6 +2918,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: false,
         };
@@ -2873,6 +2936,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: false,
         };
@@ -2890,6 +2954,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: false,
         };
@@ -2907,6 +2972,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: false,
         };
@@ -2924,6 +2990,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: false,
         };
@@ -2957,6 +3024,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: false,
         };
@@ -2996,6 +3064,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3013,6 +3082,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3030,6 +3100,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3116,6 +3187,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3133,6 +3205,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3150,6 +3223,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3183,6 +3257,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3216,6 +3291,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3238,6 +3314,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3267,6 +3344,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3284,6 +3362,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3301,6 +3380,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: false,
         };
@@ -3320,6 +3400,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: false,
         };
@@ -3337,6 +3418,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3378,6 +3460,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3404,6 +3487,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3432,6 +3516,7 @@ mod tests {
             list: true,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3610,6 +3695,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3636,6 +3722,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3664,6 +3751,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: true,
         };
@@ -3681,6 +3769,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -3700,6 +3789,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3724,6 +3814,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3796,6 +3887,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3813,6 +3905,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3830,6 +3923,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3847,6 +3941,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3943,6 +4038,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -3963,6 +4059,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -4116,6 +4213,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -4133,6 +4231,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: false,
         };
@@ -4150,6 +4249,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -4627,6 +4727,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -4657,6 +4758,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -4725,6 +4827,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };
@@ -4746,6 +4849,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: true,
             window: false,
         };
@@ -4767,6 +4871,7 @@ mod tests {
             list: false,
             list_windows: false,
             window_id: None,
+            mcp: false,
             select_record: false,
             window: true,
         };

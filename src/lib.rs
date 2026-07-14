@@ -25,9 +25,11 @@
 //!
 //! # Key design decisions
 //!
-//! - **No `serde` dependency.** Settings JSON is tiny and stable, so a
-//!   hand-rolled parser/formatter (`settings.rs`) avoids pulling in the
-//!   serde + serde_json dependency tree (~30 crates).
+//! - **Settings JSON is hand-rolled — no `serde`.** The settings schema is tiny
+//!   and fixed, so `settings.rs` parses and formats it by hand rather than pull
+//!   `serde` in for five fields. (The MCP server in `mcp.rs` is the one place
+//!   `serde_json` is used, because it parses arbitrary JSON-RPC from clients —
+//!   the opposite situation, where hand-rolling would be fragile.)
 //!
 //! - **`Result<_, String>` everywhere.** The codebase is a small end-user
 //!   tool, not a library consumed by other Rust code. `String` errors are
@@ -47,6 +49,7 @@
 
 pub mod capture;
 pub mod cli;
+pub mod mcp;
 pub mod record;
 pub mod selection;
 pub mod settings;
