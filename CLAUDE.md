@@ -19,10 +19,12 @@ The project is small. Key modules:
 
 - `src/main.rs` — entry point and CLI
 - `src/capture.rs` — screenshot capture and file saving
+- `src/window.rs` — window enumeration and per-window capture
 - `src/selection.rs` — mouse-driven region selection
 - `src/tray.rs` — system tray and menu
 - `src/record.rs` — screen recording
 - `src/settings.rs` — persisted settings and settings-file workflow
+- `src/mcp.rs` — MCP server (`--mcp`) exposing capture tools over stdio
 
 ## ⚡ Commands
 
