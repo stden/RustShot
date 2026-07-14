@@ -17,7 +17,8 @@ use windows::Win32::System::Com::{
 use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, SIGDN_FILESYSPATH};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::settings::{load_settings, save_settings, wide, Settings, SUPPORTED_FORMATS};
+use crate::capture::Format;
+use crate::settings::{load_settings, save_settings, wide, Fps, Settings};
 
 // --- Control IDs ---
 const IDC_SCREENSHOTS_EDIT: i32 = 101;
@@ -316,7 +317,9 @@ unsafe fn create_controls(hwnd: HWND) {
         120,
         IDC_FORMAT_COMBO,
     );
-    for item in SUPPORTED_FORMATS {
+    // The combo box is populated from the enum, so its row order and
+    // `Format::ALL` cannot drift apart.
+    for item in Format::ALL.iter().map(Format::extension) {
         let item_w = wide(item);
         SendMessageW(
             combo,
@@ -377,7 +380,7 @@ unsafe fn populate_controls(hwnd: HWND, settings: &Settings) {
     // Format combo
     let combo = GetDlgItem(hwnd, IDC_FORMAT_COMBO);
     if combo.0 != 0 {
-        let idx = SUPPORTED_FORMATS
+        let idx = Format::ALL
             .iter()
             .position(|&f| f == settings.default_format)
             .unwrap_or(0);
@@ -395,29 +398,41 @@ unsafe fn populate_controls(hwnd: HWND, settings: &Settings) {
     }
 }
 
-/// Map a combo-box selection index to a format name from [`SUPPORTED_FORMATS`].
-pub(crate) fn format_index_to_name(sel: i32) -> &'static str {
-    SUPPORTED_FORMATS
-        .get(sel as usize)
-        .copied()
-        .unwrap_or(SUPPORTED_FORMATS[0])
+/// Map a combo-box selection index to a [`Format`].
+///
+/// Out-of-range selections fall back to the first variant rather than failing —
+/// the combo box is populated from `Format::ALL`, so an out-of-range index means
+/// the OS handed us something impossible.
+pub(crate) fn format_index_to_format(sel: i32) -> Format {
+    usize::try_from(sel)
+        .ok()
+        .and_then(|i| Format::ALL.get(i).copied())
+        .unwrap_or(Format::Png)
 }
 
-/// Parse and validate FPS input text.
-pub(crate) fn validate_fps_input(text: &str) -> Result<u32, String> {
-    let fps: u32 = text
+/// The name shown for a combo-box selection index.
+///
+/// Test-only: production code works with the [`Format`] itself and never needs
+/// the string back, since `Settings` stores the enum.
+#[cfg(test)]
+pub(crate) fn format_index_to_name(sel: i32) -> &'static str {
+    format_index_to_format(sel).extension()
+}
+
+/// Parse and validate the FPS text typed into the dialog.
+///
+/// Returns an [`Fps`], not a `u32`: the dialog is a trust boundary, so it parses
+/// into the validated type once and everything downstream is spared the check.
+/// The range rule itself lives in [`Fps::new`]; this only supplies the
+/// dialog-specific wording.
+pub(crate) fn validate_fps_input(text: &str) -> Result<Fps, String> {
+    let raw: u32 = text
         .parse()
         .map_err(|_| "Recording FPS must be a positive number.".to_string())?;
-    if fps == 0 {
+    if raw == 0 {
         return Err("Recording FPS must be a positive number.".to_string());
     }
-    if fps > crate::settings::MAX_RECORDING_FPS {
-        return Err(format!(
-            "Recording FPS must not exceed {}.",
-            crate::settings::MAX_RECORDING_FPS
-        ));
-    }
-    Ok(fps)
+    Fps::new(raw).map_err(|_| format!("Recording FPS must not exceed {}.", Fps::MAX))
 }
 
 /// Build a validated [`Settings`] value from raw dialog field inputs.
@@ -439,7 +454,7 @@ fn build_settings_from_inputs(
     Ok(Settings {
         screenshots_dir: PathBuf::from(screenshots_dir),
         recordings_dir: PathBuf::from(recordings_dir),
-        default_format: format_index_to_name(format_selection).to_string(),
+        default_format: format_index_to_format(format_selection),
         recording_fps: validate_fps_input(fps_text)?,
         auto_start,
     })
@@ -599,7 +614,7 @@ mod tests {
 
     #[test]
     fn validate_fps_input_valid_30() {
-        assert_eq!(validate_fps_input("30"), Ok(30));
+        assert_eq!(validate_fps_input("30").map(Fps::get), Ok(30));
     }
 
     #[test]
@@ -631,12 +646,12 @@ mod tests {
 
     #[test]
     fn validate_fps_input_one_is_ok() {
-        assert_eq!(validate_fps_input("1"), Ok(1));
+        assert_eq!(validate_fps_input("1").map(Fps::get), Ok(1));
     }
 
     #[test]
     fn validate_fps_input_large_value_is_ok() {
-        assert_eq!(validate_fps_input("240"), Ok(240));
+        assert_eq!(validate_fps_input("240").map(Fps::get), Ok(240));
     }
 
     #[test]
@@ -647,7 +662,7 @@ mod tests {
 
     #[test]
     fn validate_fps_input_at_max_is_ok() {
-        assert_eq!(validate_fps_input("240"), Ok(240));
+        assert_eq!(validate_fps_input("240").map(Fps::get), Ok(240));
     }
 
     #[test]
@@ -662,7 +677,7 @@ mod tests {
 
     #[test]
     fn validate_fps_input_leading_zeros_accepted() {
-        assert_eq!(validate_fps_input("030"), Ok(30));
+        assert_eq!(validate_fps_input("030").map(Fps::get), Ok(30));
     }
 
     #[test]
@@ -695,8 +710,9 @@ mod tests {
 
     #[test]
     fn format_index_to_name_matches_supported_formats() {
-        for (i, &fmt) in SUPPORTED_FORMATS.iter().enumerate() {
-            assert_eq!(format_index_to_name(i as i32), fmt);
+        for (i, &fmt) in Format::ALL.iter().enumerate() {
+            assert_eq!(format_index_to_format(i as i32), fmt);
+            assert_eq!(format_index_to_name(i as i32), fmt.extension());
         }
     }
 
@@ -709,8 +725,8 @@ mod tests {
 
         assert_eq!(settings.screenshots_dir, PathBuf::from("C:\\shots"));
         assert_eq!(settings.recordings_dir, PathBuf::from("C:\\records"));
-        assert_eq!(settings.default_format, "jpg");
-        assert_eq!(settings.recording_fps, 60);
+        assert_eq!(settings.default_format, Format::Jpg);
+        assert_eq!(settings.recording_fps.get(), 60);
         assert!(settings.auto_start);
     }
 
@@ -731,7 +747,7 @@ mod tests {
         let settings =
             build_settings_from_inputs("C:\\shots", "C:\\records", i32::MAX, "30", false).unwrap();
 
-        assert_eq!(settings.default_format, "png");
+        assert_eq!(settings.default_format, Format::Png);
     }
 
     #[test]
@@ -746,7 +762,7 @@ mod tests {
         let settings =
             build_settings_from_inputs("C:\\shots", "C:\\records", -1, "30", false).unwrap();
 
-        assert_eq!(settings.default_format, "png");
+        assert_eq!(settings.default_format, Format::Png);
     }
 
     #[test]
@@ -754,18 +770,18 @@ mod tests {
         let settings =
             build_settings_from_inputs("C:\\shots", "C:\\records", 2, "30", false).unwrap();
 
-        assert_eq!(settings.default_format, "bmp");
+        assert_eq!(settings.default_format, Format::Bmp);
         assert!(!settings.auto_start);
     }
 
     #[test]
     fn build_settings_from_inputs_accepts_max_recording_fps() {
-        let max_fps = crate::settings::MAX_RECORDING_FPS.to_string();
+        let max_fps = Fps::MAX.to_string();
         let settings =
             build_settings_from_inputs("C:\\shots", "C:\\records", 0, &max_fps, false).unwrap();
 
-        assert_eq!(settings.default_format, "png");
-        assert_eq!(settings.recording_fps, crate::settings::MAX_RECORDING_FPS);
+        assert_eq!(settings.default_format, Format::Png);
+        assert_eq!(settings.recording_fps.get(), Fps::MAX);
     }
 
     #[test]
@@ -775,19 +791,13 @@ mod tests {
 
         assert_eq!(settings.screenshots_dir, PathBuf::from("C:\\スクリーン"));
         assert_eq!(settings.recordings_dir, PathBuf::from("C:\\Записи"));
-        assert_eq!(settings.default_format, "jpg");
+        assert_eq!(settings.default_format, Format::Jpg);
     }
 
     #[test]
     fn validate_fps_input_above_max_reports_limit() {
         let err = validate_fps_input("241").unwrap_err();
-        assert_eq!(
-            err,
-            format!(
-                "Recording FPS must not exceed {}.",
-                crate::settings::MAX_RECORDING_FPS
-            )
-        );
+        assert_eq!(err, format!("Recording FPS must not exceed {}.", Fps::MAX));
     }
 
     // --- DialogGuard ---

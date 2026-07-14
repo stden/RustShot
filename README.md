@@ -264,5 +264,7 @@ Head over to [**Releases**](https://github.com/stden/RustShot/releases) and grab
 
 ## Testing
 
-- Repository-wide testing/TDD guide: `TESTING_TDD_GUIDE.md`
-- Stack checklist: `TESTING_CHECKLIST_RUST.md`
+- Executable specifications (BDD): Gherkin features in `tests/features/`, run with
+  `cargo test --test bdd`. These are the behavioural spec.
+- General testing/TDD guidance is not duplicated here — it lives in the central
+  `iopm` repo (`docs/TESTING_TDD_GUIDE.md`, `docs/TESTING_CHECKLIST_RUST.md`).

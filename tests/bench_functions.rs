@@ -2,6 +2,8 @@
 //! Ensures these functions remain accessible from external crates (benchmarks, tests).
 
 #[cfg(windows)]
+use rustshot::capture::Format;
+use rustshot::settings::Fps;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -378,37 +380,37 @@ fn parse_settings_json_roundtrip() {
     let original = rustshot::settings::Settings {
         screenshots_dir: PathBuf::from("/tmp/shots"),
         recordings_dir: PathBuf::from("/tmp/recs"),
-        default_format: "jpg".to_string(),
-        recording_fps: 60,
+        default_format: Format::Jpg,
+        recording_fps: Fps::new(60).unwrap(),
         auto_start: false,
     };
     let json = rustshot::settings::format_settings_json(&original);
     let parsed = rustshot::settings::parse_settings_json(&json);
-    assert_eq!(parsed.default_format, "jpg");
-    assert_eq!(parsed.recording_fps, 60);
+    assert_eq!(parsed.default_format, Format::Jpg);
+    assert_eq!(parsed.recording_fps.get(), 60);
     assert!(!parsed.auto_start);
 }
 
 #[test]
 fn parse_settings_json_empty_returns_defaults() {
     let parsed = rustshot::settings::parse_settings_json("{}");
-    assert_eq!(parsed.default_format, "png");
-    assert_eq!(parsed.recording_fps, 30);
+    assert_eq!(parsed.default_format, Format::Png);
+    assert_eq!(parsed.recording_fps.get(), 30);
 }
 
 #[test]
 fn parse_settings_json_partial_keys() {
     let json = r#"{ "default_format": "bmp", "recording_fps": 15 }"#;
     let parsed = rustshot::settings::parse_settings_json(json);
-    assert_eq!(parsed.default_format, "bmp");
-    assert_eq!(parsed.recording_fps, 15);
+    assert_eq!(parsed.default_format, Format::Bmp);
+    assert_eq!(parsed.recording_fps.get(), 15);
     assert!(parsed.auto_start);
 }
 
 #[test]
 fn parse_settings_json_garbage_returns_defaults() {
     let parsed = rustshot::settings::parse_settings_json("not json");
-    assert_eq!(parsed.default_format, "png");
+    assert_eq!(parsed.default_format, Format::Png);
 }
 
 #[test]
@@ -416,8 +418,8 @@ fn format_and_parse_settings_preserves_all_fields() {
     let original = rustshot::settings::Settings {
         screenshots_dir: PathBuf::from("/a/b"),
         recordings_dir: PathBuf::from("/c/d"),
-        default_format: "bmp".to_string(),
-        recording_fps: 120,
+        default_format: Format::Bmp,
+        recording_fps: Fps::new(120).unwrap(),
         auto_start: false,
     };
     let json = rustshot::settings::format_settings_json(&original);
@@ -447,14 +449,14 @@ fn parse_settings_json_invalid_auto_start_token_keeps_default() {
 fn parse_settings_json_duplicate_recording_fps_uses_first_occurrence() {
     let json = r#"{ "recording_fps": 15, "recording_fps": 60 }"#;
     let parsed = rustshot::settings::parse_settings_json(json);
-    assert_eq!(parsed.recording_fps, 15);
+    assert_eq!(parsed.recording_fps.get(), 15);
 }
 
 #[test]
 fn parse_settings_json_duplicate_default_format_uses_first_occurrence() {
     let json = r#"{ "default_format": "jpg", "default_format": "bmp" }"#;
     let parsed = rustshot::settings::parse_settings_json(json);
-    assert_eq!(parsed.default_format, "jpg");
+    assert_eq!(parsed.default_format, Format::Jpg);
 }
 
 #[test]
@@ -890,7 +892,7 @@ fn validate_recording_start_241fps_mentions_max_limit() {
 #[test]
 fn format_settings_json_custom_fps_appears() {
     let s = rustshot::settings::Settings {
-        recording_fps: 144,
+        recording_fps: Fps::new(144).unwrap(),
         ..rustshot::settings::Settings::default()
     };
     let json = rustshot::settings::format_settings_json(&s);
@@ -920,8 +922,8 @@ fn parse_settings_json_windows_backslash_roundtrip() {
     let original = rustshot::settings::Settings {
         screenshots_dir: PathBuf::from("C:\\Users\\test\\Pictures\\RustShot"),
         recordings_dir: PathBuf::from("C:\\Users\\test\\Pictures\\RustShot\\recordings"),
-        default_format: "png".to_string(),
-        recording_fps: 30,
+        default_format: Format::Png,
+        recording_fps: Fps::DEFAULT,
         auto_start: true,
     };
     let json = rustshot::settings::format_settings_json(&original);
@@ -935,8 +937,8 @@ fn parse_settings_json_paths_with_quotes_roundtrip() {
     let original = rustshot::settings::Settings {
         screenshots_dir: PathBuf::from("/tmp/screens\"shots"),
         recordings_dir: PathBuf::from("/tmp/reco\"rdings"),
-        default_format: "png".to_string(),
-        recording_fps: 30,
+        default_format: Format::Png,
+        recording_fps: Fps::DEFAULT,
         auto_start: true,
     };
     let json = rustshot::settings::format_settings_json(&original);
@@ -975,7 +977,7 @@ fn settings_path_consistent() {
 #[test]
 fn load_settings_returns_defaults_when_no_file() {
     let s = rustshot::settings::load_settings();
-    assert_eq!(s.default_format, "png");
+    assert_eq!(s.default_format, Format::Png);
 }
 
 #[test]
@@ -1019,48 +1021,51 @@ fn settings_debug_is_non_empty() {
 fn parse_settings_json_null_string_field_keeps_default() {
     let json = r#"{ "default_format": null }"#;
     let parsed = rustshot::settings::parse_settings_json(json);
-    assert_eq!(parsed.default_format, "png");
+    assert_eq!(parsed.default_format, Format::Png);
 }
 
 #[test]
 fn parse_settings_json_number_for_string_keeps_default() {
     let json = r#"{ "default_format": 42 }"#;
     let parsed = rustshot::settings::parse_settings_json(json);
-    assert_eq!(parsed.default_format, "png");
+    assert_eq!(parsed.default_format, Format::Png);
 }
 
 #[test]
 fn parse_settings_json_string_for_number_keeps_default() {
     let json = r#"{ "recording_fps": "sixty" }"#;
     let parsed = rustshot::settings::parse_settings_json(json);
-    assert_eq!(parsed.recording_fps, 30);
+    assert_eq!(parsed.recording_fps.get(), 30);
 }
 
 #[test]
 fn benchmark_normalize_default_format_unknown_falls_back_to_png() {
     assert_eq!(
         rustshot::settings::benchmark_normalize_default_format("gif"),
-        "png"
+        Format::Png
     );
 }
 
 #[test]
 fn benchmark_normalize_recording_fps_zero_returns_default() {
-    assert_eq!(rustshot::settings::benchmark_normalize_recording_fps(0), 30);
+    assert_eq!(
+        rustshot::settings::benchmark_normalize_recording_fps(0),
+        Fps::DEFAULT
+    );
 }
 
 #[test]
 fn benchmark_normalize_default_format_mixed_case_falls_back_to_png() {
     assert_eq!(
         rustshot::settings::benchmark_normalize_default_format("PNG"),
-        "png"
+        Format::Png
     );
 }
 
 #[test]
 fn benchmark_normalize_recording_fps_non_zero_is_preserved() {
     assert_eq!(
-        rustshot::settings::benchmark_normalize_recording_fps(144),
+        rustshot::settings::benchmark_normalize_recording_fps(144).get(),
         144
     );
 }
@@ -2246,11 +2251,11 @@ fn bgra_to_rgba_only_r_and_b_differ() {
 #[test]
 fn settings_with_different_format_not_equal() {
     let a = rustshot::settings::Settings {
-        default_format: "jpg".to_string(),
+        default_format: Format::Jpg,
         ..rustshot::settings::Settings::default()
     };
     let b = rustshot::settings::Settings {
-        default_format: "bmp".to_string(),
+        default_format: Format::Bmp,
         ..rustshot::settings::Settings::default()
     };
     assert_ne!(a, b);
@@ -2259,11 +2264,11 @@ fn settings_with_different_format_not_equal() {
 #[test]
 fn settings_with_different_fps_not_equal() {
     let a = rustshot::settings::Settings {
-        recording_fps: 30,
+        recording_fps: Fps::DEFAULT,
         ..rustshot::settings::Settings::default()
     };
     let b = rustshot::settings::Settings {
-        recording_fps: 60,
+        recording_fps: Fps::new(60).unwrap(),
         ..rustshot::settings::Settings::default()
     };
     assert_ne!(a, b);
@@ -2325,15 +2330,15 @@ fn format_settings_json_auto_start_true() {
 fn parse_settings_json_extra_commas_still_parses() {
     let json = r#"{ "default_format": "bmp", "recording_fps": 60, }"#;
     let parsed = rustshot::settings::parse_settings_json(json);
-    assert_eq!(parsed.default_format, "bmp");
-    assert_eq!(parsed.recording_fps, 60);
+    assert_eq!(parsed.default_format, Format::Bmp);
+    assert_eq!(parsed.recording_fps.get(), 60);
 }
 
 #[test]
 fn parse_settings_json_bool_for_number_field_keeps_default() {
     let json = r#"{ "recording_fps": true }"#;
     let parsed = rustshot::settings::parse_settings_json(json);
-    assert_eq!(parsed.recording_fps, 30);
+    assert_eq!(parsed.recording_fps.get(), 30);
 }
 
 #[test]
@@ -2342,8 +2347,8 @@ fn parse_settings_json_only_recordings_dir() {
     let parsed = rustshot::settings::parse_settings_json(json);
     assert_eq!(parsed.recordings_dir, PathBuf::from("/custom/recs"));
     // Other fields should be defaults
-    assert_eq!(parsed.default_format, "png");
-    assert_eq!(parsed.recording_fps, 30);
+    assert_eq!(parsed.default_format, Format::Png);
+    assert_eq!(parsed.recording_fps.get(), 30);
 }
 
 // ---------------------------------------------------------------------------
@@ -2396,20 +2401,13 @@ fn get_recording_dir_has_at_least_three_components() {
 // cli module
 // ---------------------------------------------------------------------------
 
+/// Was `cli::settings_capture_format`. That mapper is gone — parsing a settings
+/// format string is now the `Format` enum's own constructor. Same behaviour.
 #[test]
-fn cli_settings_capture_format_maps_supported_values() {
-    assert!(matches!(
-        rustshot::cli::settings_capture_format("jpg"),
-        rustshot::capture::Format::Jpg
-    ));
-    assert!(matches!(
-        rustshot::cli::settings_capture_format("bmp"),
-        rustshot::capture::Format::Bmp
-    ));
-    assert!(matches!(
-        rustshot::cli::settings_capture_format("gif"),
-        rustshot::capture::Format::Png
-    ));
+fn settings_format_string_maps_to_supported_values() {
+    assert_eq!(Format::from_settings_str("jpg"), Format::Jpg);
+    assert_eq!(Format::from_settings_str("bmp"), Format::Bmp);
+    assert_eq!(Format::from_settings_str("gif"), Format::Png);
 }
 
 #[test]

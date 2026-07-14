@@ -1,0 +1,37 @@
+name = "run"
+description = "Build and run RustShot in tray mode and report runtime status"
+developer_instructions = """
+Build RustShot in release mode and launch it as a tray application.\r
+\r
+Steps:\r
+\r
+1. **Build the release binary.**\r
+   Run `cargo build --release` from the project root.\r
+   If the build fails, show the error and stop.\r
+\r
+2. **Check for an already running instance.**\r
+   Use a platform-appropriate process check.\r
+   On Windows, prefer `tasklist /FI "IMAGENAME eq rustshot.exe"`.\r
+   If RustShot is already running, inform the user before launching another instance.\r
+\r
+3. **Launch RustShot.**\r
+   Run the release binary from `target/release/` in the background.\r
+   Confirm it started by checking the process list.\r
+\r
+4. **Report Windows autorun status when applicable.**\r
+   On Windows, run:\r
+   `reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v RustShot`\r
+   - If present, report the registered path.\r
+   - If not present, report that autorun is currently disabled or not registered.\r
+   Do not assume the app will add the entry automatically.\r
+\r
+5. **Report** a short summary:\r
+   - Binary location\r
+   - Whether the app is running\r
+   - Whether startup registration is active\r
+\r
+Rules:\r
+- Always build in release mode for the binary users will actually run.\r
+- Do NOT modify the Windows registry directly — the app handles autorun itself.\r
+- If the user wants to remove the startup entry, use:\r
+  `reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v RustShot /f`"""

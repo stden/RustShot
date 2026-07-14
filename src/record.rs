@@ -28,6 +28,7 @@
 //! - [`get_recording_dir`] / [`get_recording_path`] — output path logic.
 
 use crate::selection::Region;
+use crate::settings::Fps;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -120,38 +121,23 @@ pub fn get_recording_path_in_dir(recordings_dir: &Path) -> PathBuf {
     recordings_dir.join(format!("recording_{}.mp4", timestamp))
 }
 
-/// Check that the requested FPS is valid.
+/// Check that a requested FPS can actually start a recording.
 ///
-/// Algorithm:
-/// 1. Reject zero immediately because the encoder loop cannot schedule frames
-///    at 0 FPS.
-/// 2. Reject values above [`crate::settings::MAX_RECORDING_FPS`] before any
-///    platform-specific work begins.
-/// 3. On non-Windows builds, return the platform capability error.
-/// 4. On Windows, accept the value and let recording start continue.
+/// Two distinct concerns, in order:
+/// 1. **Is the value a valid rate at all?** Delegated to [`Fps::new`], which owns
+///    the `1..=Fps::MAX` rule. Range checking is not duplicated here — the
+///    newtype is the single place that rule lives.
+/// 2. **Can this platform record?** Recording needs Windows Media Foundation, so
+///    non-Windows builds fail here.
 ///
-/// This ordering keeps error reporting deterministic: invalid input is
-/// reported as invalid input even on unsupported platforms.
+/// The ordering keeps error reporting deterministic: invalid input is reported
+/// as invalid input even on platforms that cannot record at all.
 ///
-/// Possible improvements:
-/// - Move the platform branch behind a trait or capability object so the same
-///   validation path can be reused by UI and CLI flows without `cfg` splits.
-/// - Return a structured error enum if callers ever need localized or
-///   user-facing remediation text.
-///
-/// On non-Windows platforms this always returns an error, since recording
-/// requires the Windows Media Foundation.
+/// This takes a raw `u32` on purpose — it is the boundary that turns untrusted
+/// input into a validated [`Fps`]. Code that already holds an `Fps` (e.g. from
+/// [`crate::settings::Settings`]) has no range check left to perform.
 pub fn validate_recording_start(fps: u32) -> Result<(), String> {
-    if fps == 0 {
-        return Err("Recording FPS must be greater than 0".to_string());
-    }
-
-    if fps > crate::settings::MAX_RECORDING_FPS {
-        return Err(format!(
-            "Recording FPS must be {} or less",
-            crate::settings::MAX_RECORDING_FPS
-        ));
-    }
+    Fps::new(fps)?;
 
     #[cfg(not(windows))]
     {
@@ -232,7 +218,7 @@ pub fn round_to_even(value: u32) -> u32 {
     (value + 1) & !1
 }
 
-#[cfg(any(test, windows))]
+#[cfg(test)]
 fn validate_capture_region(
     region: Region,
     frame_width: u32,
@@ -310,7 +296,12 @@ pub fn rgba_to_bgra_bottom_up_into(rgba: &[u8], out: &mut [u8], width: u32, heig
         let src_row = &rgba[src_start..src_start + row_bytes];
         let dst_row = &mut out[dst_start..dst_start + row_bytes];
 
-        for (src_px, dst_px) in src_row.chunks_exact(4).zip(dst_row.chunks_exact_mut(4)) {
+        for (src_px, dst_px) in src_row
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(dst_row.as_chunks_mut::<4>().0.iter_mut())
+        {
             dst_px[0] = src_px[2]; // B <- R
             dst_px[1] = src_px[1]; // G <- G
             dst_px[2] = src_px[0]; // R <- B
@@ -511,6 +502,12 @@ unsafe fn wmf_record(
             .ok_or_else(|| format!("Screen at ({screen_x},{screen_y}) not found"))?;
 
         let mut frame_index = 0i64;
+        // Preallocated once and reused for every frame. The hot loop below
+        // captures ONLY the selected region and converts straight into this
+        // buffer. An earlier version captured the whole screen and allocated a
+        // fresh cropped-and-padded `RgbaImage` per frame; that per-frame
+        // allocation was the dominant source of recording CPU load and lag.
+        // Keep the buffer preallocated and keep the capture region-scoped.
         let mut bgra_buffer = vec![0u8; (width * height * 4) as usize];
 
         loop {
@@ -2535,7 +2532,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn validate_recording_start_rejects_fps_above_max() {
-        let err = validate_recording_start(crate::settings::MAX_RECORDING_FPS + 1).unwrap_err();
+        let err = validate_recording_start(Fps::MAX + 1).unwrap_err();
         assert!(
             err.contains("240"),
             "error should mention the max FPS: {err}"

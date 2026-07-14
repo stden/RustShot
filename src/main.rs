@@ -13,7 +13,8 @@
 //! # Architecture overview
 //!
 //! ```text
-//! main.rs          ──  CLI parsing, app mode routing, tray event loop
+//! main.rs          ──  CLI parsing, startup routing, tray event loop
+//!   ├─ cli.rs      ──  pure CLI helpers and app-mode decision policy
 //!   ├─ capture.rs  ──  screenshot capture & file saving
 //!   ├─ selection.rs ── interactive region selection overlay (winit + softbuffer)
 //!   ├─ tray.rs     ──  tray icon & context menu construction
@@ -101,6 +102,8 @@ fn remove_autorun() {
 }
 
 use arboard::Clipboard;
+#[cfg(test)]
+use capture::Format;
 use clap::{Parser, ValueEnum};
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use log::{debug, error, info};
@@ -179,10 +182,6 @@ struct RustShotApp {
     hotkey_id: u32,
     window_hotkey_id: u32,
     record_hotkey_id: u32,
-    #[cfg(target_os = "macos")]
-    macos_hotkey_id: u32,
-    #[cfg(target_os = "macos")]
-    macos_undo_hotkey_id: u32,
     selection_process: Option<std::process::Child>,
     recording: Option<(std::process::Child, std::path::PathBuf)>,
 }
@@ -229,37 +228,6 @@ impl RustShotApp {
             "Ctrl+Shift+R",
         )?;
 
-        // Register Cmd+Shift+P for macOS as requested (Cmd+P is usually for Print)
-        #[cfg(target_os = "macos")]
-        let macos_hotkey = HotKey::new(
-            Some(Modifiers::SUPER | Modifiers::SHIFT),
-            global_hotkey::hotkey::Code::KeyP,
-        );
-        #[cfg(target_os = "macos")]
-        let macos_hotkey_id = register_hotkey_with(
-            |hotkey| manager.register(hotkey),
-            macos_hotkey,
-            "Cmd+Shift+P",
-        )?;
-
-        // Register Cmd+Shift+Z for macOS as requested (Cmd+Z is usually for Undo)
-        #[cfg(target_os = "macos")]
-        let macos_undo_hotkey = HotKey::new(
-            Some(Modifiers::SUPER | Modifiers::SHIFT),
-            global_hotkey::hotkey::Code::KeyZ,
-        );
-        #[cfg(target_os = "macos")]
-        let macos_undo_hotkey_id = register_hotkey_with(
-            |hotkey| manager.register(hotkey),
-            macos_undo_hotkey,
-            "Cmd+Shift+Z",
-        )?;
-        #[cfg(target_os = "macos")]
-        info!(
-            "macOS hotkey Cmd+Shift+Z registered with ID: {}",
-            macos_undo_hotkey_id
-        );
-
         info!("Hotkeys registered");
 
         Ok(Self {
@@ -268,10 +236,6 @@ impl RustShotApp {
             hotkey_id,
             window_hotkey_id,
             record_hotkey_id,
-            #[cfg(target_os = "macos")]
-            macos_hotkey_id,
-            #[cfg(target_os = "macos")]
-            macos_undo_hotkey_id,
             selection_process: None,
             recording: None,
         })
@@ -287,22 +251,10 @@ impl RustShotApp {
     }
 
     fn handle_capture(&mut self) {
-        info!("handle_capture called");
         // Check if a selection process is already running
         if let Some(ref mut child) = self.selection_process {
-            match child.try_wait() {
-                Ok(None) => {
-                    info!("Selection process is already running");
-                    return;
-                }
-                Ok(Some(status)) => {
-                    info!("Previous selection process exited with status: {}", status);
-                    self.selection_process = None;
-                }
-                Err(e) => {
-                    error!("Error checking selection process status: {}", e);
-                    self.selection_process = None;
-                }
+            if child_process_is_running(child.try_wait()) {
+                return;
             }
         }
 
@@ -314,15 +266,8 @@ impl RustShotApp {
                 return;
             }
         };
-        info!("Spawning selection process: {} --select", exe.display());
-        match std::process::Command::new(exe).arg("--select").spawn() {
-            Ok(child) => {
-                info!("Selection process spawned with PID: {}", child.id());
-                self.selection_process = Some(child);
-            }
-            Err(e) => {
-                error!("Failed to spawn selection process: {}", e);
-            }
+        if let Ok(child) = std::process::Command::new(exe).arg("--select").spawn() {
+            self.selection_process = Some(child);
         }
     }
 
@@ -358,6 +303,11 @@ impl RustShotApp {
             .spawn()
         {
             let pid = child.id();
+            // Stopping a recording is a filesystem IPC contract: the parent
+            // creates this flag file, and the child (`run_select_record`) polls
+            // for a path it derives from its OWN pid. The two `format!` strings
+            // must stay byte-identical — if they ever drift, stop silently hangs
+            // and the child records forever.
             let stop_file = std::env::temp_dir().join(format!("rustshot_stop_{}.flag", pid));
             self.recording = Some((child, stop_file));
         }
@@ -368,8 +318,13 @@ fn child_process_is_running<T, E>(try_wait_result: Result<Option<T>, E>) -> bool
     cli::child_process_is_running(try_wait_result)
 }
 
+/// The capture format configured in settings.
+///
+/// This used to map a `String` onto [`capture::Format`]; now that `Settings`
+/// stores the enum, there is nothing to map — the conversion happened once, at
+/// the JSON boundary.
 fn settings_capture_format(settings: &settings::Settings) -> capture::Format {
-    cli::settings_capture_format(&settings.default_format)
+    settings.default_format
 }
 
 /// Detect whether the raw CLI arguments contain an explicit format flag.
@@ -463,11 +418,21 @@ fn sync_autorun_with_handlers<Enable, Disable>(
 ///
 /// When `enabled` is `true`, registers the current exe path under
 /// `HKCU\...\Run`; when `false`, removes it.
+///
+/// This is deliberately a **two-way** sync. The original implementation only
+/// ever registered, so once auto-start was on the user could never turn it off.
+///
+/// Two invariants worth keeping:
+/// - It writes to `HKCU` only, never `HKLM`. That is what keeps RustShot free of
+///   any elevation/admin requirement.
+/// - It is applied only in Tray mode, so the `--select` / `--select-record`
+///   child processes never touch the registry.
 #[cfg(windows)]
 pub(crate) fn sync_autorun(enabled: bool) {
     sync_autorun_with_handlers(enabled, setup_autorun, remove_autorun);
 }
 
+#[cfg(test)]
 fn should_run_cli_mode_with_format_explicit(args: &Args, format_explicit: bool) -> bool {
     cli::should_run_cli_mode(
         args.cli,
@@ -477,6 +442,23 @@ fn should_run_cli_mode_with_format_explicit(args: &Args, format_explicit: bool) 
         args.screen.is_some(),
         format_explicit,
     )
+}
+
+fn app_mode_request(args: &Args, format_explicit: bool) -> cli::AppModeRequest {
+    cli::AppModeRequest {
+        select_record: args.select_record,
+        select: args.select,
+        cli: args.cli,
+        list: args.list,
+        window: args.window,
+        has_output: args.output.is_some(),
+        has_screen: args.screen.is_some(),
+        format_explicit,
+    }
+}
+
+fn decide_app_mode_with_format_explicit(args: &Args, format_explicit: bool) -> cli::AppMode {
+    cli::decide_app_mode(app_mode_request(args, format_explicit))
 }
 
 /// Execute one CLI capture flow using persisted settings and injected backends.
@@ -573,7 +555,6 @@ impl ApplicationHandler for RustShotApp {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Handle hotkey events
         while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-            debug!("Hotkey event: ID={}, state={:?}", event.id, event.state);
             if event.id == self.hotkey_id && event.state == HotKeyState::Pressed {
                 self.handle_capture();
             }
@@ -583,34 +564,28 @@ impl ApplicationHandler for RustShotApp {
             if event.id == self.record_hotkey_id && event.state == HotKeyState::Pressed {
                 self.handle_recording_toggle();
             }
-            #[cfg(target_os = "macos")]
-            if event.id == self.macos_hotkey_id && event.state == HotKeyState::Pressed {
-                info!("macOS hotkey Cmd+Shift+P pressed");
-                self.handle_capture();
-            }
-            #[cfg(target_os = "macos")]
-            if event.id == self.macos_undo_hotkey_id && event.state == HotKeyState::Pressed {
-                info!("macOS undo hotkey Cmd+Shift+Z pressed");
-                self.handle_capture();
-            }
         }
 
-        // Handle menu events
+        // Handle menu events. Dispatch on the `MenuAction` enum rather than raw
+        // id strings: the match is exhaustive, so a new menu entry fails to
+        // compile until it is handled here. Unknown ids resolve to `None` and
+        // are ignored.
         while let Ok(event) = tray::menu_receiver().try_recv() {
-            match event.id.0.as_str() {
-                tray::MENU_CAPTURE => self.handle_capture(),
-                tray::MENU_CAPTURE_WINDOW => self.handle_window_capture(),
-                tray::MENU_OPEN_FOLDER => self.open_screenshots_folder(),
-                tray::MENU_START_RECORD => self.handle_recording_toggle(),
-                tray::MENU_STOP_RECORD => self.handle_recording_toggle(),
-                tray::MENU_SETTINGS => {
+            let Some(action) = tray::MenuAction::from_id(event.id.0.as_str()) else {
+                continue;
+            };
+            match action {
+                tray::MenuAction::Capture => self.handle_capture(),
+                tray::MenuAction::CaptureWindow => self.handle_window_capture(),
+                tray::MenuAction::OpenFolder => self.open_screenshots_folder(),
+                tray::MenuAction::ToggleRecord => self.handle_recording_toggle(),
+                tray::MenuAction::Settings => {
                     #[cfg(windows)]
                     settings_dialog::show_settings_dialog();
                     #[cfg(not(windows))]
                     settings::open_settings_dialog();
                 }
-                tray::MENU_EXIT => event_loop.exit(),
-                _ => {}
+                tray::MenuAction::Exit => event_loop.exit(),
             }
         }
     }
@@ -620,7 +595,7 @@ impl ApplicationHandler for RustShotApp {
 fn run_select_record() {
     use crate::record::RecordingSession;
     let settings = settings::load_settings();
-    if let Err(e) = record::validate_recording_start(settings.recording_fps) {
+    if let Err(e) = record::validate_recording_start(settings.recording_fps.get()) {
         report_child_process_error(&format!("Failed to start recording: {}", e));
         return;
     }
@@ -647,7 +622,7 @@ fn run_select_record() {
         screen_x,
         screen_y,
         region,
-        settings.recording_fps,
+        settings.recording_fps.get(),
         settings.recordings_dir.clone(),
     ) {
         Ok(s) => s,
@@ -658,6 +633,10 @@ fn run_select_record() {
     };
 
     // Poll for stop-flag file
+    // Child side of the stop-flag IPC contract: derive the path from our OWN
+    // pid. The parent builds the same path from the child's pid when it spawns
+    // us (see `handle_recording_toggle`); both `format!` strings must stay
+    // byte-identical or stopping a recording silently hangs.
     let stop_file = std::env::temp_dir().join(format!("rustshot_stop_{}.flag", std::process::id()));
 
     loop {
@@ -868,45 +847,34 @@ fn main() {
     let format_explicit = cli_format_flag_present_in(std::env::args_os());
     debug!("CLI args: {:?}", args);
 
-    // Recording selection mode (spawned by tray app)
-    if args.select_record {
-        run_select_record();
-        return;
-    }
+    match decide_app_mode_with_format_explicit(&args, format_explicit) {
+        cli::AppMode::SelectRecord => run_select_record(),
+        cli::AppMode::Selection => run_selection(),
+        cli::AppMode::Cli => run_cli(args),
+        cli::AppMode::Tray => {
+            #[cfg(windows)]
+            sync_autorun(settings::load_settings().auto_start);
 
-    // Selection mode (spawned by tray app)
-    if args.select {
-        run_selection();
-        return;
-    }
+            let event_loop = EventLoop::new().expect("Failed to create event loop");
+            event_loop.set_control_flow(ControlFlow::Wait);
 
-    // CLI mode for backward compatibility
-    if should_run_cli_mode_with_format_explicit(&args, format_explicit) {
-        run_cli(args);
-        return;
-    }
-
-    // Tray mode
-    #[cfg(windows)]
-    sync_autorun(settings::load_settings().auto_start);
-
-    let event_loop = EventLoop::new().expect("Failed to create event loop");
-    event_loop.set_control_flow(ControlFlow::Wait);
-
-    let mut app = match RustShotApp::new() {
-        Ok(app) => app,
-        Err(e) => {
-            error!("Tray startup error: {}", e);
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
+            let mut app = match RustShotApp::new() {
+                Ok(app) => app,
+                Err(e) => {
+                    error!("Tray startup error: {}", e);
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            info!("Entering event loop");
+            event_loop.run_app(&mut app).expect("Event loop error");
         }
-    };
-    info!("Entering event loop");
-    event_loop.run_app(&mut app).expect("Event loop error");
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::cli::AppMode;
     use super::*;
     use std::cell::Cell;
 
@@ -920,21 +888,8 @@ mod tests {
         })
     }
 
-    #[derive(Debug)]
-    enum AppMode {
-        Selection,
-        Cli,
-        Tray,
-    }
-
     fn decide_app_mode(args: &Args) -> AppMode {
-        if args.select || args.select_record {
-            AppMode::Selection
-        } else if should_run_cli_mode(args) {
-            AppMode::Cli
-        } else {
-            AppMode::Tray
-        }
+        decide_app_mode_with_format_explicit(args, args.format != CliFormat::Png)
     }
 
     #[test]
@@ -1609,7 +1564,7 @@ mod tests {
     #[test]
     fn effective_cli_format_keeps_settings_format_for_hyphenated_output_values() {
         let settings = settings::Settings {
-            default_format: "jpg".to_string(),
+            default_format: Format::Jpg,
             ..settings::Settings::default()
         };
         let format_explicit = cli_format_flag_present_in(["rustshot", "--output", "-foo.png"]);
@@ -1633,7 +1588,7 @@ mod tests {
     #[test]
     fn settings_capture_format_defaults_to_png_for_unknown_value() {
         let settings = settings::Settings {
-            default_format: "gif".to_string(),
+            default_format: Format::Png,
             ..settings::Settings::default()
         };
 
@@ -1646,7 +1601,7 @@ mod tests {
     #[test]
     fn settings_capture_format_maps_jpg_value() {
         let settings = settings::Settings {
-            default_format: "jpg".to_string(),
+            default_format: Format::Jpg,
             ..settings::Settings::default()
         };
 
@@ -1659,7 +1614,7 @@ mod tests {
     #[test]
     fn settings_capture_format_maps_bmp_value() {
         let settings = settings::Settings {
-            default_format: "bmp".to_string(),
+            default_format: Format::Bmp,
             ..settings::Settings::default()
         };
 
@@ -1672,7 +1627,7 @@ mod tests {
     #[test]
     fn effective_cli_format_uses_settings_when_flag_is_absent() {
         let settings = settings::Settings {
-            default_format: "jpg".to_string(),
+            default_format: Format::Jpg,
             ..settings::Settings::default()
         };
 
@@ -1685,7 +1640,7 @@ mod tests {
     #[test]
     fn effective_cli_format_prefers_explicit_cli_format_when_flag_is_present() {
         let settings = settings::Settings {
-            default_format: "bmp".to_string(),
+            default_format: Format::Bmp,
             ..settings::Settings::default()
         };
 
@@ -1723,7 +1678,7 @@ mod tests {
             window: false,
         };
         let settings = settings::Settings {
-            default_format: "bmp".to_string(),
+            default_format: Format::Bmp,
             ..settings::Settings::default()
         };
         let called = Cell::new(false);
@@ -1755,7 +1710,7 @@ mod tests {
             window: false,
         };
         let settings = settings::Settings {
-            default_format: "bmp".to_string(),
+            default_format: Format::Bmp,
             ..settings::Settings::default()
         };
         let called = Cell::new(false);
@@ -1787,7 +1742,7 @@ mod tests {
             window: false,
         };
         let settings = settings::Settings {
-            default_format: "jpg".to_string(),
+            default_format: Format::Jpg,
             ..settings::Settings::default()
         };
         let called = Cell::new(false);
@@ -1822,7 +1777,7 @@ mod tests {
             window: false,
         };
         let settings = settings::Settings {
-            default_format: "jpg".to_string(),
+            default_format: Format::Jpg,
             ..settings::Settings::default()
         };
         let called = Cell::new(false);
@@ -2021,7 +1976,7 @@ mod tests {
         let result = run_cli_with_capture_using_settings(
             args,
             &settings::Settings {
-                default_format: "bmp".to_string(),
+                default_format: Format::Bmp,
                 ..settings::Settings::default()
             },
             false,
@@ -2739,7 +2694,7 @@ mod tests {
     // --- select_record flag tests ---
 
     #[test]
-    fn decide_app_mode_select_record_true_gives_selection() {
+    fn decide_app_mode_select_record_true_gives_select_record() {
         let args = Args {
             cli: false,
             select: false,
@@ -2750,7 +2705,7 @@ mod tests {
             select_record: true,
             window: false,
         };
-        assert!(matches!(decide_app_mode(&args), AppMode::Selection));
+        assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
 
     #[test]
@@ -2765,7 +2720,7 @@ mod tests {
             select_record: true,
             window: false,
         };
-        assert!(matches!(decide_app_mode(&args), AppMode::Selection));
+        assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
 
     #[test]
@@ -2780,11 +2735,11 @@ mod tests {
             select_record: true,
             window: false,
         };
-        assert!(matches!(decide_app_mode(&args), AppMode::Selection));
+        assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
 
     #[test]
-    fn decide_app_mode_select_record_and_select_both_true_gives_selection() {
+    fn decide_app_mode_select_record_and_select_both_true_gives_select_record() {
         let args = Args {
             cli: false,
             select: true,
@@ -2795,7 +2750,7 @@ mod tests {
             select_record: true,
             window: false,
         };
-        assert!(matches!(decide_app_mode(&args), AppMode::Selection));
+        assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
 
     #[test]
@@ -2829,7 +2784,7 @@ mod tests {
     }
 
     #[test]
-    fn decide_app_mode_select_record_with_output_gives_selection() {
+    fn decide_app_mode_select_record_with_output_gives_select_record() {
         // select_record takes priority even when output path is set
         let args = Args {
             cli: false,
@@ -2841,7 +2796,7 @@ mod tests {
             select_record: true,
             window: false,
         };
-        assert!(matches!(decide_app_mode(&args), AppMode::Selection));
+        assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
 
     #[test]
@@ -3167,7 +3122,7 @@ mod tests {
     // --- decide_app_mode: select_record ---
 
     #[test]
-    fn decide_app_mode_select_record_gives_selection() {
+    fn decide_app_mode_select_record_gives_select_record() {
         let args = Args {
             cli: false,
             select: false,
@@ -3178,7 +3133,7 @@ mod tests {
             select_record: true,
             window: false,
         };
-        assert!(matches!(decide_app_mode(&args), AppMode::Selection));
+        assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
 
     #[test]
@@ -3508,7 +3463,7 @@ mod tests {
             select_record: true,
             window: true,
         };
-        assert!(matches!(decide_app_mode(&args), AppMode::Selection));
+        assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
 
     #[test]
@@ -3909,7 +3864,7 @@ mod tests {
     #[test]
     fn effective_cli_format_explicit_png_overrides_jpg_settings() {
         let settings = settings::Settings {
-            default_format: "jpg".to_string(),
+            default_format: Format::Jpg,
             ..settings::Settings::default()
         };
         let result = effective_cli_format(CliFormat::Png, true, None, &settings);
@@ -3919,7 +3874,7 @@ mod tests {
     #[test]
     fn effective_cli_format_settings_bmp_used_when_not_explicit() {
         let settings = settings::Settings {
-            default_format: "bmp".to_string(),
+            default_format: Format::Bmp,
             ..settings::Settings::default()
         };
         let result = effective_cli_format(CliFormat::Png, false, None, &settings);
@@ -4251,7 +4206,7 @@ mod tests {
     #[test]
     fn settings_capture_format_png_fallback_for_empty_string() {
         let settings = settings::Settings {
-            default_format: String::new(),
+            default_format: Format::Png,
             ..settings::Settings::default()
         };
         assert!(matches!(
@@ -4263,7 +4218,7 @@ mod tests {
     #[test]
     fn settings_capture_format_png_fallback_for_uppercase() {
         let settings = settings::Settings {
-            default_format: "JPG".to_string(),
+            default_format: Format::Png,
             ..settings::Settings::default()
         };
         assert!(matches!(
@@ -4279,7 +4234,7 @@ mod tests {
     #[test]
     fn effective_cli_format_explicit_bmp_overrides_settings_jpg() {
         let settings = settings::Settings {
-            default_format: "jpg".to_string(),
+            default_format: Format::Jpg,
             ..settings::Settings::default()
         };
         let result = effective_cli_format(CliFormat::Bmp, true, None, &settings);
@@ -4289,7 +4244,7 @@ mod tests {
     #[test]
     fn effective_cli_format_not_explicit_uses_settings_bmp() {
         let settings = settings::Settings {
-            default_format: "bmp".to_string(),
+            default_format: Format::Bmp,
             ..settings::Settings::default()
         };
         let result = effective_cli_format(CliFormat::Jpg, false, None, &settings);
@@ -4409,7 +4364,7 @@ mod tests {
     #[test]
     fn effective_cli_format_unknown_output_ext_falls_back_to_settings() {
         let settings = settings::Settings {
-            default_format: "jpg".to_string(),
+            default_format: Format::Jpg,
             ..settings::Settings::default()
         };
         let path = Path::new("file.webp"); // unsupported extension
@@ -4421,7 +4376,7 @@ mod tests {
     #[test]
     fn effective_cli_format_output_no_ext_falls_back_to_settings() {
         let settings = settings::Settings {
-            default_format: "bmp".to_string(),
+            default_format: Format::Bmp,
             ..settings::Settings::default()
         };
         let path = Path::new("screenshot");
@@ -4547,7 +4502,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
-    fn decide_app_mode_select_record_is_selection() {
+    fn decide_app_mode_select_record_is_select_record() {
         let args = Args {
             cli: false,
             select: false,
@@ -4558,7 +4513,7 @@ mod tests {
             select_record: true,
             window: false,
         };
-        assert!(matches!(decide_app_mode(&args), AppMode::Selection));
+        assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
 
     // -------------------------------------------------------------------------

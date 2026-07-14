@@ -15,6 +15,7 @@
 //! ([`crate::settings_dialog`]); on other platforms the settings
 //! file is opened in the default editor.
 
+use crate::capture::Format;
 use chrono::Local;
 use std::fs;
 use std::path::PathBuf;
@@ -31,12 +32,79 @@ pub fn generate_timestamp() -> String {
     )
 }
 
-/// Image formats supported by RustShot.
-pub(crate) const SUPPORTED_FORMATS: &[&str] = &["png", "jpg", "bmp"];
+/// Recording frames per second.
+///
+/// A newtype rather than a bare `u32` so the valid range is carried by the type:
+/// once you hold an `Fps`, it is in `1..=Fps::MAX`. That makes an out-of-range
+/// FPS unrepresentable in [`Settings`] instead of something every consumer has
+/// to re-check.
+///
+/// Two constructors, for the two different trust levels:
+/// - [`Fps::new`] — strict. Rejects `0` and anything above [`Fps::MAX`]. Used at
+///   the boundary, e.g. validating a recording request or dialog input.
+/// - [`Fps::from_settings`] — forgiving. Falls back to [`Fps::DEFAULT`] for any
+///   invalid value, because `settings.json` is hand-editable and a bad number
+///   should not brick the app. This mirrors how an unknown image format falls
+///   back to PNG.
+///
+/// # Examples
+///
+/// ```
+/// use rustshot::settings::Fps;
+///
+/// assert_eq!(Fps::new(60).unwrap().get(), 60);
+/// assert!(Fps::new(0).is_err());
+/// assert!(Fps::new(300).is_err());
+///
+/// // Forgiving path: invalid values become the default rather than an error.
+/// assert_eq!(Fps::from_settings(0), Fps::DEFAULT);
+/// assert_eq!(Fps::from_settings(300), Fps::DEFAULT);
+/// assert_eq!(Fps::from_settings(60).get(), 60);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fps(u32);
 
-/// Maximum allowed recording FPS.
-#[allow(dead_code)]
-pub(crate) const MAX_RECORDING_FPS: u32 = 240;
+impl Fps {
+    /// Maximum FPS a recording may request.
+    pub const MAX: u32 = 240;
+
+    /// The default recording rate, used whenever a value is missing or invalid.
+    pub const DEFAULT: Fps = Fps(30);
+
+    /// Strict constructor: the only way to build an `Fps` from untrusted input.
+    pub fn new(value: u32) -> Result<Self, String> {
+        if value == 0 {
+            return Err("Recording FPS must be greater than 0".to_string());
+        }
+        if value > Self::MAX {
+            return Err(format!("Recording FPS must be {} or less", Self::MAX));
+        }
+        Ok(Self(value))
+    }
+
+    /// Forgiving constructor for hand-edited `settings.json`: invalid values
+    /// become [`Fps::DEFAULT`] rather than an error.
+    pub fn from_settings(value: u32) -> Self {
+        Self::new(value).unwrap_or(Self::DEFAULT)
+    }
+
+    /// The underlying rate. Guaranteed to be in `1..=Fps::MAX`.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for Fps {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl std::fmt::Display for Fps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// Convert a Rust `&str` to a null-terminated UTF-16 vector for Win32 APIs.
 ///
@@ -69,16 +137,21 @@ fn set_open_file_in_editor_for_tests(callback: Option<fn(&std::path::Path)>) {
 }
 
 /// Application configuration persisted across sessions.
+///
+/// The format and FPS fields are typed rather than `String`/`u32`: parsing
+/// happens once, at the JSON boundary, and every consumer downstream gets a
+/// value that is valid by construction. There is no "normalize before use" step
+/// for callers to forget.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     /// Directory where screenshots are saved.
     pub screenshots_dir: PathBuf,
     /// Directory where recordings are saved.
     pub recordings_dir: PathBuf,
-    /// Default image format: "png", "jpg", or "bmp".
-    pub default_format: String,
-    /// Recording frames per second.
-    pub recording_fps: u32,
+    /// Default image format. Serialized as its extension (`"png"`/`"jpg"`/`"bmp"`).
+    pub default_format: Format,
+    /// Recording frames per second. Always in `1..=Fps::MAX`.
+    pub recording_fps: Fps,
     /// Whether to auto-start on Windows login.
     pub auto_start: bool,
 }
@@ -89,8 +162,8 @@ impl Default for Settings {
         Self {
             screenshots_dir: pictures.join("RustShot"),
             recordings_dir: pictures.join("RustShot").join("recordings"),
-            default_format: "png".to_string(),
-            recording_fps: 30,
+            default_format: Format::Png,
+            recording_fps: Fps::DEFAULT,
             auto_start: true,
         }
     }
@@ -224,14 +297,15 @@ fn unescape_json_string(value: &str) -> String {
 pub fn format_settings_json(settings: &Settings) -> String {
     let screenshots = escape_json_string(&settings.screenshots_dir.display().to_string());
     let recordings = escape_json_string(&settings.recordings_dir.display().to_string());
-    let default_format = escape_json_string(&settings.default_format);
     let mut buf = String::with_capacity(256);
     buf.push_str("{\n  \"screenshots_dir\": \"");
     buf.push_str(&screenshots);
     buf.push_str("\",\n  \"recordings_dir\": \"");
     buf.push_str(&recordings);
     buf.push_str("\",\n  \"default_format\": \"");
-    buf.push_str(&default_format);
+    // The enum's extension IS the on-disk representation, so no escaping is
+    // needed: it can only ever be one of png/jpg/bmp.
+    buf.push_str(settings.default_format.extension());
     buf.push_str("\",\n  \"recording_fps\": ");
     buf.push_str(&settings.recording_fps.to_string());
     buf.push_str(",\n  \"auto_start\": ");
@@ -245,10 +319,13 @@ pub fn format_settings_json(settings: &Settings) -> String {
 /// Algorithm:
 /// 1. Start from [`Settings::default`].
 /// 2. Probe each supported key independently with a type-specific extractor.
-/// 3. Overwrite only the fields that were parsed successfully.
-/// 4. Normalize values whose textual form may still be invalid, such as the
-///    default format and zero FPS.
-/// 5. Return the partially populated settings object.
+/// 3. Overwrite only the fields that were parsed successfully, converting into
+///    the field's type as we go ([`Format::from_settings_str`],
+///    [`Fps::from_settings`]) so an invalid value can never land in [`Settings`].
+/// 4. Return the partially populated settings object.
+///
+/// There is deliberately no separate "normalize afterwards" pass: the types
+/// enforce their own invariants at the point of parsing.
 ///
 /// The parser is intentionally forgiving: malformed fields fall back to
 /// defaults instead of rejecting the whole file, which is friendlier for a
@@ -271,70 +348,33 @@ pub fn parse_settings_json(json: &str) -> Settings {
         settings.recordings_dir = PathBuf::from(val);
     }
     if let Some(val) = extract_json_string(json, "default_format") {
-        settings.default_format = val;
+        settings.default_format = Format::from_settings_str(&val);
     }
     if let Some(val) = extract_json_number(json, "recording_fps") {
-        settings.recording_fps = val;
+        settings.recording_fps = Fps::from_settings(val);
     }
     if let Some(val) = extract_json_bool(json, "auto_start") {
         settings.auto_start = val;
     }
 
-    settings.default_format = normalize_default_format(&settings.default_format).to_string();
-    settings.recording_fps = normalize_recording_fps(settings.recording_fps);
-
     settings
 }
 
+// The former `normalize_default_format` / `normalize_recording_fps` helpers are
+// gone: their jobs are now the constructors `Format::from_settings_str` and
+// `Fps::from_settings`, so an invalid value cannot survive parsing in the first
+// place and there is nothing left to normalize after the fact.
+
 #[allow(dead_code)]
 #[doc(hidden)]
-pub fn benchmark_normalize_default_format(value: &str) -> &'static str {
-    normalize_default_format(value)
-}
-
-/// Clamp a format string to one of [`SUPPORTED_FORMATS`], defaulting to `"png"`.
-///
-/// # Examples
-///
-/// ```
-/// use rustshot::settings::normalize_default_format;
-///
-/// assert_eq!(normalize_default_format("jpg"), "jpg");
-/// assert_eq!(normalize_default_format("webp"), "png"); // unknown → default
-/// ```
-pub fn normalize_default_format(value: &str) -> &'static str {
-    SUPPORTED_FORMATS
-        .iter()
-        .find(|&&fmt| fmt == value)
-        .copied()
-        .unwrap_or(SUPPORTED_FORMATS[0])
+pub fn benchmark_normalize_default_format(value: &str) -> Format {
+    Format::from_settings_str(value)
 }
 
 #[allow(dead_code)]
 #[doc(hidden)]
-pub fn benchmark_normalize_recording_fps(value: u32) -> u32 {
-    normalize_recording_fps(value)
-}
-
-/// Normalise a recording FPS value: zero becomes the default (30).
-///
-/// Range validation against [`MAX_RECORDING_FPS`] is handled separately by
-/// [`crate::record::validate_recording_start`].
-///
-/// # Examples
-///
-/// ```
-/// use rustshot::settings::normalize_recording_fps;
-///
-/// assert_eq!(normalize_recording_fps(60), 60);
-/// assert_eq!(normalize_recording_fps(0), 30); // zero → default
-/// ```
-pub fn normalize_recording_fps(value: u32) -> u32 {
-    if value == 0 {
-        30
-    } else {
-        value
-    }
+pub fn benchmark_normalize_recording_fps(value: u32) -> Fps {
+    Fps::from_settings(value)
 }
 
 #[allow(dead_code)]
@@ -528,18 +568,16 @@ fn extract_json_bool(json: &str, key: &str) -> Option<bool> {
 mod tests {
     use super::*;
 
-    static SETTINGS_DIALOG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn settings_default_format_is_png() {
         let s = Settings::default();
-        assert_eq!(s.default_format, "png");
+        assert_eq!(s.default_format, Format::Png);
     }
 
     #[test]
     fn settings_default_fps_is_30() {
         let s = Settings::default();
-        assert_eq!(s.recording_fps, 30);
+        assert_eq!(s.recording_fps.get(), 30);
     }
 
     #[test]
@@ -615,30 +653,30 @@ mod tests {
         let original = Settings {
             screenshots_dir: PathBuf::from("/tmp/shots"),
             recordings_dir: PathBuf::from("/tmp/recs"),
-            default_format: "jpg".to_string(),
-            recording_fps: 60,
+            default_format: Format::Jpg,
+            recording_fps: Fps::new(60).unwrap(),
             auto_start: false,
         };
         let json = format_settings_json(&original);
         let parsed = parse_settings_json(&json);
-        assert_eq!(parsed.default_format, "jpg");
-        assert_eq!(parsed.recording_fps, 60);
+        assert_eq!(parsed.default_format, Format::Jpg);
+        assert_eq!(parsed.recording_fps.get(), 60);
         assert!(!parsed.auto_start);
     }
 
     #[test]
     fn parse_settings_json_empty_returns_defaults() {
         let parsed = parse_settings_json("{}");
-        assert_eq!(parsed.default_format, "png");
-        assert_eq!(parsed.recording_fps, 30);
+        assert_eq!(parsed.default_format, Format::Png);
+        assert_eq!(parsed.recording_fps.get(), 30);
     }
 
     #[test]
     fn parse_settings_json_partial_keys() {
         let json = r#"{ "default_format": "bmp", "recording_fps": 15 }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.default_format, "bmp");
-        assert_eq!(parsed.recording_fps, 15);
+        assert_eq!(parsed.default_format, Format::Bmp);
+        assert_eq!(parsed.recording_fps.get(), 15);
         assert!(parsed.auto_start); // default
     }
 
@@ -646,8 +684,8 @@ mod tests {
     fn parse_settings_json_ignores_similar_key_names() {
         let json = r#"{ "default_format_backup": "bmp", "recording_fps_limit": 15, "auto_startup": false }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.default_format, "png");
-        assert_eq!(parsed.recording_fps, 30);
+        assert_eq!(parsed.default_format, Format::Png);
+        assert_eq!(parsed.recording_fps.get(), 30);
         assert!(parsed.auto_start);
     }
 
@@ -726,9 +764,34 @@ mod tests {
 
     #[test]
     fn load_settings_returns_defaults_when_no_file() {
+        // Reads SETTINGS_PATH_OVERRIDE, so it must not run while another test is
+        // mid-way through pointing that override at a populated temp file.
+        let _global = lock_global_overrides();
+
         // settings file unlikely to exist in test env at the exact expected path
         let s = load_settings();
-        assert_eq!(s.default_format, "png");
+        assert_eq!(s.default_format, Format::Png);
+    }
+
+    /// Serializes the tests that mutate the process-global settings overrides.
+    ///
+    /// `SETTINGS_PATH_OVERRIDE` and `OPEN_FILE_EDITOR_OVERRIDE` are process-wide,
+    /// but `cargo test` runs tests on multiple threads by default. Without this
+    /// lock, one test's teardown (`set_*_for_tests(None)`) resets the override
+    /// while another test is still relying on it — an intermittent failure that
+    /// only shows up under parallelism, which is exactly how CI runs.
+    ///
+    /// Every test touching those globals must hold this guard for its whole body.
+    /// Declare it FIRST, so it is dropped LAST: the test's own teardown guard
+    /// resets the overrides before the lock is released.
+    static GLOBAL_OVERRIDES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A panicking test poisons the mutex; that must not cascade into failing
+    /// every other test in this group, so recover the guard rather than unwrap.
+    fn lock_global_overrides() -> std::sync::MutexGuard<'static, ()> {
+        GLOBAL_OVERRIDES_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     #[test]
@@ -741,6 +804,8 @@ mod tests {
             }
         }
 
+        let _global = lock_global_overrides();
+
         let temp_root =
             std::env::temp_dir().join(format!("rustshot_settings_io_{}", generate_timestamp()));
         std::fs::create_dir_all(&temp_root).unwrap();
@@ -751,8 +816,8 @@ mod tests {
         let settings = Settings {
             screenshots_dir: PathBuf::from("/tmp/shots"),
             recordings_dir: PathBuf::from("/tmp/recs"),
-            default_format: "jpg".to_string(),
-            recording_fps: 60,
+            default_format: Format::Jpg,
+            recording_fps: Fps::new(60).unwrap(),
             auto_start: false,
         };
 
@@ -767,8 +832,6 @@ mod tests {
 
     #[test]
     fn open_settings_dialog_uses_test_override() {
-        let _lock = SETTINGS_DIALOG_TEST_LOCK.lock().unwrap();
-
         struct Guard;
 
         impl Drop for Guard {
@@ -783,6 +846,8 @@ mod tests {
         fn record_opened_path(path: &std::path::Path) {
             OPENED_PATHS.lock().unwrap().push(path.to_path_buf());
         }
+
+        let _global = lock_global_overrides();
 
         let temp_root =
             std::env::temp_dir().join(format!("rustshot_settings_dialog_{}", generate_timestamp()));
@@ -804,8 +869,6 @@ mod tests {
 
     #[test]
     fn open_settings_dialog_returns_early_when_save_fails() {
-        let _lock = SETTINGS_DIALOG_TEST_LOCK.lock().unwrap();
-
         struct Guard;
 
         impl Drop for Guard {
@@ -820,6 +883,8 @@ mod tests {
         fn record_opened_path(path: &std::path::Path) {
             OPENED_PATHS.lock().unwrap().push(path.to_path_buf());
         }
+
+        let _global = lock_global_overrides();
 
         let temp_root =
             std::env::temp_dir().join(format!("rustshot_settings_fail_{}", generate_timestamp()));
@@ -872,16 +937,16 @@ mod tests {
     #[test]
     fn parse_settings_json_garbage_input_returns_defaults() {
         let parsed = parse_settings_json("not json at all");
-        assert_eq!(parsed.default_format, "png");
-        assert_eq!(parsed.recording_fps, 30);
+        assert_eq!(parsed.default_format, Format::Png);
+        assert_eq!(parsed.recording_fps.get(), 30);
         assert!(parsed.auto_start);
     }
 
     #[test]
     fn parse_settings_json_unterminated_string_returns_defaults() {
         let parsed = parse_settings_json(r#"{ "default_format": "jpg"#);
-        assert_eq!(parsed.default_format, "png");
-        assert_eq!(parsed.recording_fps, 30);
+        assert_eq!(parsed.default_format, Format::Png);
+        assert_eq!(parsed.recording_fps.get(), 30);
         assert!(parsed.auto_start);
     }
 
@@ -895,28 +960,28 @@ mod tests {
     fn parse_settings_json_null_value_for_string_field_keeps_default() {
         let json = r#"{ "default_format": null }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.default_format, "png");
+        assert_eq!(parsed.default_format, Format::Png);
     }
 
     #[test]
     fn parse_settings_json_number_for_string_field_keeps_default() {
         let json = r#"{ "default_format": 42 }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.default_format, "png");
+        assert_eq!(parsed.default_format, Format::Png);
     }
 
     #[test]
     fn parse_settings_json_string_for_number_field_keeps_default() {
         let json = r#"{ "recording_fps": "sixty" }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.recording_fps, 30);
+        assert_eq!(parsed.recording_fps.get(), 30);
     }
 
     #[test]
     fn parse_settings_json_float_recording_fps_keeps_default() {
         let json = r#"{ "recording_fps": 30.5 }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.recording_fps, 30);
+        assert_eq!(parsed.recording_fps.get(), 30);
     }
 
     #[test]
@@ -930,14 +995,14 @@ mod tests {
     fn parse_settings_json_invalid_default_format_falls_back_to_png() {
         let json = r#"{ "default_format": "gif" }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.default_format, "png");
+        assert_eq!(parsed.default_format, Format::Png);
     }
 
     #[test]
     fn parse_settings_json_zero_recording_fps_falls_back_to_default() {
         let json = r#"{ "recording_fps": 0 }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.recording_fps, 30);
+        assert_eq!(parsed.recording_fps.get(), 30);
     }
 
     #[test]
@@ -945,15 +1010,15 @@ mod tests {
         let json = r#"{ "auto_start": false, "recording_fps": 60 }"#;
         let parsed = parse_settings_json(json);
         assert!(!parsed.auto_start);
-        assert_eq!(parsed.recording_fps, 60);
+        assert_eq!(parsed.recording_fps.get(), 60);
     }
 
     #[test]
     fn parse_settings_json_extra_commas_still_parses_valid_keys() {
         let json = r#"{ "default_format": "bmp", "recording_fps": 60, }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.default_format, "bmp");
-        assert_eq!(parsed.recording_fps, 60);
+        assert_eq!(parsed.default_format, Format::Bmp);
+        assert_eq!(parsed.recording_fps.get(), 60);
     }
 
     // --- extract_json_string edge cases ---
@@ -1024,8 +1089,8 @@ mod tests {
         let settings = Settings {
             screenshots_dir: PathBuf::from("C:\\Users\\test\\Pictures\\RustShot"),
             recordings_dir: PathBuf::from("C:\\Users\\test\\Pictures\\RustShot\\recordings"),
-            default_format: "png".to_string(),
-            recording_fps: 30,
+            default_format: Format::Png,
+            recording_fps: Fps::DEFAULT,
             auto_start: true,
         };
         let json = format_settings_json(&settings);
@@ -1039,8 +1104,8 @@ mod tests {
         let settings = Settings {
             screenshots_dir: PathBuf::from("/tmp/screens\"shots"),
             recordings_dir: PathBuf::from("/tmp/reco\"rdings"),
-            default_format: "png".to_string(),
-            recording_fps: 30,
+            default_format: Format::Png,
+            recording_fps: Fps::DEFAULT,
             auto_start: true,
         };
         let json = format_settings_json(&settings);
@@ -1055,8 +1120,8 @@ mod tests {
     fn settings_with_different_format_are_not_equal() {
         let mut a = Settings::default();
         let mut b = Settings::default();
-        a.default_format = "jpg".to_string();
-        b.default_format = "bmp".to_string();
+        a.default_format = Format::Jpg;
+        b.default_format = Format::Bmp;
         assert_ne!(a, b);
     }
 
@@ -1064,8 +1129,8 @@ mod tests {
     fn settings_with_different_fps_are_not_equal() {
         let mut a = Settings::default();
         let mut b = Settings::default();
-        a.recording_fps = 30;
-        b.recording_fps = 60;
+        a.recording_fps = Fps::new(30).unwrap();
+        b.recording_fps = Fps::new(60).unwrap();
         assert_ne!(a, b);
     }
 
@@ -1093,8 +1158,8 @@ mod tests {
         let s = Settings {
             screenshots_dir: PathBuf::from("/custom/shots"),
             recordings_dir: PathBuf::from("/custom/recs"),
-            default_format: "bmp".to_string(),
-            recording_fps: 120,
+            default_format: Format::Bmp,
+            recording_fps: Fps::new(120).unwrap(),
             auto_start: false,
         };
         let json = format_settings_json(&s);
@@ -1124,8 +1189,8 @@ mod tests {
         let original = Settings {
             screenshots_dir: PathBuf::from("/a/b/c"),
             recordings_dir: PathBuf::from("/d/e/f"),
-            default_format: "bmp".to_string(),
-            recording_fps: 120,
+            default_format: Format::Bmp,
+            recording_fps: Fps::new(120).unwrap(),
             auto_start: false,
         };
         let json = format_settings_json(&original);
@@ -1144,14 +1209,14 @@ mod tests {
         // The parser uses find() which returns the first match
         let json = r#"{ "default_format": "jpg", "default_format": "bmp" }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.default_format, "jpg");
+        assert_eq!(parsed.default_format, Format::Jpg);
     }
 
     #[test]
     fn parse_settings_json_duplicate_recording_fps_uses_first_occurrence() {
         let json = r#"{ "recording_fps": 15, "recording_fps": 60 }"#;
         let parsed = parse_settings_json(json);
-        assert_eq!(parsed.recording_fps, 15);
+        assert_eq!(parsed.recording_fps.get(), 15);
     }
 
     #[test]
@@ -1353,60 +1418,74 @@ mod tests {
 
     #[test]
     fn normalize_default_format_png_is_valid() {
-        assert_eq!(normalize_default_format("png"), "png");
+        assert_eq!(Format::from_settings_str("png").extension(), "png");
     }
 
     #[test]
     fn normalize_default_format_jpg_is_valid() {
-        assert_eq!(normalize_default_format("jpg"), "jpg");
+        assert_eq!(Format::from_settings_str("jpg").extension(), "jpg");
     }
 
     #[test]
     fn normalize_default_format_bmp_is_valid() {
-        assert_eq!(normalize_default_format("bmp"), "bmp");
+        assert_eq!(Format::from_settings_str("bmp").extension(), "bmp");
     }
 
     #[test]
     fn normalize_default_format_unknown_falls_back_to_png() {
-        assert_eq!(normalize_default_format("gif"), "png");
+        assert_eq!(Format::from_settings_str("gif").extension(), "png");
     }
 
     #[test]
     fn normalize_default_format_empty_falls_back_to_png() {
-        assert_eq!(normalize_default_format(""), "png");
+        assert_eq!(Format::from_settings_str("").extension(), "png");
     }
 
     #[test]
     fn normalize_default_format_case_sensitive() {
-        assert_eq!(normalize_default_format("PNG"), "png");
-        assert_eq!(normalize_default_format("Jpg"), "png");
+        assert_eq!(Format::from_settings_str("PNG").extension(), "png");
+        assert_eq!(Format::from_settings_str("Jpg").extension(), "png");
     }
 
     // --- normalize_recording_fps tests ---
 
     #[test]
     fn normalize_recording_fps_zero_returns_30() {
-        assert_eq!(normalize_recording_fps(0), 30);
+        assert_eq!(Fps::from_settings(0).get(), 30);
     }
 
     #[test]
     fn normalize_recording_fps_nonzero_returns_same() {
-        assert_eq!(normalize_recording_fps(60), 60);
+        assert_eq!(Fps::from_settings(60).get(), 60);
     }
 
     #[test]
     fn normalize_recording_fps_one_is_valid() {
-        assert_eq!(normalize_recording_fps(1), 1);
+        assert_eq!(Fps::from_settings(1).get(), 1);
     }
 
     #[test]
-    fn normalize_recording_fps_large_value_passes_through() {
-        assert_eq!(normalize_recording_fps(240), 240);
+    fn normalize_recording_fps_max_is_accepted() {
+        assert_eq!(Fps::from_settings(Fps::MAX).get(), Fps::MAX);
+    }
+
+    /// Previously `u32::MAX` passed straight through and only blew up later, at
+    /// record time. The `Fps` newtype makes an out-of-range rate unrepresentable,
+    /// so a hand-edited settings.json now falls back to the default instead.
+    #[test]
+    fn normalize_recording_fps_out_of_range_falls_back_to_default() {
+        assert_eq!(Fps::from_settings(Fps::MAX + 1), Fps::DEFAULT);
+        assert_eq!(Fps::from_settings(u32::MAX), Fps::DEFAULT);
     }
 
     #[test]
-    fn normalize_recording_fps_u32_max_passes_through() {
-        assert_eq!(normalize_recording_fps(u32::MAX), u32::MAX);
+    fn fps_new_rejects_out_of_range_but_from_settings_forgives() {
+        assert!(Fps::new(0).is_err());
+        assert!(Fps::new(Fps::MAX + 1).is_err());
+        assert_eq!(Fps::new(Fps::MAX).unwrap().get(), Fps::MAX);
+        // Same inputs, forgiving constructor: no error, just the default.
+        assert_eq!(Fps::from_settings(0), Fps::DEFAULT);
+        assert_eq!(Fps::from_settings(Fps::MAX + 1), Fps::DEFAULT);
     }
 
     // --- escape_json_string direct tests ---
@@ -1576,8 +1655,8 @@ mod tests {
         let settings = Settings {
             screenshots_dir: PathBuf::from("/tmp/shots"),
             recordings_dir: PathBuf::from("/tmp/recs"),
-            default_format: "jpg".to_string(),
-            recording_fps: 60,
+            default_format: Format::Jpg,
+            recording_fps: Fps::new(60).unwrap(),
             auto_start: false,
         };
 
@@ -1586,8 +1665,8 @@ mod tests {
 
         let content = std::fs::read_to_string(&path).unwrap();
         let loaded = parse_settings_json(&content);
-        assert_eq!(loaded.default_format, "jpg");
-        assert_eq!(loaded.recording_fps, 60);
+        assert_eq!(loaded.default_format, Format::Jpg);
+        assert_eq!(loaded.recording_fps.get(), 60);
         assert!(!loaded.auto_start);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1598,8 +1677,8 @@ mod tests {
         let settings = Settings {
             screenshots_dir: PathBuf::from("/home/user/Pictures"),
             recordings_dir: PathBuf::from("/home/user/Videos"),
-            default_format: "bmp".to_string(),
-            recording_fps: 144,
+            default_format: Format::Bmp,
+            recording_fps: Fps::new(144).unwrap(),
             auto_start: true,
         };
         let json = format_settings_json(&settings);
@@ -1708,17 +1787,17 @@ mod tests {
 
     #[test]
     fn normalize_default_format_jpeg_falls_back_to_png() {
-        assert_eq!(normalize_default_format("jpeg"), "png");
+        assert_eq!(Format::from_settings_str("jpeg").extension(), "png");
     }
 
     #[test]
     fn normalize_default_format_whitespace_falls_back_to_png() {
-        assert_eq!(normalize_default_format(" png"), "png");
+        assert_eq!(Format::from_settings_str(" png").extension(), "png");
     }
 
     #[test]
     fn normalize_default_format_tiff_falls_back_to_png() {
-        assert_eq!(normalize_default_format("tiff"), "png");
+        assert_eq!(Format::from_settings_str("tiff").extension(), "png");
     }
 
     // -------------------------------------------------------------------------
@@ -1727,12 +1806,12 @@ mod tests {
 
     #[test]
     fn normalize_recording_fps_60_is_valid() {
-        assert_eq!(normalize_recording_fps(60), 60);
+        assert_eq!(Fps::from_settings(60).get(), 60);
     }
 
     #[test]
     fn normalize_recording_fps_144_is_valid() {
-        assert_eq!(normalize_recording_fps(144), 144);
+        assert_eq!(Fps::from_settings(144).get(), 144);
     }
 
     // -------------------------------------------------------------------------
@@ -1761,21 +1840,21 @@ mod tests {
     fn parse_settings_json_normalizes_unknown_format_to_png() {
         let json = r#"{ "default_format": "webp" }"#;
         let s = parse_settings_json(json);
-        assert_eq!(s.default_format, "png");
+        assert_eq!(s.default_format, Format::Png);
     }
 
     #[test]
     fn parse_settings_json_normalizes_zero_fps_to_30() {
         let json = r#"{ "recording_fps": 0 }"#;
         let s = parse_settings_json(json);
-        assert_eq!(s.recording_fps, 30);
+        assert_eq!(s.recording_fps.get(), 30);
     }
 
     #[test]
     fn parse_settings_json_preserves_valid_fps() {
         let json = r#"{ "recording_fps": 120 }"#;
         let s = parse_settings_json(json);
-        assert_eq!(s.recording_fps, 120);
+        assert_eq!(s.recording_fps.get(), 120);
     }
 
     #[test]
@@ -1822,8 +1901,8 @@ mod tests {
         let original = Settings {
             screenshots_dir: PathBuf::from("/tmp/a"),
             recordings_dir: PathBuf::from("/tmp/b"),
-            default_format: "bmp".to_string(),
-            recording_fps: 240,
+            default_format: Format::Bmp,
+            recording_fps: Fps::new(240).unwrap(),
             auto_start: false,
         };
         let json = format_settings_json(&original);
@@ -1834,12 +1913,12 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // MAX_RECORDING_FPS constant
+    // Fps::MAX constant
     // -------------------------------------------------------------------------
 
     #[test]
     fn max_recording_fps_is_240() {
-        assert_eq!(MAX_RECORDING_FPS, 240);
+        assert_eq!(Fps::MAX, 240);
     }
 
     // -------------------------------------------------------------------------
@@ -1949,7 +2028,7 @@ mod tests {
             parsed.screenshots_dir,
             PathBuf::from(r#"/tmp/"recording_fps": 999"#)
         );
-        assert_eq!(parsed.recording_fps, 30);
+        assert_eq!(parsed.recording_fps.get(), 30);
     }
 
     #[test]
@@ -1963,7 +2042,7 @@ mod tests {
 
         let parsed = parse_settings_json(json);
 
-        assert_eq!(parsed.recording_fps, 30);
+        assert_eq!(parsed.recording_fps.get(), 30);
     }
 
     #[test]
@@ -1971,7 +2050,7 @@ mod tests {
         for fps in [1, 30, 60, 120, 240] {
             let json = format!(r#"{{ "recording_fps": {} }}"#, fps);
             let parsed = parse_settings_json(&json);
-            assert_eq!(parsed.recording_fps, fps);
+            assert_eq!(parsed.recording_fps.get(), fps);
         }
     }
 
@@ -1980,16 +2059,16 @@ mod tests {
         let original = Settings {
             screenshots_dir: PathBuf::from("/home/用户/截图"),
             recordings_dir: PathBuf::from("/home/用户/录像"),
-            default_format: "jpg".to_string(),
-            recording_fps: 24,
+            default_format: Format::Jpg,
+            recording_fps: Fps::new(24).unwrap(),
             auto_start: true,
         };
         let json = format_settings_json(&original);
         let parsed = parse_settings_json(&json);
         assert_eq!(parsed.screenshots_dir, original.screenshots_dir);
         assert_eq!(parsed.recordings_dir, original.recordings_dir);
-        assert_eq!(parsed.default_format, "jpg");
-        assert_eq!(parsed.recording_fps, 24);
+        assert_eq!(parsed.default_format, Format::Jpg);
+        assert_eq!(parsed.recording_fps.get(), 24);
     }
 
     #[test]
@@ -2175,8 +2254,8 @@ mod tests {
         let s = Settings {
             screenshots_dir: PathBuf::from("/tmp/shots"),
             recordings_dir: PathBuf::from("/tmp/recs"),
-            default_format: "bmp".to_string(),
-            recording_fps: 60,
+            default_format: Format::Bmp,
+            recording_fps: Fps::new(60).unwrap(),
             auto_start: false,
         };
         let cloned = s.clone();
@@ -2187,7 +2266,9 @@ mod tests {
     fn settings_partial_eq_detects_difference() {
         let s1 = Settings::default();
         let s2 = Settings {
-            recording_fps: 999,
+            // Any valid non-default rate. The old value here was 999, which the
+            // `Fps` newtype now makes unrepresentable.
+            recording_fps: Fps::new(60).unwrap(),
             ..Settings::default()
         };
         assert_ne!(s1, s2);
@@ -2210,8 +2291,8 @@ mod tests {
         let original = Settings {
             screenshots_dir: PathBuf::from(r"C:\Users\test\Documents\My Pictures"),
             recordings_dir: PathBuf::from(r"D:\Videos\Screen Recordings"),
-            default_format: "png".to_string(),
-            recording_fps: 30,
+            default_format: Format::Png,
+            recording_fps: Fps::DEFAULT,
             auto_start: true,
         };
         let json = format_settings_json(&original);
@@ -2365,7 +2446,7 @@ mod tests {
     fn parse_settings_json_ignores_unknown_keys() {
         let json = r#"{"unknown_key": "value", "default_format": "bmp"}"#;
         let settings = parse_settings_json(json);
-        assert_eq!(settings.default_format, "bmp");
+        assert_eq!(settings.default_format, Format::Bmp);
     }
 
     #[test]
@@ -2439,9 +2520,9 @@ mod tests {
 
     #[test]
     fn normalize_default_format_all_supported() {
-        assert_eq!(normalize_default_format("png"), "png");
-        assert_eq!(normalize_default_format("jpg"), "jpg");
-        assert_eq!(normalize_default_format("bmp"), "bmp");
+        assert_eq!(Format::from_settings_str("png").extension(), "png");
+        assert_eq!(Format::from_settings_str("jpg").extension(), "jpg");
+        assert_eq!(Format::from_settings_str("bmp").extension(), "bmp");
     }
 
     // -------------------------------------------------------------------------
@@ -2483,14 +2564,17 @@ mod tests {
             screenshots_dir in "[a-zA-Z0-9/_]{1,30}",
             recordings_dir in "[a-zA-Z0-9/_]{1,30}",
             default_format in prop_oneof!["png", "jpg", "bmp"],
-            recording_fps in 1u32..=1000,
+            // The strategy is bounded by the type's own invariant: an `Fps`
+            // above `Fps::MAX` is not constructible, so there is nothing to
+            // generate outside this range.
+            recording_fps in 1u32..=Fps::MAX,
             auto_start in any::<bool>(),
         ) {
             let original = Settings {
                 screenshots_dir: PathBuf::from(&screenshots_dir),
                 recordings_dir: PathBuf::from(&recordings_dir),
-                default_format: default_format.to_string(),
-                recording_fps,
+                default_format: Format::from_settings_str(&default_format),
+                recording_fps: Fps::new(recording_fps).expect("strategy is bounded by Fps::MAX"),
                 auto_start,
             };
 

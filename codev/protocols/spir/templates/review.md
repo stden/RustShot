@@ -99,14 +99,15 @@ Iterations that could have been prevented with better builder behavior:
 
 ## Architecture Updates
 
-[What was added/changed in `codev/resources/arch.md`, or why no changes were needed.]
+[What was added/changed in the module rustdoc (start at `src/lib.rs`), or why no changes were needed.]
 
 - Updated: [section name] — [what was added/changed]
 - Or: "No architecture updates needed — [brief reason]"
 
 ## Lessons Learned Updates
 
-[What was added/changed in `codev/resources/lessons-learned.md`, or why no changes were needed.]
+[Durable lessons worth keeping. Prefer recording them as code comments next to the
+code they constrain, rather than in a separate document.]
 
 - Added: [category] — [lesson summary]
 - Or: "No lessons learned updates needed — [brief reason]"

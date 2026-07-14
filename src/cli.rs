@@ -9,13 +9,10 @@ pub fn child_process_is_running<T, E>(try_wait_result: Result<Option<T>, E>) -> 
     matches!(try_wait_result, Ok(None))
 }
 
-pub fn settings_capture_format(default_format: &str) -> capture::Format {
-    match default_format {
-        "jpg" => capture::Format::Jpg,
-        "bmp" => capture::Format::Bmp,
-        _ => capture::Format::Png,
-    }
-}
+// `settings_capture_format(&str) -> Format` used to live here, mapping the
+// settings format string onto the enum. It is gone: `Settings` now stores a
+// `Format` directly, so the conversion happens exactly once, in
+// `Format::from_settings_str`, at the JSON boundary.
 
 pub fn cli_format_flag_present_in<I, S>(args: I) -> bool
 where
@@ -138,6 +135,51 @@ pub fn write_error_line<W: Write>(mut writer: W, message: &str) -> io::Result<()
     writeln!(writer, "{message}")
 }
 
+/// Application mode determined from CLI arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    Tray,
+    Cli,
+    Selection,
+    SelectRecord,
+}
+
+/// Request struct capturing the flags needed to decide the application mode.
+#[derive(Debug, Clone)]
+pub struct AppModeRequest {
+    pub select_record: bool,
+    pub select: bool,
+    pub cli: bool,
+    pub list: bool,
+    pub window: bool,
+    pub has_output: bool,
+    pub has_screen: bool,
+    pub format_explicit: bool,
+}
+
+/// Determines which application mode to run based on CLI flags.
+///
+/// Priority: select_record > select > CLI indicators > tray (default).
+pub fn decide_app_mode(req: AppModeRequest) -> AppMode {
+    if req.select_record {
+        return AppMode::SelectRecord;
+    }
+    if req.select {
+        return AppMode::Selection;
+    }
+    if should_run_cli_mode(
+        req.cli,
+        req.list,
+        req.window,
+        req.has_output,
+        req.has_screen,
+        req.format_explicit,
+    ) {
+        return AppMode::Cli;
+    }
+    AppMode::Tray
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,53 +210,57 @@ mod tests {
     }
 
     // =========================================================================
-    // settings_capture_format
+    // Format::from_settings_str
+    //
+    // These cases used to test `settings_capture_format(&str)`. That function is
+    // gone; parsing a settings format string is now the enum's own constructor.
+    // The behaviour it must preserve is unchanged.
     // =========================================================================
 
     #[test]
     fn settings_format_jpg() {
-        assert!(matches!(
-            settings_capture_format("jpg"),
+        assert_eq!(
+            capture::Format::from_settings_str("jpg"),
             capture::Format::Jpg
-        ));
+        );
     }
 
     #[test]
     fn settings_format_bmp() {
-        assert!(matches!(
-            settings_capture_format("bmp"),
+        assert_eq!(
+            capture::Format::from_settings_str("bmp"),
             capture::Format::Bmp
-        ));
+        );
     }
 
     #[test]
     fn settings_format_png() {
-        assert!(matches!(
-            settings_capture_format("png"),
+        assert_eq!(
+            capture::Format::from_settings_str("png"),
             capture::Format::Png
-        ));
+        );
     }
 
     #[test]
     fn settings_format_unknown_defaults_to_png() {
-        assert!(matches!(
-            settings_capture_format("webp"),
+        assert_eq!(
+            capture::Format::from_settings_str("webp"),
             capture::Format::Png
-        ));
+        );
     }
 
     #[test]
     fn settings_format_empty_defaults_to_png() {
-        assert!(matches!(settings_capture_format(""), capture::Format::Png));
+        assert_eq!(capture::Format::from_settings_str(""), capture::Format::Png);
     }
 
     #[test]
     fn settings_format_case_sensitive_jpg() {
-        // "JPG" is not "jpg", so falls back to Png
-        assert!(matches!(
-            settings_capture_format("JPG"),
+        // "JPG" is not "jpg", so falls back to Png.
+        assert_eq!(
+            capture::Format::from_settings_str("JPG"),
             capture::Format::Png
-        ));
+        );
     }
 
     // =========================================================================

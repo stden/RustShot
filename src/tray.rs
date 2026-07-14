@@ -12,13 +12,86 @@ use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
 };
 
-// Menu item IDs
-pub const MENU_CAPTURE: &str = "capture";
-pub const MENU_OPEN_FOLDER: &str = "open_folder";
-pub const MENU_EXIT: &str = "exit";
-pub const MENU_CAPTURE_WINDOW: &str = "capture_window";
-pub const MENU_SETTINGS: &str = "settings";
-pub const MENU_START_RECORD: &str = "start_record";
+/// What a tray menu entry does.
+///
+/// This enum — not the raw id strings — is what the event loop dispatches on, so
+/// adding an entry is a compile error until it is handled. The `&str` ids below
+/// exist only because `muda` round-trips ids through the OS as strings; they are
+/// the wire format, and they are derived from this enum so the two cannot drift.
+///
+/// Recording is a SINGLE [`MenuAction::ToggleRecord`] entry
+/// (`TOGGLE_RECORD_LABEL`). A separate Stop item used to exist but was removed as
+/// a misleading affordance: the tray menu is built once at startup and cannot
+/// reflect live recording state, so a "Stop" entry appeared enabled even when
+/// nothing was recording. The legacy `"stop_record"` id is still *accepted* by
+/// [`MenuAction::from_id`] and routes to the same toggle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuAction {
+    Capture,
+    CaptureWindow,
+    OpenFolder,
+    ToggleRecord,
+    Settings,
+    Exit,
+}
+
+impl MenuAction {
+    /// Every menu action. Used to resolve an id back to its action without a
+    /// second lookup table.
+    pub const ALL: [MenuAction; 6] = [
+        MenuAction::Capture,
+        MenuAction::CaptureWindow,
+        MenuAction::OpenFolder,
+        MenuAction::ToggleRecord,
+        MenuAction::Settings,
+        MenuAction::Exit,
+    ];
+
+    /// The id string handed to the OS for this entry.
+    pub const fn id(self) -> &'static str {
+        match self {
+            MenuAction::Capture => "capture",
+            MenuAction::CaptureWindow => "capture_window",
+            MenuAction::OpenFolder => "open_folder",
+            MenuAction::ToggleRecord => "start_record",
+            MenuAction::Settings => "settings",
+            MenuAction::Exit => "exit",
+        }
+    }
+
+    /// Resolve an id coming back from the OS. Unknown ids yield `None` so the
+    /// caller can ignore them rather than guess.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rustshot::tray::MenuAction;
+    ///
+    /// assert_eq!(MenuAction::from_id("capture"), Some(MenuAction::Capture));
+    /// // Legacy id from the old two-item recording menu maps to the same toggle:
+    /// assert_eq!(MenuAction::from_id("stop_record"), Some(MenuAction::ToggleRecord));
+    /// assert_eq!(MenuAction::from_id("nonsense"), None);
+    /// ```
+    pub fn from_id(id: &str) -> Option<MenuAction> {
+        // The legacy id has no variant of its own; it routes to the same toggle.
+        if id == MENU_STOP_RECORD {
+            return Some(MenuAction::ToggleRecord);
+        }
+        // Everything else round-trips through `id()`, so there is no second
+        // table of strings that could drift out of sync with the first.
+        MenuAction::ALL.into_iter().find(|action| action.id() == id)
+    }
+}
+
+// Menu item ids (the OS-level wire format), derived from `MenuAction`.
+pub const MENU_CAPTURE: &str = MenuAction::Capture.id();
+pub const MENU_OPEN_FOLDER: &str = MenuAction::OpenFolder.id();
+pub const MENU_EXIT: &str = MenuAction::Exit.id();
+pub const MENU_CAPTURE_WINDOW: &str = MenuAction::CaptureWindow.id();
+pub const MENU_SETTINGS: &str = MenuAction::Settings.id();
+pub const MENU_START_RECORD: &str = MenuAction::ToggleRecord.id();
+/// Legacy id from the old two-entry recording menu. Still accepted by
+/// [`MenuAction::from_id`], which routes it to [`MenuAction::ToggleRecord`].
 pub const MENU_STOP_RECORD: &str = "stop_record";
 const DEFAULT_ICON_SIZE: u32 = 32;
 const TOGGLE_RECORD_LABEL: &str = "Start or Stop Recording (Ctrl+Shift+R)";

@@ -36,7 +36,7 @@ Steps:
    - Current Worktree State: note any relevant uncommitted changes rather than ignoring them.
    - Key Metrics: commits, tests passing, files created/deleted, net LOC.
    - Lessons Learned: what went well, what was hard, what to do differently.
-   - Architecture Updates: note if `codev/resources/arch.md` needs updating.
+   - Architecture Updates: note if the module rustdoc (start at `src/lib.rs`) needs updating.
    - Technical Debt: any shortcuts or rough edges left behind.
    - Follow-up Items: future work identified but out of scope.
 
@@ -48,5 +48,6 @@ Rules:
 - Be honest. If criteria were not met, mark them as not met and explain why.
 - Keep the review factual. Avoid vague praise.
 - Do NOT modify the spec or plan during this step.
-- If `codev/resources/arch.md` needs updating with new modules or design decisions,
-  note it clearly in the review and offer to update it separately.
+- Architecture and design rationale live in the code as rustdoc (see `src/lib.rs`),
+  not in a separate arch document. If new modules or design decisions need
+  documenting, note it clearly in the review and offer to update the rustdoc separately.

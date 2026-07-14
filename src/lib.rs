@@ -17,6 +17,7 @@
 //!         │                        │ (H.264 MP4)  │
 //!         │                        └──────────────┘
 //!         │
+//!         ├──▶  cli.rs          — pure CLI helpers + app-mode policy
 //!         ├──▶  tray.rs         — system tray icon + context menu
 //!         └──▶  settings.rs     — JSON config persistence
 //!              settings_dialog.rs — native Win32 settings UI

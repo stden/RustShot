@@ -7,6 +7,7 @@ use rustshot::capture::{self, Format};
 use rustshot::cli;
 use rustshot::record;
 use rustshot::selection;
+use rustshot::settings::Fps;
 use rustshot::settings::{self, Settings};
 use rustshot::tray;
 
@@ -560,8 +561,8 @@ fn bench_format_settings_json(c: &mut Criterion) {
     let s = Settings {
         screenshots_dir: PathBuf::from("/home/user/Pictures/RustShot"),
         recordings_dir: PathBuf::from("/home/user/Pictures/RustShot/recordings"),
-        default_format: "png".to_string(),
-        recording_fps: 30,
+        default_format: Format::Png,
+        recording_fps: Fps::DEFAULT,
         auto_start: true,
     };
     let verbose = Settings {
@@ -569,8 +570,8 @@ fn bench_format_settings_json(c: &mut Criterion) {
         recordings_dir: PathBuf::from(
             "C:/Users/example/OneDrive - Company/Pictures/RustShot/recordings",
         ),
-        default_format: "bmp".to_string(),
-        recording_fps: 144,
+        default_format: Format::Bmp,
+        recording_fps: Fps::new(144).unwrap(),
         auto_start: false,
     };
     let mut group = c.benchmark_group("format_settings_json");
@@ -762,19 +763,21 @@ fn bench_extract_json_bool(c: &mut Criterion) {
 // cli helpers
 // ---------------------------------------------------------------------------
 
+// Was `cli::settings_capture_format`; that mapper is gone, since parsing a
+// settings format string is now `Format::from_settings_str`.
 fn bench_settings_capture_format(c: &mut Criterion) {
     let mut group = c.benchmark_group("settings_capture_format");
 
     group.bench_function("png_fallback", |b| {
-        b.iter(|| cli::settings_capture_format(black_box("gif")));
+        b.iter(|| Format::from_settings_str(black_box("gif")));
     });
 
     group.bench_function("jpg", |b| {
-        b.iter(|| cli::settings_capture_format(black_box("jpg")));
+        b.iter(|| Format::from_settings_str(black_box("jpg")));
     });
 
     group.bench_function("bmp", |b| {
-        b.iter(|| cli::settings_capture_format(black_box("bmp")));
+        b.iter(|| Format::from_settings_str(black_box("bmp")));
     });
 
     group.finish();

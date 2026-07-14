@@ -367,6 +367,18 @@ fn fallback_physical_y(
         .map(|(_, candidate)| candidate)
 }
 
+/// Map every screen from logical (`display_info`) space into physical space.
+///
+/// There is deliberately **no single global scale factor**. `display_info`
+/// reports logical coordinates while capture buffers are physical, and on a
+/// mixed-DPI setup one shared scale misplaces every non-primary monitor.
+///
+/// Instead the primary monitor is anchored at physical `(0, 0)` and each
+/// neighbour's physical origin is inferred from *its own* physical size via
+/// logical adjacency (`infer_physical_x/y_from_*_neighbor`, falling back to
+/// `fallback_physical_x/y`). Because a screen can only be placed once one of
+/// its neighbours is placed, the resolver loops until a pass makes no further
+/// progress, and errors out if a screen is left disconnected from the anchor.
 fn build_physical_screen_layouts(
     inputs: &[ScreenLayoutInput],
 ) -> Result<Vec<PhysicalScreenLayout>, String> {
@@ -512,6 +524,15 @@ fn normalize_physical_screen_layouts(
     Ok((normalized, min_x, min_y, width, height))
 }
 
+/// Resolve a physical region to the single screen that fully contains it, and
+/// translate the region into that screen's local coordinates.
+///
+/// A recording region must lie entirely inside one monitor; a region spanning
+/// two screens is rejected. The encoder loop captures through
+/// `Screen::capture_area` on one screen and has no compositing path, so a
+/// cross-monitor region cannot be recorded at all. Failing loudly here — at
+/// selection time — is why the check exists: the alternative is a silently
+/// cropped or corrupt MP4.
 fn resolve_recording_selection(
     layouts: &[PhysicalScreenLayout],
     region: Region,
@@ -1110,6 +1131,14 @@ pub fn get_cursor_position() -> Result<(i32, i32), String> {
 ///
 /// Returns a `VirtualDesktopCapture` containing just the one screen,
 /// positioned so the overlay window covers exactly that monitor.
+///
+/// The overlay intentionally covers only the monitor under the cursor. An
+/// earlier design composited every screen into one window spanning the whole
+/// virtual desktop (see [`capture_virtual_desktop`], kept as dead code). That
+/// was abandoned: a single window spanning mixed-DPI monitors gets stretched
+/// and misplaced by the Windows compositor, and recording regions have to be
+/// single-monitor anyway (see [`resolve_recording_selection`]). Do not restore
+/// the spanning overlay without solving the mixed-DPI stretching first.
 fn capture_screen_at_cursor() -> Result<VirtualDesktopCapture, String> {
     let screens = Screen::all().map_err(|e| format!("Failed to get screens: {}", e))?;
     if screens.is_empty() {
@@ -3814,6 +3843,116 @@ mod tests {
         );
     }
 
+    #[test]
+    fn infer_physical_y_from_horizontal_neighbor_adjacent_left() {
+        // Target sits to the LEFT of the reference: target_right == reference.logical_x.
+        let reference = ScreenLayoutInput {
+            logical_x: 1920,
+            logical_y: 0,
+            logical_width: 1920,
+            logical_height: 1080,
+            physical_width: 1920,
+            physical_height: 1080,
+            is_primary: true,
+        };
+        let target = ScreenLayoutInput {
+            logical_x: 0,
+            logical_y: 100,
+            logical_width: 1920,
+            logical_height: 1080,
+            physical_width: 1920,
+            physical_height: 1080,
+            is_primary: false,
+        };
+        // Adjacent left, y_diff = 100, scale ratio = 1.0, so physical y = 0 + 100 = 100.
+        assert_eq!(
+            infer_physical_y_from_horizontal_neighbor(&reference, &target, 0),
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn infer_physical_y_from_horizontal_neighbor_high_dpi_scales_y_diff() {
+        let reference = ScreenLayoutInput {
+            logical_x: 0,
+            logical_y: 0,
+            logical_width: 1920,
+            logical_height: 1080,
+            physical_width: 1920,
+            physical_height: 1080,
+            is_primary: true,
+        };
+        let target = ScreenLayoutInput {
+            logical_x: 1920,
+            logical_y: 50,
+            logical_width: 1920,
+            logical_height: 1080,
+            physical_width: 3840,
+            physical_height: 2160,
+            is_primary: false,
+        };
+        // Adjacent right, y_diff = 50, scale ratio = 2160/1080 = 2.0, so physical y = 0 + 100.
+        assert_eq!(
+            infer_physical_y_from_horizontal_neighbor(&reference, &target, 0),
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn infer_physical_x_from_vertical_neighbor_adjacent_above() {
+        // Target sits ABOVE the reference: target_bottom == reference.logical_y.
+        let reference = ScreenLayoutInput {
+            logical_x: 0,
+            logical_y: 1080,
+            logical_width: 1920,
+            logical_height: 1080,
+            physical_width: 1920,
+            physical_height: 1080,
+            is_primary: true,
+        };
+        let target = ScreenLayoutInput {
+            logical_x: 300,
+            logical_y: 0,
+            logical_width: 1920,
+            logical_height: 1080,
+            physical_width: 1920,
+            physical_height: 1080,
+            is_primary: false,
+        };
+        // Adjacent above, x_diff = 300, scale ratio = 1.0, so physical x = 0 + 300 = 300.
+        assert_eq!(
+            infer_physical_x_from_vertical_neighbor(&reference, &target, 0),
+            Some(300)
+        );
+    }
+
+    #[test]
+    fn infer_physical_x_from_vertical_neighbor_high_dpi_scales_x_diff() {
+        let reference = ScreenLayoutInput {
+            logical_x: 0,
+            logical_y: 0,
+            logical_width: 1920,
+            logical_height: 1080,
+            physical_width: 1920,
+            physical_height: 1080,
+            is_primary: true,
+        };
+        let target = ScreenLayoutInput {
+            logical_x: 80,
+            logical_y: 1080,
+            logical_width: 1920,
+            logical_height: 1080,
+            physical_width: 3840,
+            physical_height: 2160,
+            is_primary: false,
+        };
+        // Adjacent below, x_diff = 80, scale ratio = 3840/1920 = 2.0, so physical x = 0 + 160.
+        assert_eq!(
+            infer_physical_x_from_vertical_neighbor(&reference, &target, 0),
+            Some(160)
+        );
+    }
+
     // =========================================================================
     // build_physical_screen_layouts
     // =========================================================================
@@ -4390,6 +4529,82 @@ mod tests {
         }];
         let positions = vec![Some(0)];
         assert_eq!(fallback_physical_y(&inputs, &positions, 5), None);
+    }
+
+    #[test]
+    fn fallback_physical_x_prefers_left_over_right_neighbor() {
+        // Both a left and a right neighbor are equally close; the left wins.
+        let inputs = vec![
+            ScreenLayoutInput {
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: 1920,
+                logical_height: 1080,
+                physical_width: 1920,
+                physical_height: 1080,
+                is_primary: true,
+            },
+            ScreenLayoutInput {
+                logical_x: 2000,
+                logical_y: 0,
+                logical_width: 1920,
+                logical_height: 1080,
+                physical_width: 1920,
+                physical_height: 1080,
+                is_primary: false,
+            },
+            ScreenLayoutInput {
+                logical_x: 4000,
+                logical_y: 0,
+                logical_width: 1920,
+                logical_height: 1080,
+                physical_width: 1920,
+                physical_height: 1080,
+                is_primary: false,
+            },
+        ];
+        let positions = vec![Some(0), None, Some(5000)];
+        // Left candidate: 0 + 1920 + scaled_gap(80) = 2000.
+        // Right candidate: 5000 - 1920 - 80 = 3000. Left is preferred.
+        assert_eq!(fallback_physical_x(&inputs, &positions, 1), Some(2000));
+    }
+
+    #[test]
+    fn fallback_physical_y_prefers_above_over_below_neighbor() {
+        // Both an above and a below neighbor are equally close; the above wins.
+        let inputs = vec![
+            ScreenLayoutInput {
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: 1920,
+                logical_height: 1080,
+                physical_width: 1920,
+                physical_height: 1080,
+                is_primary: true,
+            },
+            ScreenLayoutInput {
+                logical_x: 0,
+                logical_y: 1200,
+                logical_width: 1920,
+                logical_height: 1080,
+                physical_width: 1920,
+                physical_height: 1080,
+                is_primary: false,
+            },
+            ScreenLayoutInput {
+                logical_x: 0,
+                logical_y: 2400,
+                logical_width: 1920,
+                logical_height: 1080,
+                physical_width: 1920,
+                physical_height: 1080,
+                is_primary: false,
+            },
+        ];
+        let positions = vec![Some(0), None, Some(5000)];
+        // Above candidate: 0 + 1080 + scaled_gap(120) = 1200.
+        // Below candidate: 5000 - 1080 - 120 = 3800. Above is preferred.
+        assert_eq!(fallback_physical_y(&inputs, &positions, 1), Some(1200));
     }
 
     // =========================================================================

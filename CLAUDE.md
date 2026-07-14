@@ -83,9 +83,17 @@ This project uses the Codev context-driven development methodology.
 - Specifications: codev/specs/
 - Plans: codev/plans/
 - Reviews: codev/reviews/
-- Resources: codev/resources/
 
 See codev/protocols/spir/protocol.md for full protocol details.
+
+### 📖 Where documentation lives
+- **Architecture and design rationale live in the code**, as module/function
+  rustdoc — start with `src/lib.rs`. Do not re-create a separate arch doc.
+- Behaviour is specified executably: Gherkin features in `tests/features/`,
+  run by `tests/bdd.rs` (`cargo test --test bdd`).
+- General (non-RustShot) Rust/testing guidance lives in the central `iopm`
+  repo under `docs/`, not here.
+- See `docs/README.md` for the documentation map.
 
 ---
 

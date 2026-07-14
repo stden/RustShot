@@ -1,0 +1,15 @@
+name = "test"
+description = "Run the full RustShot test suite and report failures"
+developer_instructions = """
+Run all tests for RustShot with `cargo test` and report the results clearly.\r
+\r
+Steps:\r
+1. Run `cargo test` in the project root.\r
+2. If all tests pass, confirm with the count of tests that passed.\r
+3. If any tests fail, show:\r
+   - The name of each failing test\r
+   - The failure output / assertion message\r
+   - A brief diagnosis of what likely caused the failure\r
+4. Do NOT auto-fix failures. Report them and stop. Only fix if the user explicitly asks.\r
+\r
+Keep the output concise. Lead with pass/fail status, then details."""

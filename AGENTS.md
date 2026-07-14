@@ -77,16 +77,6 @@ cargo bench          # Run benchmarks
 - Screen recording is Windows-only (Media Foundation).
 - Windows has tray and hotkey support — easy to break accidentally.
 
-## Lessons Learned
-
-- For GitLab CI failures, fetch the raw job log with `glab api projects/stden%2FRustShot/jobs/<job_id>/trace` when the web page is not enough.
-- The CI clippy job runs `cargo clippy --tests -- -D warnings`; reproduce that exact command for clippy failures and keep it green before pushing.
-- Do not deny entire `clippy::pedantic` or `clippy::nursery` groups at workspace level unless the whole codebase is already clean for those groups.
-- The repository config uses `sccache` as the Rust compiler wrapper. If local validation fails because `sccache` cannot run or is sandboxed, retry verification with `RUSTC_WRAPPER` unset while preserving the checked-in config.
-- Keep platform-specific state behind the same `#[cfg(...)]` as the code that reads it. Dummy values for other platforms can become `dead_code` under `-D warnings`.
-- After pushing, query the exact pushed commit SHA with `git rev-parse HEAD`, then check GitLab with `glab api "projects/stden%2FRustShot/pipelines?ref=<branch>&sha=<sha>"`.
-- Pipeline jobs can be inspected with `glab api projects/stden%2FRustShot/pipelines/<pipeline_id>/jobs`; if a job fails, fetch its trace before guessing.
-
 ## Codev Methodology
 
 This project uses the Codev SPIR protocol for structured development.

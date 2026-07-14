@@ -16,7 +16,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Supported output image formats.
-#[derive(Debug, Clone, Copy, Default)]
+///
+/// This enum is the single source of truth for "which formats exist". Settings
+/// store it directly rather than a `String`, so an unsupported format is not
+/// representable once parsed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Format {
     #[default]
     Png,
@@ -25,6 +29,10 @@ pub enum Format {
 }
 
 impl Format {
+    /// Every supported format, in settings/UI order. The first entry is the
+    /// default used as the fallback for unrecognised input.
+    pub const ALL: [Format; 3] = [Format::Png, Format::Jpg, Format::Bmp];
+
     /// Map this format to the corresponding [`image::ImageFormat`] variant.
     pub fn to_image_format(self) -> ImageFormat {
         match self {
@@ -34,13 +42,38 @@ impl Format {
         }
     }
 
-    /// File extension string (without leading dot) for this format.
-    pub fn extension(&self) -> &str {
+    /// File extension string (without leading dot) for this format. This is
+    /// also exactly how the format is written to `settings.json`.
+    pub fn extension(&self) -> &'static str {
         match self {
             Format::Png => "png",
             Format::Jpg => "jpg",
             Format::Bmp => "bmp",
         }
+    }
+
+    /// Parse a format as stored in `settings.json`.
+    ///
+    /// Deliberately **case-sensitive** and forgiving: anything unrecognised
+    /// falls back to PNG rather than failing, because `settings.json` is
+    /// hand-editable and a bad value should not brick the app. Note the
+    /// contrast with [`crate::cli::format_from_extension`], which *is*
+    /// case-insensitive because a user may well type `--output shot.PNG`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rustshot::capture::Format;
+    ///
+    /// assert_eq!(Format::from_settings_str("jpg"), Format::Jpg);
+    /// assert_eq!(Format::from_settings_str("webp"), Format::Png); // unknown → default
+    /// assert_eq!(Format::from_settings_str("JPG"), Format::Png);  // case-sensitive
+    /// ```
+    pub fn from_settings_str(value: &str) -> Format {
+        Format::ALL
+            .into_iter()
+            .find(|fmt| fmt.extension() == value)
+            .unwrap_or(Format::Png)
     }
 }
 
@@ -269,7 +302,12 @@ pub fn capture_screenshot_in_dir(
             let captured = screens[idx]
                 .capture()
                 .map_err(|e| format!("Failed to capture screen: {}", e))?;
-            // Convert from screenshots' image version to ours via raw bytes
+            // Forced version bridge, not a stylistic choice: `screenshots` 0.8
+            // pins `image` 0.24 internally while RustShot builds against 0.25,
+            // so the two `RgbaImage` types are distinct and the buffer has to be
+            // round-tripped through raw bytes. This costs one full-buffer copy
+            // per capture; removing it means migrating off `screenshots`
+            // (e.g. to `xcap`).
             image::RgbaImage::from_raw(captured.width(), captured.height(), captured.into_raw())
                 .ok_or_else(|| "Failed to convert captured image".to_string())
         },
@@ -376,6 +414,10 @@ fn capture_active_window_platform() -> Result<image::RgbaImage, String> {
         let width = (right - left) as u32;
         let height = (bottom - top) as u32;
 
+        // `GetDC(None)` is deliberate: a null window handle returns the DC for
+        // the entire screen, which is what BitBlt needs here. Passing
+        // `Some(HWND::default())` is NOT equivalent — that is a real (zero)
+        // handle, not "no window" — and is incorrect Win32 usage.
         let hdc_screen = GetDC(None);
         let hdc_mem = CreateCompatibleDC(hdc_screen);
         let hbm = CreateCompatibleBitmap(hdc_screen, width as i32, height as i32);
@@ -469,7 +511,7 @@ fn capture_active_window_platform() -> Result<image::RgbaImage, String> {
 /// ```
 #[allow(dead_code)]
 pub fn bgra_to_rgba(pixels: &mut [u8]) {
-    for chunk in pixels.chunks_exact_mut(4) {
+    for chunk in pixels.as_chunks_mut::<4>().0 {
         chunk.swap(0, 2); // swap B and R
     }
 }

@@ -1,0 +1,50 @@
+name = "review"
+description = "Create a Codev SPIR review document in codev/reviews/ for RustShot"
+developer_instructions = """
+Create a SPIR review document for RustShot following the template at\r
+`codev/protocols/spir/templates/review.md`.\r
+\r
+Steps:\r
+1. **Find the matching spec and plan.**\r
+   The review filename must match the spec and plan exactly (same `####-name` prefix).\r
+   List `codev/specs/` and `codev/plans/` to locate the files.\r
+   If the user has not specified which feature, ask before continuing.\r
+\r
+2. **Read the spec and plan.**\r
+   Open both files and extract:\r
+   - All success/acceptance criteria from the spec.\r
+   - All phases and their acceptance criteria from the plan.\r
+   - Any deviations or notes recorded during implementation.\r
+\r
+3. **Gather implementation facts.**\r
+   Run these commands to collect objective data:\r
+   - `git log --oneline` — count commits on the branch.\r
+   - `cargo test` — confirm all tests pass; note count.\r
+   - `git status --short` — capture any uncommitted changes that may affect the review.\r
+   - List files created or deleted for this feature.\r
+\r
+4. **Determine the filename.**\r
+   Use the exact same name as the spec and plan: `codev/reviews/####-name.md`.\r
+\r
+5. **Fill in the template.**\r
+   Copy the structure from `codev/protocols/spir/templates/review.md`.\r
+   - Summary: what was built, how many phases, outcome.\r
+   - Spec Compliance: check each acceptance criterion against what was implemented.\r
+   - Deviations from Plan: note any phases that changed and why.\r
+   - Current Worktree State: note any relevant uncommitted changes rather than ignoring them.\r
+   - Key Metrics: commits, tests passing, files created/deleted, net LOC.\r
+   - Lessons Learned: what went well, what was hard, what to do differently.\r
+   - Architecture Updates: note if `codev/resources/arch.md` needs updating.\r
+   - Technical Debt: any shortcuts or rough edges left behind.\r
+   - Follow-up Items: future work identified but out of scope.\r
+\r
+6. **Write the file** to `codev/reviews/####-name.md`.\r
+\r
+7. **Report** the filename and a one-paragraph summary of the feature outcome.\r
+\r
+Rules:\r
+- Be honest. If criteria were not met, mark them as not met and explain why.\r
+- Keep the review factual. Avoid vague praise.\r
+- Do NOT modify the spec or plan during this step.\r
+- If `codev/resources/arch.md` needs updating with new modules or design decisions,\r
+  note it clearly in the review and offer to update it separately."""

@@ -68,12 +68,14 @@ cargo clippy
 A persistent knowledge base for RustShot. Located in `wiki/`.
 
 ### Structure
-- `wiki/raw/`: Raw source documents (articles, research, clippings).
+- Raw source documents live in their canonical homes: `articles/` (long-form
+  RU essays) and `docs/` (technical/pipeline docs). The wiki no longer keeps a
+  duplicate `wiki/raw/` copy; each `wiki/pages/source-*.md` links to its origin.
 - `wiki/pages/`: Synthesized wiki pages (concepts, entities, summaries).
 - `wiki/index.md`: Content-oriented catalog of all pages.
 - `wiki/log.md`: Chronological log of wiki operations.
 
 ### Operations
-- **Ingest**: Process a file from `wiki/raw/`. Read, discuss, summarize in `wiki/pages/`, update `index.md` and `log.md`.
+- **Ingest**: Process a source file from `articles/` or `docs/`. Read, discuss, summarize in `wiki/pages/`, update `index.md` and `log.md`.
 - **Query**: Search `index.md`, read relevant `pages/`, synthesize answer, optionally save as a new page.
 - **Lint**: Check for contradictions, stale claims, orphan pages, and missing cross-references.
