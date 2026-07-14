@@ -51,3 +51,4 @@ pub mod record;
 pub mod selection;
 pub mod settings;
 pub mod tray;
+pub mod window;

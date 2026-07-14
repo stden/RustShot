@@ -35,6 +35,7 @@ mod settings;
 #[cfg(windows)]
 mod settings_dialog;
 mod tray;
+mod window;
 
 /// Windows registry subkey for auto-start entries.
 #[cfg(windows)]
@@ -133,6 +134,14 @@ struct Args {
     /// Capture the active window
     #[arg(short, long)]
     window: bool,
+
+    /// List open windows (id and title), one per line
+    #[arg(long)]
+    list_windows: bool,
+
+    /// Capture a specific window by its id (from --list-windows)
+    #[arg(long, value_name = "ID")]
+    window_id: Option<u64>,
 
     /// Start recording mode (internal use)
     #[arg(long, hide = true)]
@@ -448,7 +457,9 @@ fn app_mode_request(args: &Args, format_explicit: bool) -> cli::AppModeRequest {
     cli::AppModeRequest {
         select_record: args.select_record,
         select: args.select,
-        cli: args.cli,
+        // --cli and the CLI-only window operations (--list-windows, --window <id>)
+        // all mean "run once and exit", never the tray.
+        cli: args.cli || args.list_windows || args.window_id.is_some(),
         list: args.list,
         window: args.window,
         has_output: args.output.is_some(),
@@ -489,12 +500,15 @@ where
     W: Fn(Option<PathBuf>, capture::Format) -> Result<PathBuf, String>,
 {
     // Resolve CLI intent in phases:
-    // 1. short-circuit the `--list` path
+    // 1. short-circuit the list-only paths (`--list`, `--list-windows`)
     // 2. reject unsupported output extensions when format was not explicit
     // 3. compute the effective capture format
     // 4. dispatch to the requested capture backend
     if args.list {
         return Ok(format_screen_list_output(capture::list_screens()));
+    }
+    if args.list_windows {
+        return Ok(window::format_window_list(&window::list_windows()));
     }
 
     if !format_explicit {
@@ -511,6 +525,11 @@ where
         args.output.as_deref(),
         settings,
     );
+
+    if let Some(id) = args.window_id {
+        return window::capture_window_in_dir(id, args.output, format, &settings.screenshots_dir)
+            .map(|path| format!("Screenshot saved to: {}", path.display()));
+    }
 
     if args.window {
         return window_fn(args.output, format)
@@ -901,6 +920,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -933,6 +954,53 @@ mod tests {
     }
 
     #[test]
+    fn run_cli_list_windows_returns_window_listing() {
+        let args = Args {
+            cli: false,
+            select: false,
+            output: None,
+            format: CliFormat::Png,
+            screen: None,
+            list: false,
+            list_windows: true,
+            window_id: None,
+            select_record: false,
+            window: false,
+        };
+
+        let output =
+            run_cli_with_capture_test(args, |_, _, _| unreachable!("capture fn should not run"))
+                .unwrap();
+        // Empty on a headless CI host, populated on a desktop; both are valid.
+        assert!(
+            output == "No open windows found." || output.starts_with("Open windows:"),
+            "unexpected window listing: {output:?}"
+        );
+    }
+
+    #[test]
+    fn run_cli_window_id_unknown_returns_error() {
+        let args = Args {
+            cli: false,
+            select: false,
+            output: None,
+            format: CliFormat::Png,
+            screen: None,
+            list: false,
+            list_windows: false,
+            // A handle value that is never a live window: capture must fail
+            // cleanly rather than blit garbage.
+            window_id: Some(u64::MAX),
+            select_record: false,
+            window: false,
+        };
+
+        let result =
+            run_cli_with_capture_test(args, |_, _, _| unreachable!("capture fn should not run"));
+        assert!(result.is_err(), "expected an error, got {result:?}");
+    }
+
+    #[test]
     fn should_run_cli_mode_is_true_for_cli_flag() {
         let args = Args {
             cli: true,
@@ -941,6 +1009,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -956,6 +1026,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -971,6 +1043,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -986,6 +1060,8 @@ mod tests {
             format: CliFormat::Png,
             screen: Some(1),
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1001,6 +1077,8 @@ mod tests {
             format: CliFormat::Bmp,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1016,6 +1094,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1031,6 +1111,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1053,6 +1135,8 @@ mod tests {
             format: CliFormat::Jpg,
             screen: Some(1),
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1096,6 +1180,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1659,6 +1745,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1674,6 +1762,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1706,6 +1796,8 @@ mod tests {
             format: CliFormat::Jpg,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1738,6 +1830,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1773,6 +1867,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1808,6 +1904,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1835,6 +1933,8 @@ mod tests {
             format: CliFormat::Bmp,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1866,6 +1966,8 @@ mod tests {
             format: CliFormat::Png,
             screen: Some(2),
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1893,6 +1995,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1918,6 +2022,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -1943,6 +2049,8 @@ mod tests {
             format: CliFormat::Bmp,
             screen: Some(3),
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -1968,6 +2076,8 @@ mod tests {
             format: CliFormat::Png,
             screen: Some(7),
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -2003,6 +2113,8 @@ mod tests {
             format: CliFormat::Jpg,
             screen: Some(5),
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -2096,6 +2208,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2111,6 +2225,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2126,6 +2242,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2141,6 +2259,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2156,6 +2276,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2173,6 +2295,8 @@ mod tests {
             format: CliFormat::Jpg,
             screen: Some(1),
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2195,6 +2319,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2217,6 +2343,8 @@ mod tests {
             format: CliFormat::Bmp,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2239,6 +2367,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2262,6 +2392,8 @@ mod tests {
             format: CliFormat::Jpg,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2285,6 +2417,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2303,6 +2437,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2384,6 +2520,8 @@ mod tests {
             format: CliFormat::Jpg,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2406,6 +2544,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2448,6 +2588,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2465,6 +2607,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2505,6 +2649,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2560,6 +2706,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2604,6 +2752,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2631,6 +2781,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2702,6 +2854,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: false,
         };
@@ -2717,6 +2871,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: false,
         };
@@ -2732,6 +2888,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: false,
         };
@@ -2747,6 +2905,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: false,
         };
@@ -2762,6 +2922,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: false,
         };
@@ -2793,6 +2955,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: false,
         };
@@ -2830,6 +2994,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2845,6 +3011,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2860,6 +3028,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -2944,6 +3114,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -2959,6 +3131,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -2974,6 +3148,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3005,6 +3181,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3036,6 +3214,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3056,6 +3236,8 @@ mod tests {
             format: CliFormat::Jpg,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3083,6 +3265,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3098,6 +3282,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3113,6 +3299,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: false,
         };
@@ -3130,6 +3318,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: false,
         };
@@ -3145,6 +3335,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3184,6 +3376,8 @@ mod tests {
             format: CliFormat::Bmp,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3208,6 +3402,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3234,6 +3430,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: true,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3410,6 +3608,8 @@ mod tests {
             format: CliFormat::Jpg,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3434,6 +3634,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3460,6 +3662,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: true,
         };
@@ -3475,6 +3679,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3492,6 +3698,8 @@ mod tests {
             format: CliFormat::Png,
             screen: Some(0),
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3514,6 +3722,8 @@ mod tests {
             format: CliFormat::Png,
             screen: Some(5),
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3584,6 +3794,8 @@ mod tests {
             format: CliFormat::Png,
             screen: Some(0),
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3599,6 +3811,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3614,6 +3828,8 @@ mod tests {
             format: CliFormat::Jpg,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3629,6 +3845,8 @@ mod tests {
             format: CliFormat::Bmp,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3723,6 +3941,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3741,6 +3961,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -3892,6 +4114,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3907,6 +4131,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: false,
         };
@@ -3922,6 +4148,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -4397,6 +4625,8 @@ mod tests {
             format: CliFormat::Bmp,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -4425,6 +4655,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -4491,6 +4723,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };
@@ -4510,6 +4744,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: true,
             window: false,
         };
@@ -4529,6 +4765,8 @@ mod tests {
             format: CliFormat::Png,
             screen: None,
             list: false,
+            list_windows: false,
+            window_id: None,
             select_record: false,
             window: true,
         };

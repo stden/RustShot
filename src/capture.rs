@@ -383,27 +383,47 @@ pub fn capture_active_window_image() -> Result<image::RgbaImage, String> {
 
 #[cfg(windows)]
 fn capture_active_window_platform() -> Result<image::RgbaImage, String> {
-    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    // SAFETY: `GetForegroundWindow` has no preconditions and returns a handle we
+    // null-check before use.
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd == HWND::default() {
+        return Err("No foreground window found".to_string());
+    }
+    capture_hwnd(hwnd)
+}
+
+/// Capture a single top-level window by its handle into an RGBA image.
+///
+/// Shared by active-window capture (foreground `HWND`) and
+/// [`crate::window::capture_window_image`] (an `HWND` chosen from the window
+/// list), so the GDI blit lives in exactly one place.
+///
+/// The capture is a screen-DC `BitBlt` of the window's screen rectangle, which
+/// means it grabs whatever is currently on screen at those coordinates. A window
+/// that is minimised or fully occluded therefore cannot be captured this way;
+/// callers are expected to surface a foreground window first.
+#[cfg(windows)]
+pub(crate) fn capture_hwnd(
+    hwnd: windows::Win32::Foundation::HWND,
+) -> Result<image::RgbaImage, String> {
+    use windows::Win32::Foundation::RECT;
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
         GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
         SRCCOPY,
     };
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
-    // SAFETY: Win32 GDI calls (GetForegroundWindow, GetWindowRect, BitBlt, GetDIBits)
-    // require no special preconditions beyond valid handles, which are checked
-    // immediately after each call. All GDI objects are released before returning.
+    // SAFETY: every GDI call below is passed handles that are checked immediately
+    // after creation, and all GDI objects are released before returning on every
+    // path.
     unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd == HWND::default() {
-            return Err("No foreground window found".to_string());
-        }
-
         let mut rect = RECT::default();
-        // Use GetWindowRect for the full window including title bar
-        let ok = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect);
-        if ok.is_err() {
+        // GetWindowRect gives the full window including its title bar.
+        if GetWindowRect(hwnd, &mut rect).is_err() {
             return Err("Failed to get window rect".to_string());
         }
 
@@ -435,7 +455,7 @@ fn capture_active_window_platform() -> Result<image::RgbaImage, String> {
             SRCCOPY,
         );
 
-        // Read pixels via GetDIBits
+        // Read pixels via GetDIBits.
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -460,7 +480,7 @@ fn capture_active_window_platform() -> Result<image::RgbaImage, String> {
             DIB_RGB_COLORS,
         );
 
-        // Cleanup GDI objects
+        // Cleanup GDI objects.
         SelectObject(hdc_mem, old_obj);
         let _ = DeleteObject(hbm);
         let _ = DeleteDC(hdc_mem);
@@ -470,7 +490,6 @@ fn capture_active_window_platform() -> Result<image::RgbaImage, String> {
             return Err("GetDIBits failed to read window pixels".to_string());
         }
 
-        // Convert BGRA → RGBA
         bgra_to_rgba(&mut pixels);
 
         image::RgbaImage::from_raw(width, height, pixels)
