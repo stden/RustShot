@@ -1,5 +1,8 @@
 //! Platform-specific active-window capture: WinAPI on Windows, an explicit error elsewhere.
 
+#[cfg(windows)]
+mod wgc;
+
 /// Physical screen-space bounds used by the Windows capture backends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct WindowBounds {
@@ -64,6 +67,58 @@ pub(super) fn validate_gdi_scan_lines(actual: i32, expected: u32) -> Result<(), 
             "GetDIBits copied {actual} of {expected} requested scan lines"
         ))
     }
+}
+
+/// Copy a mapped BGRA texture into tightly packed RGBA rows.
+pub(super) fn rgba_from_bgra_rows(
+    mapped: &[u8],
+    row_pitch: usize,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 {
+        return Err("Captured frame has zero width or height".to_string());
+    }
+
+    let row_bytes = (width as usize)
+        .checked_mul(4)
+        .ok_or_else(|| "Captured frame row is too large".to_string())?;
+    if row_pitch < row_bytes {
+        return Err(format!(
+            "Mapped row pitch {row_pitch} is smaller than the {row_bytes}-byte content row"
+        ));
+    }
+
+    let last_row_offset = row_pitch
+        .checked_mul(height.saturating_sub(1) as usize)
+        .ok_or_else(|| "Mapped frame buffer is too large".to_string())?;
+    let required_len = last_row_offset
+        .checked_add(row_bytes)
+        .ok_or_else(|| "Mapped frame buffer is too large".to_string())?;
+    if mapped.len() < required_len {
+        return Err(format!(
+            "Mapped frame buffer has {} bytes but {required_len} are required",
+            mapped.len()
+        ));
+    }
+
+    let output_len = row_bytes
+        .checked_mul(height as usize)
+        .ok_or_else(|| "Captured image is too large".to_string())?;
+    let mut rgba = vec![0u8; output_len];
+    for row in 0..height as usize {
+        let source = &mapped[row * row_pitch..row * row_pitch + row_bytes];
+        let destination = &mut rgba[row * row_bytes..(row + 1) * row_bytes];
+        for (bgra, rgba) in source
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(destination.as_chunks_mut::<4>().0.iter_mut())
+        {
+            *rgba = [bgra[2], bgra[1], bgra[0], bgra[3]];
+        }
+    }
+    Ok(rgba)
 }
 
 #[cfg(windows)]
@@ -199,6 +254,30 @@ fn get_window_bounds(hwnd: windows::Win32::Foundation::HWND) -> Result<WindowBou
 /// callers are expected to surface a foreground window first.
 #[cfg(windows)]
 pub(crate) fn capture_hwnd(
+    hwnd: windows::Win32::Foundation::HWND,
+) -> Result<image::RgbaImage, String> {
+    let raw_hwnd = hwnd.0;
+    let worker = std::thread::Builder::new()
+        .name("rustshot-window-capture".to_string())
+        .spawn(move || wgc::capture_hwnd(windows::Win32::Foundation::HWND(raw_hwnd)))
+        .map_err(|error| format!("Failed to start the window capture worker: {error}"))?;
+
+    match worker
+        .join()
+        .map_err(|_| "Window capture worker panicked".to_string())?
+    {
+        Ok(image) => Ok(image),
+        Err(wgc::WgcCaptureError::Unsupported(reason)) => {
+            log::debug!("Windows Graphics Capture unavailable ({reason}); using GDI fallback");
+            capture_hwnd_gdi(hwnd)
+        }
+        Err(wgc::WgcCaptureError::Failed(error)) => Err(error),
+    }
+}
+
+/// Legacy visible-pixel fallback for Windows versions without Graphics Capture.
+#[cfg(windows)]
+fn capture_hwnd_gdi(
     hwnd: windows::Win32::Foundation::HWND,
 ) -> Result<image::RgbaImage, String> {
     use windows::Win32::Graphics::Gdi::{
