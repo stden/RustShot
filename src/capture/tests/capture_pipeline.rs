@@ -1,0 +1,452 @@
+//! Tests for `list_screens`, the injected `capture_screenshot_with` pipeline, `bgra_to_rgba`, and active-window capture stubs.
+
+use crate::capture::*;
+use std::cell::{Cell, RefCell};
+
+#[test]
+fn list_screens_returns_vec_of_strings() {
+    let screens = list_screens();
+    // May be empty in CI/headless env, but each entry must follow the "Screen N: WxH" pattern
+    for screen in &screens {
+        assert!(
+            screen.starts_with("Screen "),
+            "expected 'Screen N: WxH', got: {screen}"
+        );
+        assert!(
+            screen.contains('x'),
+            "entry should contain dimensions: {screen}"
+        );
+    }
+}
+
+#[test]
+fn list_screens_does_not_panic() {
+    // Calling list_screens() must never panic, even in a headless environment
+    let _ = list_screens();
+}
+
+#[test]
+fn ensure_parent_directory_three_levels_deep() {
+    // Create a 3-level-deep temp directory via ensure_parent_directory
+    let unique = format!(
+        "rustshot-3lvl-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let root = std::env::temp_dir().join(&unique);
+    let file_path = root
+        .join("level1")
+        .join("level2")
+        .join("level3")
+        .join("shot.png");
+    ensure_parent_directory(&file_path).expect("three-level parent dir should be created");
+    assert!(
+        file_path.parent().unwrap().exists(),
+        "level3 directory should exist"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn capture_screenshot_with_saves_to_explicit_path() {
+    let captured = Cell::new(false);
+    let ensured = Cell::new(false);
+    let saved = Cell::new(false);
+    let output = PathBuf::from("custom.jpg");
+
+    let result = capture_screenshot_with(
+        2,
+        Some(1),
+        || {
+            captured.set(true);
+            Ok("fake-image")
+        },
+        Some(output.clone()),
+        Format::Jpg,
+        &PathBuf::from("."),
+        |path| {
+            ensured.set(true);
+            assert_eq!(path, output.as_path());
+            Ok(())
+        },
+        |image, path, image_format| {
+            saved.set(true);
+            assert_eq!(*image, "fake-image");
+            assert_eq!(path, output.as_path());
+            assert_eq!(image_format, ImageFormat::Jpeg);
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert!(captured.get());
+    assert!(ensured.get());
+    assert!(saved.get());
+    assert_eq!(result, output);
+}
+
+#[test]
+fn capture_screenshot_with_reports_capture_error() {
+    let result = capture_screenshot_with(
+        1,
+        None,
+        || Err("capture failed".to_string()),
+        None,
+        Format::Png,
+        &PathBuf::from("."),
+        |_| Ok(()),
+        |_: &(), _, _| Ok(()),
+    );
+
+    assert_eq!(result, Err("capture failed".to_string()));
+}
+
+#[test]
+fn capture_screenshot_with_reports_save_error() {
+    let result = capture_screenshot_with(
+        1,
+        None,
+        || Ok(()),
+        Some(PathBuf::from("out.png")),
+        Format::Png,
+        &PathBuf::from("."),
+        |_| Ok(()),
+        |_, _, _| Err("save failed".to_string()),
+    );
+
+    assert_eq!(result, Err("save failed".to_string()));
+}
+
+#[test]
+fn capture_screenshot_with_reports_directory_error() {
+    let save_called = Cell::new(false);
+    let result = capture_screenshot_with(
+        1,
+        None,
+        || Ok(()),
+        Some(PathBuf::from("out.png")),
+        Format::Png,
+        &PathBuf::from("."),
+        |_| Err("mkdir failed".to_string()),
+        |_, _, _| {
+            save_called.set(true);
+            Ok(())
+        },
+    );
+
+    assert_eq!(result, Err("mkdir failed".to_string()));
+    assert!(!save_called.get());
+}
+
+#[test]
+fn capture_screenshot_with_reports_invalid_screen_index() {
+    let capture_called = Cell::new(false);
+    let result = capture_screenshot_with(
+        1,
+        Some(5),
+        || {
+            capture_called.set(true);
+            Ok(())
+        },
+        None,
+        Format::Bmp,
+        &PathBuf::from("."),
+        |_| Ok(()),
+        |_, _, _| Ok(()),
+    );
+
+    assert_eq!(
+        result,
+        Err("Screen index 5 is out of range (0-0)".to_string())
+    );
+    assert!(!capture_called.get());
+}
+
+#[test]
+fn capture_screenshot_with_reports_no_screens_detected() {
+    let capture_called = Cell::new(false);
+    let result = capture_screenshot_with(
+        0,
+        None,
+        || {
+            capture_called.set(true);
+            Ok(())
+        },
+        None,
+        Format::Png,
+        &PathBuf::from("."),
+        |_| Ok(()),
+        |_, _, _| Ok(()),
+    );
+
+    assert_eq!(result, Err("No screens detected".to_string()));
+    assert!(!capture_called.get());
+}
+
+#[test]
+fn capture_screenshot_with_uses_default_path_when_output_is_none() {
+    let ensured_path = RefCell::new(None::<PathBuf>);
+    let saved_path = RefCell::new(None::<PathBuf>);
+    let screenshots_dir = PathBuf::from("custom-default-shots");
+
+    let result = capture_screenshot_with(
+        1,
+        None,
+        || Ok(()),
+        None,
+        Format::Bmp,
+        &screenshots_dir,
+        |path| {
+            ensured_path.replace(Some(path.to_path_buf()));
+            Ok(())
+        },
+        |_, path, image_format| {
+            saved_path.replace(Some(path.to_path_buf()));
+            assert_eq!(image_format, ImageFormat::Bmp);
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(ensured_path.borrow().as_ref(), Some(&result));
+    assert_eq!(saved_path.borrow().as_ref(), Some(&result));
+    assert_eq!(result.extension().and_then(|ext| ext.to_str()), Some("bmp"));
+    assert_eq!(result.parent(), Some(screenshots_dir.as_path()));
+    assert!(result
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .starts_with("screenshot_"));
+}
+
+#[test]
+fn capture_screenshot_with_passes_same_path_to_ensure_and_save() {
+    let ensured_path = RefCell::new(None::<PathBuf>);
+    let saved_path = RefCell::new(None::<PathBuf>);
+    let output = PathBuf::from("nested\\shot.png");
+
+    let result = capture_screenshot_with(
+        1,
+        Some(0),
+        || Ok(()),
+        Some(output.clone()),
+        Format::Png,
+        &PathBuf::from("."),
+        |path| {
+            ensured_path.replace(Some(path.to_path_buf()));
+            Ok(())
+        },
+        |_, path, _| {
+            saved_path.replace(Some(path.to_path_buf()));
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result, output);
+    assert_eq!(ensured_path.borrow().as_ref(), Some(&output));
+    assert_eq!(saved_path.borrow().as_ref(), Some(&output));
+}
+
+#[test]
+fn capture_screenshot_with_uses_png_image_format_for_png() {
+    let observed_format = RefCell::new(None::<ImageFormat>);
+
+    let result = capture_screenshot_with(
+        1,
+        None,
+        || Ok(()),
+        Some(PathBuf::from("shot.png")),
+        Format::Png,
+        &PathBuf::from("."),
+        |_| Ok(()),
+        |_, _, image_format| {
+            observed_format.replace(Some(image_format));
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result, PathBuf::from("shot.png"));
+    assert_eq!(*observed_format.borrow(), Some(ImageFormat::Png));
+}
+
+#[test]
+fn capture_screenshot_with_accepts_explicit_zero_screen_index() {
+    let capture_called = Cell::new(false);
+
+    let result = capture_screenshot_with(
+        1,
+        Some(0),
+        || {
+            capture_called.set(true);
+            Ok(())
+        },
+        Some(PathBuf::from("shot.bmp")),
+        Format::Bmp,
+        &PathBuf::from("."),
+        |_| Ok(()),
+        |_, _, _| Ok(()),
+    )
+    .unwrap();
+
+    assert!(capture_called.get());
+    assert_eq!(result, PathBuf::from("shot.bmp"));
+}
+
+#[test]
+fn resolve_screen_index_count_two_index_two_is_err() {
+    // index == count is out of range
+    let err = resolve_screen_index(2, Some(2)).unwrap_err();
+    assert!(err.contains("2"), "error should mention index: {err}");
+    assert!(err.contains("0-1"), "error should show valid range: {err}");
+}
+
+#[test]
+fn capture_screenshot_with_image_format_for_bmp() {
+    let observed_format = RefCell::new(None::<ImageFormat>);
+
+    let _ = capture_screenshot_with(
+        1,
+        None,
+        || Ok(()),
+        Some(PathBuf::from("shot.bmp")),
+        Format::Bmp,
+        &PathBuf::from("."),
+        |_| Ok(()),
+        |_, _, image_format| {
+            observed_format.replace(Some(image_format));
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(*observed_format.borrow(), Some(ImageFormat::Bmp));
+}
+
+#[test]
+fn capture_screenshot_with_image_format_for_jpg() {
+    let observed_format = RefCell::new(None::<ImageFormat>);
+
+    let _ = capture_screenshot_with(
+        1,
+        None,
+        || Ok(()),
+        Some(PathBuf::from("shot.jpg")),
+        Format::Jpg,
+        &PathBuf::from("."),
+        |_| Ok(()),
+        |_, _, image_format| {
+            observed_format.replace(Some(image_format));
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(*observed_format.borrow(), Some(ImageFormat::Jpeg));
+}
+
+#[test]
+fn get_screenshots_dir_last_component_is_rustshot() {
+    let dir = get_screenshots_dir();
+    let last = dir.file_name().and_then(|n| n.to_str());
+    assert_eq!(last, Some("RustShot"));
+}
+
+// --- bgra_to_rgba tests ---
+
+#[test]
+fn bgra_to_rgba_swaps_red_and_blue() {
+    let mut pixels = vec![255, 0, 0, 255]; // B=255, G=0, R=0, A=255
+    bgra_to_rgba(&mut pixels);
+    assert_eq!(pixels, vec![0, 0, 255, 255]); // R=0, G=0, B=255, A=255
+}
+
+#[test]
+fn bgra_to_rgba_preserves_green_and_alpha() {
+    let mut pixels = vec![10, 128, 200, 50];
+    bgra_to_rgba(&mut pixels);
+    assert_eq!(pixels[1], 128); // green unchanged
+    assert_eq!(pixels[3], 50); // alpha unchanged
+}
+
+#[test]
+fn bgra_to_rgba_identity_for_symmetric_values() {
+    // When R == B, swapping is a no-op for those channels
+    let mut pixels = vec![100, 50, 100, 255];
+    bgra_to_rgba(&mut pixels);
+    assert_eq!(pixels, vec![100, 50, 100, 255]);
+}
+
+#[test]
+fn bgra_to_rgba_handles_multiple_pixels() {
+    let mut pixels = vec![
+        255, 0, 0, 255, // pixel 0: B=255
+        0, 255, 0, 128, // pixel 1: G=255
+        0, 0, 255, 64, // pixel 2: R=255
+    ];
+    bgra_to_rgba(&mut pixels);
+    // pixel 0: R and B swapped
+    assert_eq!(pixels[0], 0);
+    assert_eq!(pixels[2], 255);
+    // pixel 1: no change (G only)
+    assert_eq!(pixels[4], 0);
+    assert_eq!(pixels[5], 255);
+    assert_eq!(pixels[6], 0);
+    // pixel 2: R and B swapped
+    assert_eq!(pixels[8], 255);
+    assert_eq!(pixels[10], 0);
+}
+
+#[test]
+fn bgra_to_rgba_empty_input_is_noop() {
+    let mut pixels: Vec<u8> = vec![];
+    bgra_to_rgba(&mut pixels);
+    assert!(pixels.is_empty());
+}
+
+#[test]
+fn bgra_to_rgba_double_swap_is_identity() {
+    let original = vec![10, 20, 30, 40, 50, 60, 70, 80];
+    let mut pixels = original.clone();
+    bgra_to_rgba(&mut pixels);
+    bgra_to_rgba(&mut pixels);
+    assert_eq!(pixels, original);
+}
+
+#[test]
+fn bgra_to_rgba_all_zeros() {
+    let mut pixels = vec![0, 0, 0, 0];
+    bgra_to_rgba(&mut pixels);
+    assert_eq!(pixels, vec![0, 0, 0, 0]);
+}
+
+#[test]
+fn bgra_to_rgba_all_max() {
+    let mut pixels = vec![255, 255, 255, 255];
+    bgra_to_rgba(&mut pixels);
+    assert_eq!(pixels, vec![255, 255, 255, 255]);
+}
+
+// --- capture_active_window_platform tests ---
+
+#[cfg(not(windows))]
+#[test]
+fn capture_active_window_returns_unsupported_on_non_windows() {
+    let result = capture_active_window_image();
+    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err(),
+        "Active window capture is only supported on Windows"
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn capture_active_window_save_returns_unsupported_on_non_windows() {
+    let result = capture_active_window(None, Format::Png);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("only supported on Windows"));
+}

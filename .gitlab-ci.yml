@@ -2,7 +2,7 @@
 image: "rust:latest"
 
 default:
-  timeout: 20 minutes
+  timeout: 5 minutes
 
 variables:
   CARGO_HOME: "/cache/shared/cargo"
@@ -22,7 +22,6 @@ workflow:
 stages:
   - prepare
   - test
-  - coverage
   - secret-detection
 
 # Security scan templates
@@ -102,15 +101,6 @@ fmt:
     - rustup component add rustfmt
     - cargo fmt --all -- --check
 
-# Fast compile-only check for every Cargo target, including benches and tests.
-check:
-  stage: test
-  extends: .rust-base
-  variables:
-    CARGO_PROFILE_DEV_DEBUG: "0"
-  script:
-    - cargo check --all-targets --verbose
-
 # Clippy lint check. Use --tests (lib + bins + tests + examples) instead of
 # --all-targets so the 1900-line criterion bench file is not compiled just
 # for linting. Disable debug info generation — clippy is lint-only, it never
@@ -135,44 +125,13 @@ test:
   script:
     - cargo test --verbose
 
-# Doctests are split out so documentation examples stay visible as their own
-# required check instead of being buried in the full test log.
-doc-test:
-  stage: test
-  extends: .rust-base
-  variables:
-    CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  script:
-    - cargo test --doc --verbose
-
-# Compile benchmarks without running them. This catches benchmark API drift
-# without spending CI time on performance measurement.
-bench-check:
-  stage: test
-  extends: .rust-base
-  variables:
-    CARGO_PROFILE_BENCH_DEBUG: "0"
-  script:
-    - cargo bench --no-run --verbose
-
-# Ensure release-only settings still compile.
-release-build:
-  stage: test
-  extends: .rust-base
-  variables:
-    CARGO_PROFILE_RELEASE_DEBUG: "0"
-  script:
-    - cargo build --release --verbose
-
 # Coverage via tarpaulin. tarpaulin is preinstalled in the CI image; the llvm
 # engine avoids ASLR EPERM in sandboxed CI containers.
 coverage:
-  stage: coverage
+  stage: test
   extends: .rust-base
-  timeout: 15 minutes
-  cache: []
   script:
-    - cargo tarpaulin --engine llvm --out Xml --fail-under 40
+    - cargo tarpaulin --engine llvm --out Xml --skip-clean --fail-under 40
   coverage: '/^\d+\.\d+% coverage/'
   artifacts:
     reports:

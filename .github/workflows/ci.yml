@@ -57,13 +57,18 @@ jobs:
             libatk1.0-dev \
             libgdk-pixbuf2.0-dev \
             libcairo2-dev \
-            libpango1.0-dev
+            libpango1.0-dev \
+            xvfb
 
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test
+
+      # xvfb-run provides a virtual X display: the live screen-capture tests
+      # exercise a real capture path instead of skipping (they self-skip when
+      # no display is available at all).
+      - run: xvfb-run -a cargo test
 
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin
 
       - name: Generate coverage
-        run: cargo tarpaulin --out xml --skip-clean --fail-under 40
+        run: xvfb-run -a cargo tarpaulin --out xml --skip-clean --fail-under 40

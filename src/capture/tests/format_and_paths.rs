@@ -1,0 +1,449 @@
+//! Tests for `Format`, screen-index resolution, output-path resolution, and directory helpers.
+
+use crate::capture::*;
+
+#[test]
+fn format_extension_is_correct() {
+    assert_eq!(Format::Png.extension(), "png");
+    assert_eq!(Format::Jpg.extension(), "jpg");
+    assert_eq!(Format::Bmp.extension(), "bmp");
+}
+
+#[test]
+fn format_to_image_format_is_correct() {
+    assert_eq!(Format::Png.to_image_format(), ImageFormat::Png);
+    assert_eq!(Format::Jpg.to_image_format(), ImageFormat::Jpeg);
+    assert_eq!(Format::Bmp.to_image_format(), ImageFormat::Bmp);
+}
+
+#[test]
+fn format_default_is_png() {
+    assert!(matches!(Format::default(), Format::Png));
+}
+
+#[test]
+fn format_clone_and_copy_work() {
+    let f = Format::Jpg;
+    let g = f; // Copy
+    #[allow(clippy::clone_on_copy)]
+    let h = f.clone(); // Clone
+    assert!(matches!(g, Format::Jpg));
+    assert!(matches!(h, Format::Jpg));
+}
+
+#[test]
+fn format_debug_repr_is_non_empty() {
+    assert!(!format!("{:?}", Format::Png).is_empty());
+    assert!(!format!("{:?}", Format::Jpg).is_empty());
+    assert!(!format!("{:?}", Format::Bmp).is_empty());
+}
+
+#[test]
+fn screen_index_selection_handles_default_and_bounds() {
+    assert_eq!(resolve_screen_index(2, None).unwrap(), 0);
+    assert_eq!(resolve_screen_index(2, Some(1)).unwrap(), 1);
+    assert!(resolve_screen_index(2, Some(3)).is_err());
+    assert_eq!(
+        resolve_screen_index(2, Some(3)).unwrap_err(),
+        "Screen index 3 is out of range (0-1)"
+    );
+    assert!(resolve_screen_index(0, None).is_err());
+    assert_eq!(
+        resolve_screen_index(0, None).unwrap_err(),
+        "No screens detected"
+    );
+}
+
+#[test]
+fn resolve_screen_index_boundary_exactly_one_screen_index_zero_is_ok() {
+    // screen_count=1, requested=Some(0): index 0 < 1, should succeed
+    assert_eq!(resolve_screen_index(1, Some(0)).unwrap(), 0);
+}
+
+#[test]
+fn resolve_screen_index_last_valid_index_is_ok() {
+    // screen_count=3, requested=Some(2): last valid index
+    assert_eq!(resolve_screen_index(3, Some(2)).unwrap(), 2);
+}
+
+#[test]
+fn default_screen_index_prefers_primary_screen() {
+    let index = default_screen_index([false, true, false]).unwrap();
+    assert_eq!(index, 1);
+}
+
+#[test]
+fn default_screen_index_falls_back_to_first_screen() {
+    let index = default_screen_index([false, false, false]).unwrap();
+    assert_eq!(index, 0);
+}
+
+#[test]
+fn default_screen_index_returns_none_for_empty_input() {
+    assert_eq!(default_screen_index(Vec::<bool>::new()), None);
+}
+
+#[test]
+fn resolve_screen_index_one_screen_index_one_is_err() {
+    // screen_count=1, requested=Some(1): 1 >= 1, out of range
+    assert!(resolve_screen_index(1, Some(1)).is_err());
+    assert_eq!(
+        resolve_screen_index(1, Some(1)).unwrap_err(),
+        "Screen index 1 is out of range (0-0)"
+    );
+}
+
+#[test]
+fn resolve_screen_index_none_always_returns_zero() {
+    // With any positive screen count and None, always returns 0
+    assert_eq!(resolve_screen_index(1, None).unwrap(), 0);
+    assert_eq!(resolve_screen_index(10, None).unwrap(), 0);
+    assert_eq!(resolve_screen_index(100, None).unwrap(), 0);
+}
+
+#[test]
+fn resolve_screen_index_error_message_contains_range() {
+    let err = resolve_screen_index(3, Some(5)).unwrap_err();
+    assert!(err.contains("5"));
+    assert!(err.contains("0-2"));
+}
+
+#[test]
+fn output_path_uses_default_format_extension() {
+    let default_path = resolve_output_path(None, Format::Bmp);
+    assert_eq!(default_path.parent().unwrap(), &get_screenshots_dir());
+    assert_eq!(
+        default_path.extension().and_then(|ext| ext.to_str()),
+        Some("bmp")
+    );
+    assert!(default_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .starts_with("screenshot_"));
+
+    let explicit = resolve_output_path(Some(PathBuf::from("custom.png")), Format::Png);
+    assert_eq!(explicit, PathBuf::from("custom.png"));
+}
+
+#[test]
+fn resolve_output_path_png_has_png_extension() {
+    let path = resolve_output_path(None, Format::Png);
+    assert_eq!(path.extension().and_then(|e| e.to_str()), Some("png"));
+}
+
+#[test]
+fn resolve_output_path_jpg_has_jpg_extension() {
+    let path = resolve_output_path(None, Format::Jpg);
+    assert_eq!(path.extension().and_then(|e| e.to_str()), Some("jpg"));
+}
+
+#[test]
+fn resolve_output_path_bmp_has_bmp_extension() {
+    let path = resolve_output_path(None, Format::Bmp);
+    assert_eq!(path.extension().and_then(|e| e.to_str()), Some("bmp"));
+}
+
+#[test]
+fn resolve_output_path_explicit_overrides_format() {
+    // When an explicit path is given, it is returned verbatim regardless of format
+    let explicit = PathBuf::from("my_shot.bmp");
+    let result = resolve_output_path(Some(explicit.clone()), Format::Png);
+    assert_eq!(result, explicit);
+}
+
+#[test]
+fn resolve_output_path_default_filename_starts_with_screenshot() {
+    let path = resolve_output_path(None, Format::Png);
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    assert!(name.starts_with("screenshot_"));
+}
+
+#[test]
+fn resolve_output_path_default_parent_is_screenshots_dir() {
+    let path = resolve_output_path(None, Format::Jpg);
+    assert_eq!(path.parent().unwrap(), &get_screenshots_dir());
+}
+
+#[test]
+fn resolve_output_path_in_dir_uses_provided_directory() {
+    let dir = PathBuf::from("/tmp/custom-shots");
+    let path = resolve_output_path_in_dir(None, Format::Bmp, &dir);
+    assert_eq!(path.parent(), Some(dir.as_path()));
+    assert_eq!(path.extension().and_then(|ext| ext.to_str()), Some("bmp"));
+}
+
+#[test]
+fn resolve_output_path_in_dir_explicit_path_ignores_directory_and_format() {
+    let dir = PathBuf::from("/tmp/custom-shots");
+    let explicit = PathBuf::from("nested/final-name.jpg");
+    let path = resolve_output_path_in_dir(Some(explicit.clone()), Format::Bmp, &dir);
+    assert_eq!(path, explicit);
+}
+
+#[test]
+fn resolve_output_path_in_dir_default_filename_starts_with_screenshot() {
+    let dir = PathBuf::from("custom-shots");
+    let path = resolve_output_path_in_dir(None, Format::Png, &dir);
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    assert!(name.starts_with("screenshot_"));
+}
+
+#[test]
+fn ensure_parent_directory_creates_missing_parents() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rustshot-capture-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let file_path = temp_dir.join("nested").join("screenshot.png");
+    ensure_parent_directory(&file_path).expect("parent dir should be created");
+    assert!(file_path.parent().unwrap().exists());
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn ensure_parent_directory_handles_empty_parent() {
+    let path = PathBuf::from("screenshot.png");
+    assert!(ensure_parent_directory(&path).is_ok());
+}
+
+#[test]
+fn ensure_parent_directory_creates_deeply_nested_path() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rustshot-deep-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let deep_path = temp_dir
+        .join("a")
+        .join("b")
+        .join("c")
+        .join("d")
+        .join("shot.png");
+    ensure_parent_directory(&deep_path).expect("deep parent dirs should be created");
+    assert!(deep_path.parent().unwrap().exists());
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn ensure_parent_directory_idempotent_on_existing_dir() {
+    // Calling twice on the same path should succeed both times
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rustshot-idem-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let file_path = temp_dir.join("shot.png");
+    ensure_parent_directory(&file_path).expect("first call should succeed");
+    ensure_parent_directory(&file_path).expect("second call should also succeed");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn screenshots_dir_is_named_rustshot() {
+    let dir = get_screenshots_dir();
+    assert_eq!(
+        dir.file_name().and_then(|name| name.to_str()),
+        Some("RustShot")
+    );
+}
+
+#[test]
+fn get_screenshots_dir_is_under_pictures_or_dot() {
+    let dir = get_screenshots_dir();
+    // The parent must be either the system pictures dir or "." (current dir)
+    let parent = dir.parent().expect("screenshots dir should have a parent");
+    let expected = dirs::picture_dir().unwrap_or_else(|| PathBuf::from("."));
+    assert_eq!(parent, expected.as_path());
+}
+
+#[test]
+fn get_screenshots_dir_is_absolute_or_relative_dot() {
+    let dir = get_screenshots_dir();
+    // Either absolute path (from pictures_dir) or starts with "." (fallback)
+    let display = dir.display().to_string();
+    let is_absolute = dir.is_absolute();
+    let is_relative_dot = display.starts_with('.');
+    assert!(
+        is_absolute || is_relative_dot,
+        "dir should be absolute or relative-to-dot: {}",
+        display
+    );
+}
+
+#[test]
+fn resolve_screen_index_zero_count_with_some_index_is_no_screens_error() {
+    // Even when a specific index is requested, 0 screens always gives "No screens detected"
+    let err = resolve_screen_index(0, Some(5)).unwrap_err();
+    assert_eq!(err, "No screens detected");
+}
+
+#[test]
+fn resolve_screen_index_zero_count_with_none_is_no_screens_error() {
+    let err = resolve_screen_index(0, None).unwrap_err();
+    assert_eq!(err, "No screens detected");
+}
+
+#[test]
+fn resolve_screen_index_five_screens_last_valid_is_ok() {
+    assert_eq!(resolve_screen_index(5, Some(4)).unwrap(), 4);
+}
+
+#[test]
+fn resolve_screen_index_five_screens_index_five_is_err() {
+    // index == screen_count is out of range
+    let err = resolve_screen_index(5, Some(5)).unwrap_err();
+    assert!(err.contains("5"), "error should mention index: {err}");
+    assert!(err.contains("0-4"), "error should show valid range: {err}");
+}
+
+#[test]
+fn resolve_output_path_default_filename_contains_only_valid_chars() {
+    let path = resolve_output_path(None, Format::Png);
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    // Filename should only contain alphanumeric, underscores and the dot before extension
+    assert!(name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '.'));
+}
+
+#[test]
+fn resolve_output_path_explicit_path_ignores_format_extension() {
+    // Passing a .txt path with Jpg format should return the .txt path unchanged
+    let explicit = PathBuf::from("my_file.txt");
+    let result = resolve_output_path(Some(explicit.clone()), Format::Jpg);
+    assert_eq!(result.extension().and_then(|e| e.to_str()), Some("txt"));
+}
+
+#[test]
+fn ensure_parent_directory_with_root_relative_path_is_ok() {
+    // A path with no directory component (just a filename at current dir)
+    let path = PathBuf::from("just_a_file.png");
+    assert!(ensure_parent_directory(&path).is_ok());
+}
+
+#[test]
+fn resolve_screen_index_usize_max_is_out_of_range() {
+    let err = resolve_screen_index(5, Some(usize::MAX)).unwrap_err();
+    assert!(err.contains("out of range"));
+}
+
+#[test]
+fn resolve_screen_index_called_twice_same_result() {
+    assert_eq!(resolve_screen_index(3, Some(0)).unwrap(), 0);
+    assert_eq!(resolve_screen_index(3, Some(0)).unwrap(), 0);
+}
+
+#[test]
+fn resolve_output_path_two_calls_same_format_same_prefix() {
+    let p1 = resolve_output_path(None, Format::Png);
+    let p2 = resolve_output_path(None, Format::Png);
+    let name1 = p1.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let name2 = p2.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    assert!(name1.starts_with("screenshot_"));
+    assert!(name2.starts_with("screenshot_"));
+    assert!(name1.ends_with(".png"));
+    assert!(name2.ends_with(".png"));
+}
+
+#[test]
+fn ensure_parent_directory_relative_nested_path() {
+    // "a/b.png" has parent "a" which is relative — create_dir_all handles it
+    let unique = format!(
+        "rustshot-rel-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let path = std::env::temp_dir().join(&unique).join("b.png");
+    assert!(ensure_parent_directory(&path).is_ok());
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join(&unique));
+}
+
+#[test]
+fn format_extension_returns_static_str() {
+    // Verify the returned &str is truly static / compiles as such
+    let ext: &str = Format::Png.extension();
+    assert_eq!(ext, "png");
+    let ext: &str = Format::Jpg.extension();
+    assert_eq!(ext, "jpg");
+    let ext: &str = Format::Bmp.extension();
+    assert_eq!(ext, "bmp");
+}
+
+#[test]
+fn format_to_image_format_distinct() {
+    // Each Format variant must map to a different ImageFormat value
+    assert_ne!(Format::Png.to_image_format(), Format::Jpg.to_image_format());
+    assert_ne!(Format::Png.to_image_format(), Format::Bmp.to_image_format());
+    assert_ne!(Format::Jpg.to_image_format(), Format::Bmp.to_image_format());
+}
+
+#[test]
+fn get_screenshots_dir_consistent_across_calls() {
+    // Two successive calls must return the same path
+    let first = get_screenshots_dir();
+    let second = get_screenshots_dir();
+    assert_eq!(first, second);
+}
+
+#[test]
+fn resolve_screen_index_returns_exact_requested_value() {
+    // screen_count=10, requested=Some(7): 7 < 10, so Ok(7)
+    assert_eq!(resolve_screen_index(10, Some(7)).unwrap(), 7);
+}
+
+#[test]
+fn resolve_output_path_explicit_path_no_parent_is_unchanged() {
+    // An explicit path with no directory component is returned verbatim
+    let result = resolve_output_path(Some(PathBuf::from("file.png")), Format::Bmp);
+    assert_eq!(result, PathBuf::from("file.png"));
+}
+
+#[test]
+fn format_extension_is_all_lowercase() {
+    for ext in [
+        Format::Png.extension(),
+        Format::Jpg.extension(),
+        Format::Bmp.extension(),
+    ] {
+        assert_eq!(
+            ext,
+            ext.to_lowercase(),
+            "extension '{ext}' should be all lowercase"
+        );
+    }
+}
+
+#[test]
+fn resolve_screen_index_large_count_last_index() {
+    assert_eq!(resolve_screen_index(1000, Some(999)).unwrap(), 999);
+}
+
+#[test]
+fn resolve_output_path_filename_contains_digits() {
+    // Default filename contains the timestamp, which consists of digits and underscores
+    let path = resolve_output_path(None, Format::Png);
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    assert!(
+        name.chars().any(|c| c.is_ascii_digit()),
+        "filename should contain timestamp digits: {name}"
+    );
+}
+
+#[test]
+fn get_screenshots_dir_path_has_multiple_components() {
+    let dir = get_screenshots_dir();
+    assert!(
+        dir.components().count() >= 2,
+        "path should have at least parent + 'RustShot'"
+    );
+}

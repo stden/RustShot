@@ -4,7 +4,7 @@
 
 * **Type**: Technical Documentation / Lesson
 * **Original Title**: Inno Setup And Release Pipeline Lesson
-* **File**: `wiki/raw/INNO_SETUP_PIPELINE.md`
+* **File**: `docs/INNO_SETUP_PIPELINE.md`
 * **Topic**: Installer creation, CI/CD pipeline, Windows deployment.
 
 ## Key Takeaways

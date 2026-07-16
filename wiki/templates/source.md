@@ -4,7 +4,7 @@
 
 * **Type**: [Article/Paper/Clipping/Data]
 * **Original Title**: [Title]
-* **File**: `wiki/raw/[filename]`
+* **File**: `[source path in articles/ or docs/]`
 * **Topic**: [Topic]
 
 ## Key Takeaways

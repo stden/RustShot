@@ -5,7 +5,8 @@
 `RustShot` is designed as a modular desktop utility, separating concerns into distinct layers to manage complexity despite its small footprint.
 
 ## Core Modules
-- **`main.rs`**: Entry point, CLI routing, and process mode management.
+- **`main.rs`**: Entry point, CLI parsing, startup routing, and tray event loop.
+- **`cli.rs`**: Pure CLI helper logic, output-format policy, and app-mode decision rules.
 - **`capture.rs`**: Screen capture logic and static image saving.
 - **`selection.rs`**: Interactive region selection overlay, multi-monitor coordination, and DPI-aware coordinate handling.
 - **`record.rs`**: Screen recording pipeline (Windows Media Foundation).

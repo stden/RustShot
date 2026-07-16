@@ -4,7 +4,7 @@
 
 * **Type**: Technical Documentation / Tutorial
 * **Original Title**: Лучшие практики Rust: код и производительность
-* **File**: `wiki/raw/rust-best-practices.md`
+* **File**: `docs/rust-best-practices.md` in the central `iopm` repo (moved out of RustShot as general, non-project-specific guidance)
 * **Topic**: Rust development, Performance, Testing, Project structure.
 
 ## Key Takeaways

@@ -164,6 +164,38 @@ rustshot --screen 0          # 📺 Capture monitor #1 (indexing starts at 0!)
 rustshot --window            # 🪟 Just the focused window, nothing else
 ```
 
+#### 6️⃣ Pick a specific window
+```bash
+rustshot --list-windows      # 🪟 List open windows as "<id>  <title>"
+rustshot --window-id 262788  # 🎯 Capture that exact window by its id
+```
+
+---
+
+## 🤖 MCP server — *let an AI take the screenshots*
+
+RustShot speaks the [Model Context Protocol](https://modelcontextprotocol.io):
+point an MCP client (an AI assistant, an editor) at it and it can list and
+capture screens and windows for you.
+
+```bash
+rustshot --mcp               # 🔌 Serve MCP over stdio (JSON-RPC)
+```
+
+Example client config:
+
+```json
+{
+  "mcpServers": {
+    "rustshot": { "command": "RustShot.exe", "args": ["--mcp"] }
+  }
+}
+```
+
+Tools exposed: `list_screens`, `list_windows`, `capture_screen`, and
+`capture_window`. The capture tools save a file **and** return the image inline,
+so the assistant can view the screenshot directly.
+
 ---
 
 ## 📖 Cheat sheet
@@ -189,7 +221,10 @@ rustshot --window            # 🪟 Just the focused window, nothing else
 
 ```text
     --cli              📸  take one screenshot and exit
+    --mcp              🤖  run as an MCP server over stdio
 -w, --window           🪟  capture the active window (Windows only)
+    --list-windows     🪟  list open windows (id and title)
+    --window-id <ID>   🎯  capture a specific window by id (Windows only)
 -o, --output <OUTPUT>  💾  output file name or path
 -f, --format <FORMAT>  🎨  image format: png, jpg, bmp
 -s, --screen <SCREEN>  🖥️  screen number (0-indexed)
@@ -264,5 +299,7 @@ Head over to [**Releases**](https://github.com/stden/RustShot/releases) and grab
 
 ## Testing
 
-- Repository-wide testing/TDD guide: `TESTING_TDD_GUIDE.md`
-- Stack checklist: `TESTING_CHECKLIST_RUST.md`
+- Executable specifications (BDD): Gherkin features in `tests/features/`, run with
+  `cargo test --test bdd`. These are the behavioural spec.
+- General testing/TDD guidance is not duplicated here — it lives in the central
+  `iopm` repo (`docs/TESTING_TDD_GUIDE.md`, `docs/TESTING_CHECKLIST_RUST.md`).

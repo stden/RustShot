@@ -4,7 +4,7 @@
 
 * **Type**: Technical Documentation / Tutorial
 * **Original Title**: GitHub Actions: CI/CD pipeline для Rust
-* **File**: `wiki/raw/github-pipeline.md`
+* **File**: `docs/github-pipeline.md`
 * **Topic**: CI/CD, GitHub Actions, Rust automation.
 
 ## Key Takeaways

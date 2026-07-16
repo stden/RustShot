@@ -1,7 +1,7 @@
 import os
 import re
 
-wiki_dir = "/srv/RustShot/wiki"
+wiki_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 index_file = os.path.join(wiki_dir, "index.md")
 
 with open(index_file, "r") as f:

@@ -4,7 +4,7 @@
 >
 > Each phase has one build-verify cycle with 3-way consultation.
 
-> **Quick Reference**: See `codev/resources/workflow-reference.md` for stage diagrams and common commands.
+> **Quick Reference**: See `CLAUDE.md` for the commands and where documentation lives.
 
 ## Prerequisites
 
@@ -504,9 +504,12 @@ Execute for each phase in the plan. Each phase follows a build-verify cycle.
    - Enhance documentation
 
 3. **Update Architecture Documentation**
-   - Update `codev/resources/arch.md` with new modules, utilities, or architectural changes
-   - Follow guidance in MAINTAIN protocol's "Update arch.md" task for structure and standards
-   - Ensure arch.md reflects current codebase state
+   - Architecture and design rationale live in the code as rustdoc, not in a
+     separate document. Update the module docs (start at `src/lib.rs`) and the
+     relevant function-level `///` comments with new modules, utilities, or
+     architectural changes.
+   - Keep behavioural changes reflected in the executable specs under
+     `tests/features/`.
 
 4. **Revision Requirements** (MANDATORY)
    - Update README.md with any new features or changes
