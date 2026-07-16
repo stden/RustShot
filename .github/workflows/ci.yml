@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI always provides a display (xvfb-run on Linux, a real session on the
+  # Windows runner), so a live-capture failure is a genuine regression there,
+  # never a "headless environment" to tolerate.
+  RUSTSHOT_LIVE_CAPTURE_STRICT: "1"
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install X11 and GTK dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libatk1.0-dev \
+            libgdk-pixbuf2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            xvfb
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # xvfb-run provides a virtual X display: the live screen-capture tests
+      # exercise a real capture path instead of skipping (they self-skip when
+      # no display is available at all). The explicit 24-bit screen matters:
+      # xvfb defaults to 8-bit depth, which the capture path only sometimes
+      # tolerates - the intermittent "Connection error" failures came from it.
+      - run: xvfb-run -a --server-args="-screen 0 1920x1080x24" cargo test
+
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      # --engine llvm: the default ptrace engine builds with -C link-dead-code,
+      # which force-instantiates a generic cast path in `pulp` (via screenshots
+      # -> image 0.24 -> exr) whose size assert fails on every toolchain. The
+      # LLVM engine uses -C instrument-coverage, which does not codegen dead
+      # generics, so `pulp` compiles.
+      - name: Generate coverage
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" cargo tarpaulin --engine llvm --out xml --skip-clean --fail-under 40

@@ -1,0 +1,144 @@
+# Official Rust image
+image: "rust:latest"
+
+default:
+  timeout: 5 minutes
+
+variables:
+  CARGO_HOME: "/cache/shared/cargo"
+  CARGO_TERM_COLOR: always
+  SECRET_DETECTION_ENABLED: 'true'
+
+# Pipeline rules: run for MRs and for branch pushes. Skip the branch pipeline
+# when an MR is already open for the branch so jobs run exactly once per change.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+# Pipeline stages
+stages:
+  - prepare
+  - test
+  - secret-detection
+
+# Security scan templates
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+
+# Build and publish CI base image to GitLab Container Registry.
+# Runs only when Dockerfile.ci changes or when manually triggered.
+build:ci-image:
+  stage: prepare
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  timeout: 15 minutes
+  cache: []
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf '%s:%s' "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor
+        --context "${CI_PROJECT_DIR}"
+        --dockerfile "${CI_PROJECT_DIR}/Dockerfile.ci"
+        --destination "${CI_REGISTRY_IMAGE}/ci:1.95.0-sccache"
+        --destination "${CI_REGISTRY_IMAGE}/ci:latest"
+        --cache=true
+        --cache-repo "${CI_REGISTRY_IMAGE}/ci-cache"
+  allow_failure: true
+  rules:
+    # Auto-rebuild on any pipeline (push, MR, web, schedule) if Dockerfile.ci changed.
+    - changes:
+        - Dockerfile.ci
+    # Allow manual rebuild from the UI without changing the Dockerfile.
+    - when: manual
+
+# Reusable base for Rust jobs. Uses the custom CI image (GTK/X11 deps,
+# rustfmt, clippy, cargo-tarpaulin preinstalled — see Dockerfile.ci).
+#
+# Cache strategy:
+# - Cargo registry: keyed on Cargo.lock, shared across jobs (all downloads are
+#   identical for the same lockfile).
+# - target/: keyed per job + per branch, with a fallback to main's cache. This
+#   prevents clippy/test/coverage from overwriting each other's incremental
+#   artifacts (they use different profiles/flags), and lets brand-new branches
+#   warm-start from main's artifacts.
+.rust-base:
+  image: ${CI_REGISTRY_IMAGE}/ci:1.95.0-sccache
+  variables:
+    # sccache caches rustc outputs across pipelines and branches. The runner
+    # bind-mounts /srv/gitlab-runner-cache -> /cache, so SCCACHE_DIR persists
+    # beyond a single job lifetime. sccache requires CARGO_INCREMENTAL=0
+    # (already set in the CI image) to cache deterministically.
+    RUSTC_WRAPPER: sccache
+    SCCACHE_DIR: "/cache/shared/sccache"
+    SCCACHE_CACHE_SIZE: "20G"
+    # Quiet, aggregated sccache stats printed at job end.
+    SCCACHE_IDLE_TIMEOUT: "0"
+  before_script:
+    - sccache --start-server >/dev/null 2>&1 || true
+    - sccache --zero-stats >/dev/null
+  after_script:
+    - sccache --show-stats || true
+  cache:
+
+    - key: "target-${CI_JOB_NAME}-${CI_COMMIT_REF_SLUG}"
+      fallback_keys:
+        - "target-${CI_JOB_NAME}-main"
+      paths:
+        - target/
+      policy: pull-push
+
+# Formatting check. Stays on plain rust:latest to keep this light job
+# independent of the custom image; no cargo/target cache needed.
+fmt:
+  stage: test
+  cache: []
+  script:
+    - rustup component add rustfmt
+    - cargo fmt --all -- --check
+
+# Clippy lint check. Use --tests (lib + bins + tests + examples) instead of
+# --all-targets so the 1900-line criterion bench file is not compiled just
+# for linting. Disable debug info generation — clippy is lint-only, it never
+# needs a debuggable binary, and debuginfo codegen is a sizeable fraction of
+# compile time.
+clippy:
+  stage: test
+  extends: .rust-base
+  variables:
+    CARGO_PROFILE_DEV_DEBUG: "0"
+  script:
+    - cargo clippy --tests -- -D warnings
+
+# Unit and integration tests. `line-tables-only` keeps source lines in panic
+# backtraces but skips the expensive full debug-info generation, shaving
+# compile time without losing useful failure output.
+test:
+  stage: test
+  extends: .rust-base
+  variables:
+    CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  script:
+    - cargo test --verbose
+
+# Coverage via tarpaulin. tarpaulin is preinstalled in the CI image; the llvm
+# engine avoids ASLR EPERM in sandboxed CI containers.
+coverage:
+  stage: test
+  extends: .rust-base
+  script:
+    - cargo tarpaulin --engine llvm --out Xml --skip-clean --fail-under 40
+  coverage: '/^\d+\.\d+% coverage/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: cobertura.xml
+
+# Override Secret Detection to run in its own stage
+secret_detection:
+  stage: secret-detection

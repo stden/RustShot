@@ -1,0 +1,458 @@
+//! Screenshot capture and file saving.
+//!
+//! This module handles the core screenshot workflow:
+//! 1. Resolve which screen to capture (`resolve_screen_index`, `default_screen_index`).
+//! 2. Capture monitor pixels via `screenshots`, or window pixels through the
+//!    native Windows Graphics Capture backend.
+//! 3. Determine the output path (`resolve_output_path`) and ensure parent dirs exist.
+//! 4. Save the image in the requested format (PNG / JPG / BMP).
+//!
+//! The public entry point is [`capture_screenshot`].  An internal
+//! [`capture_screenshot_with`] variant accepts injected closures for unit testing
+//! without real screen hardware.
+
+use image::ImageFormat;
+use screenshots::Screen;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// Supported output image formats.
+///
+/// This enum is the single source of truth for "which formats exist". Settings
+/// store it directly rather than a `String`, so an unsupported format is not
+/// representable once parsed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Format {
+    #[default]
+    Png,
+    Jpg,
+    Bmp,
+}
+
+impl Format {
+    /// Every supported format, in settings/UI order. The first entry is the
+    /// default used as the fallback for unrecognised input.
+    pub const ALL: [Format; 3] = [Format::Png, Format::Jpg, Format::Bmp];
+
+    /// Map this format to the corresponding [`image::ImageFormat`] variant.
+    pub fn to_image_format(self) -> ImageFormat {
+        match self {
+            Format::Png => ImageFormat::Png,
+            Format::Jpg => ImageFormat::Jpeg,
+            Format::Bmp => ImageFormat::Bmp,
+        }
+    }
+
+    /// File extension string (without leading dot) for this format. This is
+    /// also exactly how the format is written to `settings.json`.
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Format::Png => "png",
+            Format::Jpg => "jpg",
+            Format::Bmp => "bmp",
+        }
+    }
+
+    /// Parse a format as stored in `settings.json`.
+    ///
+    /// Deliberately **case-sensitive** and forgiving: anything unrecognised
+    /// falls back to PNG rather than failing, because `settings.json` is
+    /// hand-editable and a bad value should not brick the app. Note the
+    /// contrast with [`crate::cli::format_from_extension`], which *is*
+    /// case-insensitive because a user may well type `--output shot.PNG`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rustshot::capture::Format;
+    ///
+    /// assert_eq!(Format::from_settings_str("jpg"), Format::Jpg);
+    /// assert_eq!(Format::from_settings_str("webp"), Format::Png); // unknown → default
+    /// assert_eq!(Format::from_settings_str("JPG"), Format::Png);  // case-sensitive
+    /// ```
+    pub fn from_settings_str(value: &str) -> Format {
+        Format::ALL
+            .into_iter()
+            .find(|fmt| fmt.extension() == value)
+            .unwrap_or(Format::Png)
+    }
+}
+
+/// Validate and resolve the screen index. Returns an error if out of range or no screens.
+///
+/// # Examples
+///
+/// ```
+/// use rustshot::capture::resolve_screen_index;
+///
+/// // No explicit screen → defaults to primary (index 0)
+/// assert_eq!(resolve_screen_index(3, None), Ok(0));
+///
+/// // Explicit valid index
+/// assert_eq!(resolve_screen_index(3, Some(2)), Ok(2));
+///
+/// // Out of range
+/// assert!(resolve_screen_index(2, Some(5)).is_err());
+/// ```
+///
+/// Algorithm:
+/// 1. Reject the call immediately if there are no screens.
+/// 2. If the user requested an explicit index, bounds-check it.
+/// 3. Otherwise fall back to index 0, which matches the project's current
+///    default-screen policy for CLI capture.
+///
+/// Possible improvements:
+/// - Delegate the implicit-screen choice to [`default_screen_index`] so CLI and
+///   GUI behavior share the same primary-monitor logic.
+/// - Return a dedicated error type if callers ever need to distinguish
+///   "no screens" from "bad index" without parsing strings.
+pub fn resolve_screen_index(
+    screen_count: usize,
+    requested: Option<usize>,
+) -> Result<usize, String> {
+    if screen_count == 0 {
+        return Err("No screens detected".to_string());
+    }
+
+    match requested {
+        Some(index) if index >= screen_count => Err(format!(
+            "Screen index {} is out of range (0-{})",
+            index,
+            screen_count - 1
+        )),
+        Some(index) => Ok(index),
+        None => Ok(0),
+    }
+}
+
+/// Find the primary screen index, falling back to the first screen.
+///
+/// Algorithm:
+/// 1. Walk the iterator once from left to right.
+/// 2. Remember the first index as a fallback candidate.
+/// 3. Return immediately when a primary screen is encountered.
+/// 4. If no primary flag is present, return the fallback index.
+///
+/// This keeps the function single-pass and allocation-free, which matters more
+/// here than asymptotic cleverness because monitor counts are tiny in practice.
+///
+/// Possible improvements:
+/// - Return richer metadata when multiple primary flags are present so callers
+///   can detect inconsistent platform data instead of silently using the first.
+/// - Accept screen objects directly if the monitor-selection logic is ever
+///   consolidated into one shared screen abstraction.
+#[allow(dead_code)]
+pub fn default_screen_index<I>(is_primary_flags: I) -> Option<usize>
+where
+    I: IntoIterator<Item = bool>,
+{
+    let mut fallback = None;
+
+    for (index, is_primary) in is_primary_flags.into_iter().enumerate() {
+        fallback.get_or_insert(index);
+        if is_primary {
+            return Some(index);
+        }
+    }
+
+    fallback
+}
+
+/// Resolve the output file path: use explicit path if given, otherwise generate a timestamped default.
+///
+/// # Examples
+///
+/// ```
+/// use rustshot::capture::{resolve_output_path, Format};
+/// use std::path::PathBuf;
+///
+/// // Explicit path is returned as-is
+/// let p = resolve_output_path(Some(PathBuf::from("/tmp/shot.png")), Format::Png);
+/// assert_eq!(p, PathBuf::from("/tmp/shot.png"));
+/// ```
+#[allow(dead_code)]
+pub fn resolve_output_path(output: Option<PathBuf>, format: Format) -> PathBuf {
+    let screenshots_dir = get_screenshots_dir();
+    resolve_output_path_in_dir(output, format, &screenshots_dir)
+}
+
+/// Resolve the output file path using an explicit screenshots directory.
+///
+/// Algorithm:
+/// 1. If the caller provided an explicit output path, return it unchanged.
+/// 2. Otherwise generate a timestamp string.
+/// 3. Build `screenshot_<timestamp>.<ext>` inside `screenshots_dir`.
+///
+/// The function intentionally does not try to rewrite or "fix" explicit paths.
+/// That keeps CLI behavior predictable and avoids surprising users who pass a
+/// custom filename without an extension on purpose.
+///
+/// Possible improvements:
+/// - Detect collisions and append a suffix when two captures happen inside the
+///   same timestamp granularity window.
+/// - Allow a configurable filename template if the settings format grows.
+pub fn resolve_output_path_in_dir(
+    output: Option<PathBuf>,
+    format: Format,
+    screenshots_dir: &Path,
+) -> PathBuf {
+    output.unwrap_or_else(|| {
+        let timestamp = crate::settings::generate_timestamp();
+        screenshots_dir.join(format!("screenshot_{}.{}", timestamp, format.extension()))
+    })
+}
+
+/// Create parent directories for the given path if they don't exist.
+pub(crate) fn ensure_parent_directory(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Save an image using optimized encoder settings per format.
+///
+/// - **PNG:** `CompressionType::Fast` + `FilterType::Sub` (faster than default with minimal size cost)
+/// - **JPG:** Quality 90 via explicit `JpegEncoder`
+/// - **BMP:** Standard `BmpEncoder`
+///
+/// All formats use `BufWriter` for efficient I/O.
+pub fn save_image_optimized(
+    image: &image::RgbaImage,
+    path: &Path,
+    format: Format,
+) -> Result<(), String> {
+    use std::io::BufWriter;
+    let file = std::fs::File::create(path).map_err(|e| format!("Failed to create file: {e}"))?;
+    let mut writer = BufWriter::new(file);
+    match format {
+        Format::Png => {
+            use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+            let encoder =
+                PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::Sub);
+            image.write_with_encoder(encoder)
+        }
+        Format::Jpg => {
+            use image::codecs::jpeg::JpegEncoder;
+            // Encode RGBA block-by-block; JPEG ignores alpha without requiring
+            // a full-size temporary RGB allocation.
+            let mut encoder = JpegEncoder::new_with_quality(writer, 90);
+            return encoder
+                .encode_image(image)
+                .map_err(|e| format!("Failed to save screenshot: {e}"));
+        }
+        Format::Bmp => {
+            use image::codecs::bmp::BmpEncoder;
+            let encoder = BmpEncoder::new(&mut writer);
+            image.write_with_encoder(encoder)
+        }
+    }
+    .map_err(|e| format!("Failed to save screenshot: {e}"))
+}
+
+/// Capture a screenshot and save it to the specified path or default location
+#[allow(dead_code)]
+pub fn capture_screenshot(
+    output: Option<PathBuf>,
+    format: Format,
+    screen_index: Option<usize>,
+) -> Result<PathBuf, String> {
+    let screenshots_dir = get_screenshots_dir();
+    capture_screenshot_in_dir(output, format, screen_index, &screenshots_dir)
+}
+
+/// Capture a screenshot and save it using the provided screenshots directory
+pub fn capture_screenshot_in_dir(
+    output: Option<PathBuf>,
+    format: Format,
+    screen_index: Option<usize>,
+    screenshots_dir: &Path,
+) -> Result<PathBuf, String> {
+    log::debug!(
+        "capture_screenshot: format={:?}, screen={:?}",
+        format,
+        screen_index
+    );
+    let screens = Screen::all().map_err(|e| format!("Failed to get screens: {}", e))?;
+    let idx = match screen_index {
+        Some(requested) => resolve_screen_index(screens.len(), Some(requested))?,
+        None => {
+            // Prefer the screen under the cursor, fall back to primary
+            let cursor_pos = crate::selection::get_cursor_position().ok();
+            let screen_rects: Vec<_> = screens
+                .iter()
+                .map(|s| {
+                    let info = &s.display_info;
+                    (info.x, info.y, info.width, info.height, info.is_primary)
+                })
+                .collect();
+            crate::selection::preferred_screen_index(screen_rects, cursor_pos)
+                .ok_or_else(|| "No screens detected".to_string())?
+        }
+    };
+
+    capture_screenshot_with(
+        screens.len(),
+        Some(idx),
+        || {
+            #[cfg(windows)]
+            {
+                let info = &screens[idx].display_info;
+                crate::record::capture::capture_monitor_image(info.raw_handle.0)
+            }
+
+            #[cfg(not(windows))]
+            let captured = screens[idx]
+                .capture()
+                .map_err(|e| format!("Failed to capture screen: {}", e))?;
+            #[cfg(not(windows))]
+            // Forced version bridge, not a stylistic choice: `screenshots` 0.8
+            // pins `image` 0.24 internally while RustShot builds against 0.25,
+            // so the two `RgbaImage` types are distinct and the buffer has to be
+            // moved through their shared raw representation. `into_raw` transfers
+            // ownership of the pixel buffer, so this bridge does not copy it.
+            image::RgbaImage::from_raw(captured.width(), captured.height(), captured.into_raw())
+                .ok_or_else(|| "Failed to convert captured image".to_string())
+        },
+        output,
+        format,
+        screenshots_dir,
+        ensure_parent_directory,
+        |image, path, _image_format| save_image_optimized(image, path, format),
+    )
+}
+
+/// Get the default screenshots directory
+#[allow(dead_code)]
+pub fn get_screenshots_dir() -> PathBuf {
+    dirs::picture_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("RustShot")
+}
+
+/// Internal capture pipeline with dependency injection for unit testing.
+#[allow(clippy::too_many_arguments)]
+fn capture_screenshot_with<CaptureImage, EnsureDir, SaveImage, Img>(
+    screen_count: usize,
+    screen_index: Option<usize>,
+    capture_image: CaptureImage,
+    output: Option<PathBuf>,
+    format: Format,
+    screenshots_dir: &Path,
+    ensure_dir: EnsureDir,
+    save_image: SaveImage,
+) -> Result<PathBuf, String>
+where
+    CaptureImage: FnOnce() -> Result<Img, String>,
+    EnsureDir: Fn(&Path) -> Result<(), String>,
+    SaveImage: FnOnce(&Img, &Path, ImageFormat) -> Result<(), String>,
+{
+    resolve_screen_index(screen_count, screen_index)?;
+
+    let image = capture_image()?;
+    let output_path = resolve_output_path_in_dir(output, format, screenshots_dir);
+    ensure_dir(&output_path)?;
+    save_image(&image, &output_path, format.to_image_format())?;
+
+    Ok(output_path)
+}
+
+/// Capture the currently active (foreground) window and save it to the specified path.
+/// Uses Windows Graphics Capture with a GDI fallback. Returns an error on other platforms.
+#[allow(dead_code)]
+pub fn capture_active_window(output: Option<PathBuf>, format: Format) -> Result<PathBuf, String> {
+    let screenshots_dir = get_screenshots_dir();
+    capture_active_window_in_dir(output, format, &screenshots_dir)
+}
+
+/// Capture the active window and save it using the provided screenshots directory.
+pub fn capture_active_window_in_dir(
+    output: Option<PathBuf>,
+    format: Format,
+    screenshots_dir: &Path,
+) -> Result<PathBuf, String> {
+    log::debug!("capture_active_window: format={:?}", format);
+    let rgba_image = capture_active_window_image()?;
+    let output_path = resolve_output_path_in_dir(output, format, screenshots_dir);
+    ensure_parent_directory(&output_path)?;
+    save_image_optimized(&rgba_image, &output_path, format)?;
+    Ok(output_path)
+}
+
+/// Capture the active window as an RgbaImage (for clipboard use).
+pub fn capture_active_window_image() -> Result<image::RgbaImage, String> {
+    capture_active_window_platform()
+}
+
+/// Convert BGRA pixel data to RGBA in place.
+///
+/// Algorithm:
+/// 1. Interpret the byte slice as a sequence of 4-byte pixels.
+/// 2. For each complete pixel, swap byte 0 (blue) with byte 2 (red).
+/// 3. Leave green and alpha unchanged.
+/// 4. Ignore any trailing incomplete chunk to avoid out-of-bounds work.
+///
+/// The operation is in-place and allocation-free, which keeps the hot path
+/// cheap for full-screen captures.
+///
+/// Possible improvements:
+/// - Use SIMD or wider chunking if profiling ever shows this channel swap to be
+///   a measurable bottleneck on large monitors.
+/// - Validate producer pixel format up front if future capture backends can
+///   return layouts other than BGRA.
+///
+/// # Examples
+///
+/// ```
+/// use rustshot::capture::bgra_to_rgba;
+///
+/// let mut pixels = vec![0u8, 100, 200, 255]; // B=0, G=100, R=200, A=255
+/// bgra_to_rgba(&mut pixels);
+/// assert_eq!(pixels, vec![200, 100, 0, 255]); // R=200, G=100, B=0, A=255
+/// ```
+#[allow(dead_code)]
+pub fn bgra_to_rgba(pixels: &mut [u8]) {
+    for chunk in pixels.as_chunks_mut::<4>().0 {
+        chunk.swap(0, 2); // swap B and R
+    }
+}
+
+/// List all available screens as human-readable strings (e.g. `"Screen 0: 1920x1080"`).
+pub fn list_screens() -> Vec<String> {
+    Screen::all()
+        .map(|screens| {
+            screens
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    format!(
+                        "Screen {}: {}x{}",
+                        i, s.display_info.width, s.display_info.height
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+// Submodules split out of this file. The re-exports below keep every
+// pre-split path (`crate::capture::…` / `rustshot::capture::…`) resolving
+// unchanged, including the `benchmark_*` shims used by benches/benchmarks.rs.
+mod bench_support;
+mod platform;
+
+// Consumed only through the library tree (benches import
+// `rustshot::capture::benchmark_*`); unused in the binary tree by design.
+#[allow(unused_imports)]
+pub use bench_support::*;
+use platform::capture_active_window_platform;
+#[cfg(windows)]
+pub(crate) use platform::capture_hwnd;
+#[cfg(windows)]
+pub(crate) use platform::pin_process_mta;
+
+#[cfg(test)]
+mod tests;

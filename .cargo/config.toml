@@ -1,0 +1,8 @@
+# The project has a large Windows dependency graph. Keep compiler and rustdoc
+# fan-out bounded so normal checks remain reliable on machines with small page
+# files. Callers can still override both settings explicitly when appropriate.
+[build]
+jobs = 2
+
+[env]
+RUST_TEST_THREADS = { value = "1", force = false }
