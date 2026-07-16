@@ -1,7 +1,7 @@
 //! Pure regression tests for the platform capture boundary.
 
 use crate::capture::platform::{
-    gdi_bgrx_to_rgba, rgba_from_bgra_rows, resolve_window_bounds, validate_gdi_scan_lines,
+    gdi_bgrx_to_rgba, resolve_window_bounds, rgba_from_bgra_rows, validate_gdi_scan_lines,
     WindowBounds,
 };
 use std::cell::Cell;
@@ -51,11 +51,8 @@ fn window_bounds_prefer_extended_frame_without_fallback() {
 fn window_bounds_fall_back_when_extended_frame_fails() {
     let expected = WindowBounds::new(-200, 50, 600, 650);
 
-    let actual = resolve_window_bounds(
-        || Err("DWM unavailable".to_string()),
-        || Ok(expected),
-    )
-    .unwrap();
+    let actual =
+        resolve_window_bounds(|| Err("DWM unavailable".to_string()), || Ok(expected)).unwrap();
 
     assert_eq!(actual, expected);
     assert_eq!(actual.dimensions().unwrap(), (800, 600));
@@ -83,9 +80,7 @@ fn bgra_row_copy_ignores_gpu_padding_and_preserves_alpha() {
 
     assert_eq!(
         rgba,
-        vec![
-            30, 20, 10, 40, 70, 60, 50, 80, 110, 100, 90, 120, 150, 140, 130, 160,
-        ]
+        vec![30, 20, 10, 40, 70, 60, 50, 80, 110, 100, 90, 120, 150, 140, 130, 160,]
     );
 }
 

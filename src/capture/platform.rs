@@ -277,9 +277,7 @@ pub(crate) fn capture_hwnd(
 
 /// Legacy visible-pixel fallback for Windows versions without Graphics Capture.
 #[cfg(windows)]
-fn capture_hwnd_gdi(
-    hwnd: windows::Win32::Foundation::HWND,
-) -> Result<image::RgbaImage, String> {
+fn capture_hwnd_gdi(hwnd: windows::Win32::Foundation::HWND) -> Result<image::RgbaImage, String> {
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, GetDC, GetDIBits, SelectObject,
         BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, ROP_CODE, SRCCOPY,

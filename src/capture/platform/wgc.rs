@@ -6,8 +6,7 @@ use std::time::Duration;
 use windows::core::{factory, ComInterface, IInspectable};
 use windows::Foundation::TypedEventHandler;
 use windows::Graphics::Capture::{
-    Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureItem,
-    GraphicsCaptureSession,
+    Direct3D11CaptureFrame, Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
 };
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Graphics::DirectX::DirectXPixelFormat;
@@ -16,18 +15,16 @@ use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
-    D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAPPED_SUBRESOURCE,
-    D3D11_MAP_READ, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
+    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_CPU_ACCESS_READ,
+    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ, D3D11_SDK_VERSION,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
 };
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::System::WinRT::Direct3D11::{
     CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
 };
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
-use windows::Win32::System::WinRT::{
-    RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED,
-};
+use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
 
 const FRAME_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -51,9 +48,8 @@ pub(super) fn capture_hwnd(hwnd: HWND) -> Result<image::RgbaImage, WgcCaptureErr
     })?;
     let _apartment = RoApartment;
 
-    let supported = GraphicsCaptureSession::IsSupported().map_err(|error| {
-        WgcCaptureError::Unsupported(format!("support check failed: {error}"))
-    })?;
+    let supported = GraphicsCaptureSession::IsSupported()
+        .map_err(|error| WgcCaptureError::Unsupported(format!("support check failed: {error}")))?;
     if !supported {
         return Err(WgcCaptureError::Unsupported(
             "the operating system does not support Windows Graphics Capture".to_string(),
@@ -103,12 +99,11 @@ fn capture_supported_hwnd(hwnd: HWND) -> Result<image::RgbaImage, String> {
     let _ = session.SetIsBorderRequired(false);
 
     let (sender, receiver) = mpsc::sync_channel(1);
-    let handler = TypedEventHandler::<Direct3D11CaptureFramePool, IInspectable>::new(
-        move |_, _| {
+    let handler =
+        TypedEventHandler::<Direct3D11CaptureFramePool, IInspectable>::new(move |_, _| {
             let _ = sender.try_send(());
             Ok(())
-        },
-    );
+        });
     let token = frame_pool
         .FrameArrived(&handler)
         .map_err(|error| format!("Failed to register frame callback: {error}"))?;
@@ -117,14 +112,16 @@ fn capture_supported_hwnd(hwnd: HWND) -> Result<image::RgbaImage, String> {
         session
             .StartCapture()
             .map_err(|error| format!("Failed to start window capture: {error}"))?;
-        receiver.recv_timeout(FRAME_TIMEOUT).map_err(|error| match error {
-            mpsc::RecvTimeoutError::Timeout => {
-                "Timed out waiting for a window capture frame".to_string()
-            }
-            mpsc::RecvTimeoutError::Disconnected => {
-                "Window capture frame callback disconnected".to_string()
-            }
-        })?;
+        receiver
+            .recv_timeout(FRAME_TIMEOUT)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => {
+                    "Timed out waiting for a window capture frame".to_string()
+                }
+                mpsc::RecvTimeoutError::Disconnected => {
+                    "Window capture frame callback disconnected".to_string()
+                }
+            })?;
 
         let frame = frame_pool
             .TryGetNextFrame()
@@ -143,13 +140,13 @@ fn capture_supported_hwnd(hwnd: HWND) -> Result<image::RgbaImage, String> {
 fn create_d3d11_device() -> Result<(ID3D11Device, ID3D11DeviceContext), String> {
     match create_d3d11_device_with_driver(D3D_DRIVER_TYPE_HARDWARE) {
         Ok(device) => Ok(device),
-        Err(hardware_error) => create_d3d11_device_with_driver(D3D_DRIVER_TYPE_WARP).map_err(
-            |warp_error| {
+        Err(hardware_error) => {
+            create_d3d11_device_with_driver(D3D_DRIVER_TYPE_WARP).map_err(|warp_error| {
                 format!(
                     "Failed to create D3D11 device (hardware: {hardware_error}; WARP: {warp_error})"
                 )
-            },
-        ),
+            })
+        }
     }
 }
 
