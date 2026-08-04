@@ -65,6 +65,6 @@
 
 - [x] 🚀 **Release pipeline** — tagged builds publish the Windows portable binary and installer
 - [ ] 📊 **Code coverage in CI** — publish coverage reports to Codecov or Coveralls
-- [ ] 📉 **Benchmark regression** — compare PRs with `main` and fail confirmed regressions above 10% ([#5](https://github.com/stden/RustShot/issues/5))
+- [x] 📉 **Benchmark regression** — PR CI compares with `main` and fails confirmed regressions above 10% ([#5](https://github.com/stden/RustShot/issues/5))
 - [ ] 🌍 **Cross-compilation** — build Linux/macOS/Windows binaries from one CI run
 - [ ] 🌙 **Nightly builds** — automated nightly builds from main branch

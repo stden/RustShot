@@ -154,9 +154,31 @@ test-linux:
 
 Linux requires system libraries for GUI dependencies. Without them, `cargo test` fails during linking.
 
+Coverage uses `taiki-e/install-action` to download the supported prebuilt
+`cargo-tarpaulin` release. Avoid `cargo install cargo-tarpaulin` in CI:
+compiling the coverage tool from source on every clean runner adds several
+minutes without testing RustShot.
+
+### Job 5: Performance regression gate
+
+The pull-request-only `Performance benchmarks` job runs the deterministic
+`performance_gate` Criterion target on `windows-latest`. It creates a
+detached worktree at the pull request's base SHA and measures base and head
+sequentially on the same runner and target directory.
+
+    cargo bench --locked --bench performance_gate -- --save-baseline base
+    cargo bench --locked --bench performance_gate -- --baseline base
+    pwsh -File scripts/benchmark_guard.ps1 -CriterionRoot target/criterion -RegressionThreshold 0.10
+
+The guard uses the median confidence interval rather than one timing sample. A
+relative failure requires the lower confidence bound to exceed 10%, which
+filters out inconclusive runner noise. New benchmarks without a base result use
+generous absolute budgets until they have history. The Criterion HTML and JSON
+reports are retained as a workflow artifact for 14 days.
+
 ### Parallelism
 
-All four jobs run **in parallel** by default. Use `needs` when one job depends on another:
+All CI jobs run **in parallel** by default. Use `needs` when one job depends on another:
 
 ```yaml
 test-windows:

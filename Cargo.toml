@@ -64,6 +64,10 @@ windows = { version = "0.62", features = [
 name = "benchmarks"
 harness = false
 
+[[bench]]
+name = "performance_gate"
+harness = false
+
 # Executable BDD specifications: Gherkin features under tests/features/ drive
 # the public API. harness = false because the binary supplies its own main()
 # that runs the Cucumber runner.
@@ -87,4 +91,3 @@ lto = "fat"
 codegen-units = 1
 strip = true
 split-debuginfo = "unpacked"
-

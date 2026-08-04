@@ -265,6 +265,18 @@ at 1920×1080 and 32 MiB at 3840×2160. It is rebuilt only when the overlay or
 captured image dimensions change; cursor and drag updates copy the cached frame
 and paint only the affected crosshair or border spans.
 
+The 4K BGRA→RGBA channel swap also uses AVX2 when available, with a portable
+scalar fallback for older and non-x86 processors. On the same reference
+machine, the isolated conversion improved from about **3.35 ms to 1.81 ms**
+(about **46% faster**).
+
+Pull requests run `cargo bench --bench performance_gate` on Windows. Once the
+benchmark target exists on the base branch, CI measures base and head on the
+same runner and fails only when the median's lower confidence bound confirms a
+regression above 10%. Absolute safety budgets cover newly introduced
+benchmarks, and the complete Criterion report is uploaded as a workflow
+artifact.
+
 ### 📐 The TDD way of life
 
 ```text
