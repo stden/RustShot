@@ -67,10 +67,14 @@ proptest! {
     #[test]
     fn prop_frame_timing_hns_is_exact_and_gapless(
         fps in 1u32..=240,
-        index in 0i64..=10_000_000,
+        index in 0u64..=10_000_000,
     ) {
-        let (start, duration) = frame_timing_hns(index, fps);
-        let (next_start, _) = frame_timing_hns(index + 1, fps);
+        let fps = Fps::new(fps).unwrap();
+        let timing = frame_timing_hns(FrameIndex::new(index), fps);
+        let next_timing = frame_timing_hns(FrameIndex::new(index + 1), fps);
+        let start = timing.timestamp().get();
+        let duration = timing.duration().get();
+        let next_start = next_timing.timestamp().get();
 
         prop_assert!(
             start >= 0,

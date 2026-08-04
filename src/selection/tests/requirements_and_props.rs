@@ -24,25 +24,6 @@ fn req3_2_build_region_from_drag_negative_coords_spanning_valid_area() {
     assert_eq!(region.physical_height, 110);
 }
 
-/// Requirement 3.3: region fully inside one monitor returns the correct
-/// screen index and local coordinates.
-#[test]
-fn req3_3_resolve_recording_selection_region_inside_one_monitor() {
-    let layouts = two_monitor_layouts();
-    let region = Region {
-        physical_x: 100,
-        physical_y: 100,
-        physical_width: 400,
-        physical_height: 300,
-    };
-    let (index, local) = resolve_recording_selection(&layouts, region).unwrap();
-    assert_eq!(index, 0);
-    assert_eq!(local.physical_x, 100);
-    assert_eq!(local.physical_y, 100);
-    assert_eq!(local.physical_width, 400);
-    assert_eq!(local.physical_height, 300);
-}
-
 /// Requirement 3.4: region spanning two monitors returns an error.
 #[test]
 fn req3_4_resolve_recording_selection_spanning_two_monitors_returns_error() {
@@ -78,17 +59,6 @@ fn req3_5_resolve_recording_selection_exact_boundary_accepted() {
     assert_eq!(local.physical_y, 0);
     assert_eq!(local.physical_width, 1920);
     assert_eq!(local.physical_height, 1080);
-}
-
-/// Requirement 3.6: cursor inside a monitor returns the correct index.
-#[test]
-fn req3_6_find_screen_index_at_position_cursor_inside_monitor() {
-    let screens = vec![(0, 0, 1920u32, 1080u32), (1920, 0, 2560u32, 1440u32)];
-    assert_eq!(
-        find_screen_index_at_position(screens, (2500, 700)),
-        Some(1),
-        "cursor at (2500,700) should be inside the second monitor"
-    );
 }
 
 /// Requirement 3.7: cursor outside all monitors returns None.

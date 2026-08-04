@@ -416,12 +416,13 @@ pub(super) fn resolve_recording_selection(
         .ok_or_else(|| "Recording selection must stay within a single monitor".to_string())?;
 
     let layout = layouts[screen_index];
-    let local_region = Region {
-        physical_x: region.physical_x - layout.physical_x,
-        physical_y: region.physical_y - layout.physical_y,
-        physical_width: region.physical_width,
-        physical_height: region.physical_height,
-    };
+    let local_region = Region::from_physical(
+        PhysicalPoint::new(
+            region.physical_x - layout.physical_x,
+            region.physical_y - layout.physical_y,
+        ),
+        region.size(),
+    );
 
     Ok((screen_index, local_region))
 }
@@ -449,13 +450,11 @@ where
                 index,
                 (logical_x, logical_y, logical_width, logical_height, scale_factor, is_primary),
             )| {
-                let (physical_width, physical_height) = if index == captured_screen_index {
-                    captured_size
+                let physical_size = if index == captured_screen_index {
+                    PhysicalSize::from(captured_size)
                 } else {
-                    (
-                        scaled_physical_dimension(logical_width, scale_factor)?,
-                        scaled_physical_dimension(logical_height, scale_factor)?,
-                    )
+                    LogicalSize::new(logical_width, logical_height)
+                        .to_physical(ScaleFactor::try_from(scale_factor)?)?
                 };
 
                 Ok(ScreenLayoutInput {
@@ -463,8 +462,8 @@ where
                     logical_y,
                     logical_width,
                     logical_height,
-                    physical_width,
-                    physical_height,
+                    physical_width: physical_size.width(),
+                    physical_height: physical_size.height(),
                     is_primary,
                 })
             },

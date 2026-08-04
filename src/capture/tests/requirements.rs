@@ -6,10 +6,10 @@ use std::cell::{Cell, RefCell};
 // --- capture_screenshot_with: capture error prevents ensure_dir (Req 1.7) ---
 
 #[test]
-fn capture_screenshot_with_capture_error_prevents_ensure_dir() {
-    // When capture fails, ensure_dir should never be called
+fn capture_screenshot_with_capture_error_skips_later_pipeline_stages() {
     let ensure_called = Cell::new(false);
-    let _ = capture_screenshot_with(
+    let save_called = Cell::new(false);
+    let result = capture_screenshot_with(
         1,
         None,
         || Err::<(), _>("hardware failure".to_string()),
@@ -20,11 +20,19 @@ fn capture_screenshot_with_capture_error_prevents_ensure_dir() {
             ensure_called.set(true);
             Ok(())
         },
-        |_: &(), _, _| Ok(()),
+        |_: &(), _, _| {
+            save_called.set(true);
+            Ok(())
+        },
     );
+    assert_eq!(result, Err("hardware failure".to_string()));
     assert!(
         !ensure_called.get(),
         "ensure_dir should not be called when capture fails"
+    );
+    assert!(
+        !save_called.get(),
+        "save should not be called when capture fails"
     );
 }
 

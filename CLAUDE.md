@@ -98,5 +98,3 @@ See codev/protocols/spir/protocol.md for full protocol details.
 - See `docs/README.md` for the documentation map.
 
 ---
-
-[Версия на русском языке (CLAUDE.ru.md)](CLAUDE.ru.md)

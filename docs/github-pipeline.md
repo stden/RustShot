@@ -1,87 +1,88 @@
-# GitHub Actions: CI/CD pipeline для Rust
+# GitHub Actions: A CI/CD Pipeline for Rust
 
-Учебник на примерах из проекта RustShot.
+A practical guide based on the RustShot project.
 
-## Оглавление
+## Table of contents
 
-1. [Что такое CI/CD](#1-что-такое-cicd)
-2. [Структура workflow](#2-структура-workflow)
-3. [CI pipeline — проверка кода](#3-ci-pipeline--проверка-кода)
-4. [Release pipeline — сборка и публикация](#4-release-pipeline--сборка-и-публикация)
-5. [Кэширование](#5-кэширование)
-6. [Кросс-платформенная сборка](#6-кросс-платформенная-сборка)
-7. [Типичные проблемы](#7-типичные-проблемы)
+1. [What CI/CD means](#1-what-cicd-means)
+2. [Workflow structure](#2-workflow-structure)
+3. [CI pipeline: checking the code](#3-ci-pipeline-checking-the-code)
+4. [Release pipeline: building and publishing](#4-release-pipeline-building-and-publishing)
+5. [Caching](#5-caching)
+6. [Cross-platform builds](#6-cross-platform-builds)
+7. [Common problems](#7-common-problems)
 
 ---
 
-## 1. Что такое CI/CD
+## 1. What CI/CD means
 
-**CI (Continuous Integration)** — автоматическая проверка каждого коммита:
-- Код компилируется?
-- Тесты проходят?
-- Форматирование правильное?
-- Линтер не ругается?
+**CI (Continuous Integration)** automatically checks every commit:
 
-**CD (Continuous Delivery)** — автоматическая сборка и публикация релизов.
+- Does the code compile?
+- Do the tests pass?
+- Is the formatting correct?
+- Does the linter report any problems?
 
-Файлы живут в `.github/workflows/`:
+**CD (Continuous Delivery)** automatically builds and publishes releases.
 
-```
+Workflow files live in `.github/workflows/`:
+
+```text
 .github/
   workflows/
-    ci.yml       # Проверка на каждый push/PR
-    release.yml  # Сборка при создании тега
+    ci.yml       # Checks every push and pull request
+    release.yml  # Builds when a tag is created
 ```
 
 ---
 
-## 2. Структура workflow
+## 2. Workflow structure
 
 ```yaml
-name: CI                    # Имя, видно в GitHub UI
+name: CI                    # Name shown in the GitHub UI
 
-on:                         # Когда запускать
+on:                         # Events that start the workflow
   push:
-    branches: ["main"]      # На push в main
-  pull_request:             # На любой PR
+    branches: ["main"]      # A push to main
+  pull_request:             # Any pull request
 
-env:                        # Переменные окружения
+env:                        # Environment variables
   CARGO_TERM_COLOR: always
 
-jobs:                       # Список задач
-  fmt:                      # Имя задачи (произвольное)
-    name: Format            # Отображаемое имя
-    runs-on: ubuntu-latest  # ОС раннера
-    steps:                  # Шаги
+jobs:                       # List of jobs
+  fmt:                      # Arbitrary job identifier
+    name: Format            # Display name
+    runs-on: ubuntu-latest  # Runner operating system
+    steps:                  # Ordered steps
       - uses: actions/checkout@v4
       - run: cargo fmt --all --check
 ```
 
-### Ключевые поля
+### Key fields
 
-| Поле | Описание |
-|------|----------|
-| `on.push.branches` | На какие ветки реагировать |
-| `on.push.tags` | На какие теги реагировать |
-| `on.pull_request` | Запуск на PR |
-| `on.workflow_dispatch` | Ручной запуск через UI |
-| `runs-on` | ОС: `ubuntu-latest`, `windows-latest`, `macos-latest` |
-| `steps` | Последовательные шаги |
-| `uses` | Готовый action из marketplace |
-| `run` | Команда bash/powershell |
+| Field | Description |
+|------|-------------|
+| `on.push.branches` | Branches that trigger the workflow |
+| `on.push.tags` | Tags that trigger the workflow |
+| `on.pull_request` | Run for pull requests |
+| `on.workflow_dispatch` | Allow a manual run from the GitHub UI |
+| `runs-on` | Runner OS: `ubuntu-latest`, `windows-latest`, or `macos-latest` |
+| `steps` | Ordered job steps |
+| `uses` | A reusable action from the marketplace |
+| `run` | A Bash or PowerShell command |
 
 ---
 
-## 3. CI pipeline — проверка кода
+## 3. CI pipeline: checking the code
 
-Полный CI из RustShot с пояснениями:
+The following examples show the complete RustShot CI with explanations.
 
-### Job 1: Форматирование
+### Job 1: Formatting
 
 ```yaml
 fmt:
   name: Format
-  runs-on: ubuntu-latest   # Формат не зависит от ОС — берём самый быстрый
+  runs-on: ubuntu-latest   # Formatting is platform-independent, so use the fastest runner
   steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
@@ -90,14 +91,14 @@ fmt:
     - run: cargo fmt --all --check
 ```
 
-`cargo fmt --check` не форматирует, а только проверяет. Если код не отформатирован — exit code 1.
+`cargo fmt --check` does not modify files; it only verifies formatting. It exits with code 1 when the code is not formatted.
 
-### Job 2: Линтер
+### Job 2: Linting
 
 ```yaml
 clippy:
   name: Clippy
-  runs-on: windows-latest  # Windows — основная платформа проекта
+  runs-on: windows-latest  # Windows is the project's primary platform
   steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
@@ -106,12 +107,11 @@ clippy:
     - run: cargo clippy --all-targets -- -D warnings
 ```
 
-`-D warnings` — превращает предупреждения clippy в ошибки. Без этого флага
-clippy может предупреждать, но не ронять билд.
+`-D warnings` promotes Clippy warnings to errors. Without it, Clippy can report warnings without failing the build.
 
-`--all-targets` — проверяет и тесты, и бенчмарки, и примеры.
+`--all-targets` checks tests, benchmarks, and examples in addition to the main targets.
 
-### Job 3: Тесты Windows
+### Job 3: Windows tests
 
 ```yaml
 test-windows:
@@ -123,7 +123,7 @@ test-windows:
     - run: cargo test
 ```
 
-### Job 4: Тесты Linux
+### Job 4: Linux tests
 
 ```yaml
 test-linux:
@@ -152,42 +152,41 @@ test-linux:
     - run: cargo test
 ```
 
-На Linux нужны системные библиотеки для GUI-зависимостей. Без них `cargo test` упадёт
-на этапе линковки.
+Linux requires system libraries for GUI dependencies. Without them, `cargo test` fails during linking.
 
-### Параллельность
+### Parallelism
 
-Все 4 job'а запускаются **параллельно** по умолчанию. Если нужна зависимость:
+All four jobs run **in parallel** by default. Use `needs` when one job depends on another:
 
 ```yaml
 test-windows:
-  needs: [fmt, clippy]  # Запустится только после fmt и clippy
+  needs: [fmt, clippy]  # Starts only after fmt and clippy finish
 ```
 
-В RustShot зависимости нет — все jobs независимы для скорости.
+RustShot has no dependency between these jobs, so they remain independent for speed.
 
 ---
 
-## 4. Release pipeline — сборка и публикация
+## 4. Release pipeline: building and publishing
 
-### Триггер — тег с версией
+### Triggering with a version tag
 
 ```yaml
 on:
   push:
     tags:
-      - 'v*'           # v0.1.0, v1.0.0, etc.
-  workflow_dispatch:    # + ручной запуск
+      - 'v*'             # v0.1.0, v1.0.0, and so on
+  workflow_dispatch:     # Also allow a manual run
 ```
 
-### Создание релиза
+### Creating a release
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-### Полный release workflow
+### Complete release workflow
 
 ```yaml
 jobs:
@@ -201,7 +200,7 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      # Кэш ускоряет повторные сборки
+      # The cache accelerates repeat builds
       - uses: actions/cache@v4
         with:
           path: |
@@ -210,20 +209,20 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # Сборка release-бинарника
+      # Build the release executable
       - run: cargo build --release --target x86_64-pc-windows-msvc
 
-      # Копируем бинарник для инсталлятора
+      # Copy the executable to the location expected by the installer
       - name: Prepare installer source
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path target\release | Out-Null
           Copy-Item target\x86_64-pc-windows-msvc\release\rustshot.exe target\release\rustshot.exe
 
-      # Собираем инсталлятор (Inno Setup предустановлен на windows-latest)
+      # Build the installer (Inno Setup is preinstalled on windows-latest)
       - run: iscc installer.iss
 
-      # Загружаем артефакты
+      # Upload artifacts
       - uses: actions/upload-artifact@v4
         with:
           name: rustshot-windows-x64-portable
@@ -234,7 +233,7 @@ jobs:
           name: rustshot-windows-x64-installer
           path: Output\RustShotSetup.exe
 
-      # Создаём GitHub Release с файлами
+      # Create a GitHub Release containing the files
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -245,51 +244,53 @@ jobs:
           generate_release_notes: true
 ```
 
-### Артефакты
+### Artifacts
 
-`upload-artifact` сохраняет файлы, которые можно скачать из UI GitHub Actions:
-- `rustshot-windows-x64-portable` — просто .exe
-- `rustshot-windows-x64-installer` — инсталлятор с Inno Setup
+`upload-artifact` stores files that can be downloaded from the GitHub Actions UI:
+
+- `rustshot-windows-x64-portable`: the standalone `.exe`
+- `rustshot-windows-x64-installer`: the Inno Setup installer
 
 ### GitHub Release
 
-`softprops/action-gh-release@v2` создаёт релиз автоматически при push тега:
-- Прикрепляет указанные файлы
-- `generate_release_notes: true` — автоматически генерирует changelog из коммитов
+`softprops/action-gh-release@v2` automatically creates a release when a tag is pushed:
+
+- It attaches the configured files.
+- `generate_release_notes: true` generates a changelog from commits.
 
 ---
 
-## 5. Кэширование
+## 5. Caching
 
-### Зачем кэш
+### Why cache
 
-Без кэша каждый билд скачивает и компилирует все зависимости с нуля (~2-5 минут).
-С кэшем — только дельту.
+Without a cache, every build downloads and compiles all dependencies from scratch, which commonly takes two to five minutes. With a cache, only the delta must be rebuilt.
 
 ```yaml
 - uses: actions/cache@v4
   with:
     path: |
-      ~/.cargo/registry    # Скачанные исходники крейтов
-      ~/.cargo/git         # Git-зависимости
-      target               # Скомпилированные зависимости
+      ~/.cargo/registry    # Downloaded crate sources
+      ~/.cargo/git         # Git dependencies
+      target               # Compiled dependencies
     key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 ```
 
-`key` включает хэш `Cargo.lock` — если зависимости не изменились, кэш валиден.
+The key includes a hash of `Cargo.lock`. When dependencies do not change, the cache remains valid.
 
-### Когда НЕ кэшировать
+### When not to cache
 
-В CI (не release) кэш часто не стоит усилий:
-- Параллельные jobs всё равно быстрые
-- Кэш может скрыть проблемы с зависимостями
-- Инвалидация кэша — источник трудноуловимых багов
+For CI checks, as opposed to release builds, caching is often not worth the added complexity:
+
+- Parallel jobs may already be fast.
+- A cache can hide dependency problems.
+- Cache invalidation can introduce difficult-to-diagnose failures.
 
 ---
 
-## 6. Кросс-платформенная сборка
+## 6. Cross-platform builds
 
-### Матричная стратегия (пример)
+### Matrix strategy
 
 ```yaml
 test:
@@ -303,18 +304,18 @@ test:
     - run: cargo test
 ```
 
-### Условные шаги
+### Conditional steps
 
 ```yaml
-- name: Install Linux deps
+- name: Install Linux dependencies
   if: runner.os == 'Linux'
   run: sudo apt-get install -y libxcb1-dev ...
 ```
 
-### Условная компиляция в Rust
+### Conditional compilation in Rust
 
 ```yaml
-# В CI — все платформы, в коде — cfg атрибуты:
+# CI covers every platform, while the code uses cfg attributes:
 ```
 
 ```rust
@@ -323,37 +324,37 @@ fn register_hotkey() { ... }
 
 #[cfg(not(target_os = "windows"))]
 fn register_hotkey() {
-    // no-op на Linux/macOS
+    // No operation is needed on Linux or macOS.
 }
 ```
 
 ---
 
-## 7. Типичные проблемы
+## 7. Common problems
 
-### Форматирование
+### Formatting
 
-**Проблема**: CI падает на `cargo fmt --check`, хотя локально всё ок.
+**Problem**: CI fails at `cargo fmt --check` even though formatting passes locally.
 
-**Решение**: разные версии rustfmt. Зафиксируй toolchain:
+**Solution**: Different rustfmt versions may be in use. Pin the toolchain:
 
 ```yaml
 - uses: dtolnay/rust-toolchain@stable
 ```
 
-Или конкретная версия:
+Or select a specific version:
 
 ```yaml
 - uses: dtolnay/rust-toolchain@1.77.0
 ```
 
-И запускай `cargo fmt` перед коммитом.
+Run `cargo fmt` before committing.
 
-### Системные зависимости на Linux
+### Linux system dependencies
 
-**Проблема**: `cargo test` падает с `cannot find -lxcb`.
+**Problem**: `cargo test` fails with `cannot find -lxcb`.
 
-**Решение**: установи dev-пакеты:
+**Solution**: Install the development packages:
 
 ```yaml
 - run: |
@@ -361,37 +362,36 @@ fn register_hotkey() {
     sudo apt-get install -y libxcb1-dev libgtk-3-dev ...
 ```
 
-Как найти нужные пакеты: читай ошибку линковщика, ищи `apt-file search libXXX.so`.
+To identify the required packages, read the linker error and search with `apt-file search libXXX.so`.
 
-### Windows и Inno Setup
+### Windows and Inno Setup
 
-**Проблема**: `iscc` не найден.
+**Problem**: `iscc` is not found.
 
-**Решение**: `iscc` предустановлен на `windows-latest` GitHub runner. Если нужна
-конкретная версия:
+**Solution**: `iscc` is preinstalled on GitHub's `windows-latest` runner. To request a particular version, use:
 
 ```yaml
 - uses: jrsoftware/iscc-action@v1
 ```
 
-### Секреты
+### Secrets
 
 ```yaml
-# Никогда не хардкодь токены в workflow!
+# Never hard-code tokens in a workflow.
 - run: something --token ${{ secrets.MY_TOKEN }}
 ```
 
-Секреты настраиваются в Settings → Secrets and variables → Actions.
+Configure secrets under **Settings → Secrets and variables → Actions**.
 
 ---
 
-## Чеклист нового workflow
+## New workflow checklist
 
-- [ ] `on:` — правильные триггеры
-- [ ] `runs-on:` — правильная ОС
-- [ ] `dtolnay/rust-toolchain` — для Rust проектов
-- [ ] Системные зависимости для Linux
-- [ ] `cargo fmt --check` + `cargo clippy -D warnings` + `cargo test`
-- [ ] Кэш для release builds
-- [ ] `upload-artifact` для билд-артефактов
-- [ ] Секреты через `${{ secrets.XXX }}`
+- [ ] `on:` uses the correct triggers
+- [ ] `runs-on:` uses the correct operating system
+- [ ] `dtolnay/rust-toolchain` installs the Rust toolchain
+- [ ] Linux system dependencies are installed
+- [ ] `cargo fmt --check`, `cargo clippy -D warnings`, and `cargo test` run
+- [ ] Release builds use an appropriate cache
+- [ ] `upload-artifact` publishes build artifacts
+- [ ] Secrets are read through `${{ secrets.XXX }}`

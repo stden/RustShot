@@ -14,7 +14,7 @@
 //!
 //! - [`RecordingSession::start`] validates parameters, spawns a background
 //!   thread, and returns immediately.
-//! - The background thread runs [`record_loop`] → [`wmf_record`], which:
+//! - The background thread runs `record_loop` → `wmf_record`, which:
 //!   1. Initialises COM + Media Foundation.
 //!   2. Creates an `IMFSinkWriter` pointed at an MP4 file.
 //!   3. Captures frames through one persistent Windows Graphics Capture
@@ -28,8 +28,10 @@
 //! - [`round_to_even`] — H.264 requires even dimensions.
 //! - [`get_recording_dir`] / [`get_recording_path`] — output path logic.
 
+mod bench;
 #[cfg(windows)]
 pub(crate) mod capture;
+mod domain;
 mod encoder;
 mod frame;
 #[cfg(test)]
@@ -37,6 +39,10 @@ mod tests;
 
 use crate::selection::Region;
 use crate::settings::Fps;
+pub use bench::*;
+pub(crate) use domain::{Bitrate, FrameIndex, FrameTiming, RecordingDimensions};
+#[cfg(test)]
+pub(crate) use domain::{Height, Width};
 // The frame helpers are consumed by the cfg(windows) recording loop only.
 #[cfg_attr(not(windows), allow(unused_imports))]
 use frame::*;
@@ -64,7 +70,7 @@ impl RecordingSession {
     /// `region` is the capture area within that monitor (screen-local coords).
     /// Returns immediately; encoding runs on a background thread.
     #[allow(dead_code)]
-    pub fn start(screen_x: i32, screen_y: i32, region: Region, fps: u32) -> Result<Self, String> {
+    pub fn start(screen_x: i32, screen_y: i32, region: Region, fps: Fps) -> Result<Self, String> {
         Self::start_in_dir(screen_x, screen_y, region, fps, get_recording_dir())
     }
 
@@ -73,16 +79,18 @@ impl RecordingSession {
         screen_x: i32,
         screen_y: i32,
         region: Region,
-        fps: u32,
+        fps: Fps,
         recordings_dir: PathBuf,
     ) -> Result<Self, String> {
-        validate_recording_start(fps)?;
-        validate_recording_region_dimensions(region)?;
+        validate_recording_platform()?;
+        let dimensions = RecordingDimensions::try_from(region)?;
         let output_path = get_recording_path_in_dir(&recordings_dir);
         let path_clone = output_path.clone();
         let (stop_tx, stop_rx) = mpsc::sync_channel(1);
         let join = thread::spawn(move || {
-            record_loop(path_clone, screen_x, screen_y, region, fps, stop_rx)
+            record_loop(
+                path_clone, screen_x, screen_y, region, dimensions, fps, stop_rx,
+            )
         });
         Ok(Self {
             stop_tx,
@@ -177,8 +185,11 @@ pub fn get_recording_path_in_dir(recordings_dir: &Path) -> PathBuf {
 /// input into a validated [`Fps`]. Code that already holds an `Fps` (e.g. from
 /// [`crate::settings::Settings`]) has no range check left to perform.
 pub fn validate_recording_start(fps: u32) -> Result<(), String> {
-    Fps::new(fps)?;
+    let _fps = Fps::try_from(fps)?;
+    validate_recording_platform()
+}
 
+fn validate_recording_platform() -> Result<(), String> {
     #[cfg(not(windows))]
     {
         Err("Recording is only supported on Windows".to_string())
@@ -226,40 +237,34 @@ pub fn frame_duration_hns(fps: u32) -> i64 {
     10_000_000i64 / fps as i64
 }
 
-/// Return an exact fixed-rate timestamp and duration without cumulative drift.
 /// Which frame index the wall clock says we should be on after `elapsed`.
 ///
 /// `floor(elapsed * fps / 1s)`, saturating at `i64::MAX`. Anchoring the
 /// recording timeline to the wall clock (instead of counting emitted frames)
 /// lets the loop skip ahead when the encoder falls behind rather than
-/// accumulating drift. `fps == 0` yields frame 0 - the validation layer
-/// rejects it before recording starts, so this is a belt-and-suspenders guard.
+/// accumulating drift. The validated [`Fps`] type makes a zero rate
+/// unrepresentable before this calculation begins.
 #[allow(dead_code)] // wiring lands with the wall-clock-anchored recording loop
-pub(crate) fn frame_index_for_elapsed(elapsed: std::time::Duration, fps: u32) -> i64 {
-    if fps == 0 {
-        return 0;
-    }
-    let index = elapsed.as_nanos().saturating_mul(u128::from(fps)) / 1_000_000_000;
-    i64::try_from(index).unwrap_or(i64::MAX)
+pub(crate) fn frame_index_for_elapsed(elapsed: std::time::Duration, fps: Fps) -> FrameIndex {
+    let index = elapsed.as_nanos().saturating_mul(u128::from(fps.get())) / 1_000_000_000;
+    FrameIndex::saturating_from_u128(index)
 }
 
-pub(crate) fn frame_timing_hns(frame_index: i64, fps: u32) -> (i64, i64) {
-    if frame_index < 0 || fps == 0 {
-        return (0, 0);
-    }
-    let start = i128::from(frame_index) * 10_000_000 / i128::from(fps);
-    let end = i128::from(frame_index + 1) * 10_000_000 / i128::from(fps);
-    (start as i64, (end - start) as i64)
+pub(crate) fn frame_timing_hns(frame_index: FrameIndex, fps: Fps) -> FrameTiming {
+    let fps = i128::from(fps.get());
+    let start = i128::from(frame_index.get()) * 10_000_000 / fps;
+    let end = i128::from(frame_index.next().get()) * 10_000_000 / fps;
+    FrameTiming::new(start as i64, (end - start) as i64)
 }
 
 /// Choose a screen-recording bitrate from pixel throughput.
-pub(crate) fn recording_bitrate(width: u32, height: u32, fps: u32) -> u32 {
-    let bits_per_second = u64::from(width)
-        .saturating_mul(u64::from(height))
-        .saturating_mul(u64::from(fps))
+pub(crate) fn recording_bitrate(dimensions: RecordingDimensions, fps: Fps) -> Bitrate {
+    let bits_per_second = u64::from(dimensions.width().get())
+        .saturating_mul(u64::from(dimensions.height().get()))
+        .saturating_mul(u64::from(fps.get()))
         .saturating_mul(12)
         / 100;
-    bits_per_second.clamp(2_000_000, 50_000_000) as u32
+    Bitrate::new(bits_per_second.clamp(2_000_000, 50_000_000) as u32)
 }
 
 /// Round a dimension up to the nearest even number (H.264 requirement).
@@ -306,19 +311,6 @@ fn checked_rgba_len(width: u32, height: u32) -> Result<usize, String> {
         .checked_mul(height as usize)
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or_else(|| "Pixel buffer dimensions are too large".to_string())
-}
-
-fn validate_recording_region_dimensions(region: Region) -> Result<(), String> {
-    if region.physical_width == 0 || region.physical_height == 0 {
-        return Err("Recording region must have non-zero size".to_string());
-    }
-    checked_round_to_even(region.physical_width)?;
-    checked_round_to_even(region.physical_height)?;
-    checked_rgba_len(
-        checked_round_to_even(region.physical_width)?,
-        checked_round_to_even(region.physical_height)?,
-    )?;
-    Ok(())
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -436,13 +428,43 @@ pub fn rgba_to_bgra_bottom_up_into(
     Ok(())
 }
 
+/// Expose the production exact-fit BGRA frame copy for benchmarks.
+#[doc(hidden)]
+pub fn benchmark_copy_bgra_frame_exact_fit(
+    source: &[u8],
+    width: u32,
+    height: u32,
+    output: &mut [u8],
+) -> Result<(), String> {
+    let source_row_pitch = width
+        .checked_mul(4)
+        .ok_or_else(|| "Captured frame row is too large".to_string())?
+        as usize;
+    frame::copy_bgra_region_bottom_up(
+        source,
+        source_row_pitch,
+        width,
+        height,
+        Region {
+            physical_x: 0,
+            physical_y: 0,
+            physical_width: width,
+            physical_height: height,
+        },
+        width,
+        height,
+        output,
+    )
+}
+
 #[cfg(windows)]
 fn record_loop(
     output_path: PathBuf,
     screen_x: i32,
     screen_y: i32,
     region: Region,
-    fps: u32,
+    dimensions: RecordingDimensions,
+    fps: Fps,
     stop_rx: mpsc::Receiver<()>,
 ) -> Result<PathBuf, String> {
     use std::fs;
@@ -452,7 +474,17 @@ fn record_loop(
     // SAFETY: `wmf_record` calls COM and Media Foundation APIs that require
     // the current thread to have COM initialised (done inside `wmf_record`
     // via `CoGuard`). The output path, region, and stop channel are valid.
-    unsafe { wmf_record(&output_path, screen_x, screen_y, region, fps, stop_rx) }
+    unsafe {
+        wmf_record(
+            &output_path,
+            screen_x,
+            screen_y,
+            region,
+            dimensions,
+            fps,
+            stop_rx,
+        )
+    }
 }
 
 #[cfg(not(windows))]
@@ -461,7 +493,8 @@ fn record_loop(
     _screen_x: i32,
     _screen_y: i32,
     _region: Region,
-    _fps: u32,
+    _dimensions: RecordingDimensions,
+    _fps: Fps,
     _stop_rx: mpsc::Receiver<()>,
 ) -> Result<PathBuf, String> {
     Err("Recording is only supported on Windows".to_string())

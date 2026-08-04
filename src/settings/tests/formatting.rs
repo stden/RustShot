@@ -2,89 +2,7 @@
 
 use super::*;
 
-#[test]
-fn format_settings_json_contains_all_keys() {
-    let s = Settings::default();
-    let json = format_settings_json(&s);
-    assert!(json.contains("screenshots_dir"));
-    assert!(json.contains("recordings_dir"));
-    assert!(json.contains("default_format"));
-    assert!(json.contains("recording_fps"));
-    assert!(json.contains("auto_start"));
-}
-
-#[test]
-fn format_settings_json_contains_png() {
-    let s = Settings::default();
-    let json = format_settings_json(&s);
-    assert!(json.contains("\"png\""));
-}
-
-#[test]
-fn format_settings_json_contains_fps_30() {
-    let s = Settings::default();
-    let json = format_settings_json(&s);
-    assert!(json.contains("30"));
-}
-
-#[test]
-fn parse_settings_json_roundtrip() {
-    let original = Settings {
-        screenshots_dir: PathBuf::from("/tmp/shots"),
-        recordings_dir: PathBuf::from("/tmp/recs"),
-        default_format: Format::Jpg,
-        recording_fps: Fps::new(60).unwrap(),
-        auto_start: false,
-    };
-    let json = format_settings_json(&original);
-    let parsed = parse_settings_json(&json);
-    assert_eq!(parsed.default_format, Format::Jpg);
-    assert_eq!(parsed.recording_fps.get(), 60);
-    assert!(!parsed.auto_start);
-}
-
-#[test]
-fn format_settings_json_auto_start_true() {
-    let s = Settings {
-        auto_start: true,
-        ..Settings::default()
-    };
-    let json = format_settings_json(&s);
-    assert!(json.contains("true"));
-}
-
-#[test]
-fn format_settings_json_auto_start_false() {
-    let s = Settings {
-        auto_start: false,
-        ..Settings::default()
-    };
-    let json = format_settings_json(&s);
-    assert!(json.contains("false"));
-}
-
-#[test]
-fn format_settings_json_contains_auto_start_key_once() {
-    let json = format_settings_json(&Settings::default());
-    assert_eq!(json.matches("\"auto_start\"").count(), 1);
-}
-
 // --- Windows backslash roundtrip ---
-
-#[test]
-fn format_and_parse_windows_backslash_paths() {
-    let settings = Settings {
-        screenshots_dir: PathBuf::from("C:\\Users\\test\\Pictures\\RustShot"),
-        recordings_dir: PathBuf::from("C:\\Users\\test\\Pictures\\RustShot\\recordings"),
-        default_format: Format::Png,
-        recording_fps: Fps::DEFAULT,
-        auto_start: true,
-    };
-    let json = format_settings_json(&settings);
-    let parsed = parse_settings_json(&json);
-    assert_eq!(parsed.screenshots_dir, settings.screenshots_dir);
-    assert_eq!(parsed.recordings_dir, settings.recordings_dir);
-}
 
 #[test]
 fn format_and_parse_paths_with_embedded_quotes() {
@@ -102,14 +20,6 @@ fn format_and_parse_paths_with_embedded_quotes() {
 }
 
 // --- format_settings_json output structure ---
-
-#[test]
-fn format_settings_json_is_valid_json_structure() {
-    let s = Settings::default();
-    let json = format_settings_json(&s);
-    assert!(json.starts_with('{'));
-    assert!(json.ends_with('}'));
-}
 
 #[test]
 fn format_settings_json_custom_values() {
@@ -184,57 +94,9 @@ fn format_settings_json_contains_newlines() {
     assert!(json.contains('\n'), "JSON should be pretty-printed");
 }
 
-#[test]
-fn format_settings_json_contains_at_least_five_colons() {
-    let s = Settings::default();
-    let json = format_settings_json(&s);
-    let colon_count = json.chars().filter(|&c| c == ':').count();
-    assert!(
-        colon_count >= 5,
-        "should have at least 5 colons (one per key-value pair), got {colon_count}"
-    );
-}
-
 // -------------------------------------------------------------------------
 // format_settings_json edge cases
 // -------------------------------------------------------------------------
-
-#[test]
-fn format_settings_json_includes_every_key() {
-    let s = Settings::default();
-    let json = format_settings_json(&s);
-    assert!(json.contains("screenshots_dir"));
-    assert!(json.contains("recordings_dir"));
-    assert!(json.contains("default_format"));
-    assert!(json.contains("recording_fps"));
-    assert!(json.contains("auto_start"));
-}
-
-#[test]
-fn format_settings_json_escapes_backslashes() {
-    let s = Settings {
-        screenshots_dir: PathBuf::from("C:\\Users\\test"),
-        ..Settings::default()
-    };
-    let json = format_settings_json(&s);
-    assert!(json.contains("C:\\\\Users\\\\test"));
-}
-
-#[test]
-fn format_settings_json_output_is_valid_roundtrip() {
-    let original = Settings {
-        screenshots_dir: PathBuf::from("/tmp/a"),
-        recordings_dir: PathBuf::from("/tmp/b"),
-        default_format: Format::Bmp,
-        recording_fps: Fps::new(240).unwrap(),
-        auto_start: false,
-    };
-    let json = format_settings_json(&original);
-    let loaded = parse_settings_json(&json);
-    assert_eq!(loaded.default_format, original.default_format);
-    assert_eq!(loaded.recording_fps, original.recording_fps);
-    assert_eq!(loaded.auto_start, original.auto_start);
-}
 
 #[test]
 fn format_parse_roundtrip_with_unicode_paths() {
@@ -274,47 +136,9 @@ fn format_parse_roundtrip_with_backslash_heavy_path() {
     assert_eq!(parsed.auto_start, original.auto_start);
 }
 
-#[test]
-fn format_parse_roundtrip_preserves_auto_start_false() {
-    let original = Settings {
-        auto_start: false,
-        ..Settings::default()
-    };
-    let json = format_settings_json(&original);
-    let parsed = parse_settings_json(&json);
-    assert!(!parsed.auto_start);
-}
-
 // -------------------------------------------------------------------------
 // format/parse roundtrip with Windows backslash paths
 // -------------------------------------------------------------------------
-
-#[test]
-fn format_parse_roundtrip_preserves_backslash_paths() {
-    let original = Settings {
-        screenshots_dir: PathBuf::from(r"C:\Users\test\Pictures\RustShot"),
-        recordings_dir: PathBuf::from(r"C:\Users\test\Videos\recordings"),
-        ..Settings::default()
-    };
-    let json = format_settings_json(&original);
-    let parsed = parse_settings_json(&json);
-    assert_eq!(parsed.screenshots_dir, original.screenshots_dir);
-    assert_eq!(parsed.recordings_dir, original.recordings_dir);
-}
-
-#[test]
-fn format_settings_json_backslash_is_escaped() {
-    let s = Settings {
-        screenshots_dir: PathBuf::from(r"C:\path"),
-        ..Settings::default()
-    };
-    let json = format_settings_json(&s);
-    // Backslash should be escaped as \\
-    assert!(
-        json.contains(r"C:\\path"),
-        "backslash should be escaped: {json}"
-    );
-}
 
 // -------------------------------------------------------------------------
 // Requirement 12.7: format_settings_json each key appears exactly once

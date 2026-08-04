@@ -22,97 +22,15 @@ fn quoted_autorun_command_wraps_paths_in_quotes() {
 
 #[cfg(windows)]
 #[test]
-fn quoted_autorun_command_simple_path() {
-    let command = quoted_autorun_command(Path::new(r"C:\rustshot.exe"));
-    assert_eq!(command, r#""C:\rustshot.exe""#);
-}
-
-#[cfg(windows)]
-#[test]
-fn quoted_autorun_command_starts_and_ends_with_quote() {
-    let command = quoted_autorun_command(Path::new(r"C:\app\test.exe"));
-    assert!(command.starts_with('"'));
-    assert!(command.ends_with('"'));
-}
-
-#[cfg(windows)]
-#[test]
-fn autorun_subkey_points_to_run_key() {
-    assert!(AUTORUN_SUBKEY.contains("Run"));
-    assert!(AUTORUN_SUBKEY.starts_with("Software\\"));
-}
-
-#[cfg(windows)]
-#[test]
-fn autorun_value_is_rustshot() {
+fn autorun_registry_location_and_value_are_stable() {
+    assert_eq!(
+        AUTORUN_SUBKEY,
+        r"Software\Microsoft\Windows\CurrentVersion\Run"
+    );
     assert_eq!(AUTORUN_VALUE, "RustShot");
 }
 
 #[cfg(windows)]
-#[test]
-fn autorun_constants_produce_valid_wide_strings() {
-    let subkey = settings::wide(AUTORUN_SUBKEY);
-    let value = settings::wide(AUTORUN_VALUE);
-    // Both should be null-terminated
-    assert_eq!(*subkey.last().unwrap(), 0);
-    assert_eq!(*value.last().unwrap(), 0);
-    // Length should be string length + 1 (null)
-    assert_eq!(subkey.len(), AUTORUN_SUBKEY.len() + 1);
-    assert_eq!(value.len(), AUTORUN_VALUE.len() + 1);
-}
-
-#[test]
-fn sync_autorun_with_handlers_disables_when_auto_start_is_false() {
-    let set_called = Cell::new(false);
-    let remove_called = Cell::new(false);
-    sync_autorun_with_handlers(false, || set_called.set(true), || remove_called.set(true));
-    assert!(!set_called.get());
-    assert!(remove_called.get());
-}
-
-#[test]
-fn sync_autorun_with_handlers_enables_when_auto_start_is_true() {
-    let set_called = Cell::new(false);
-    let remove_called = Cell::new(false);
-    sync_autorun_with_handlers(true, || set_called.set(true), || remove_called.set(true));
-    assert!(set_called.get());
-    assert!(!remove_called.get());
-}
-
-// --- sync_autorun_with_handlers ---
-
-#[test]
-fn sync_autorun_with_handlers_calls_enable_when_true() {
-    let called = Cell::new(false);
-    sync_autorun_with_handlers(true, || called.set(true), || {});
-    assert!(called.get());
-}
-
-#[test]
-fn sync_autorun_with_handlers_calls_disable_when_false() {
-    let called = Cell::new(false);
-    sync_autorun_with_handlers(false, || {}, || called.set(true));
-    assert!(called.get());
-}
-
-#[test]
-fn sync_autorun_with_handlers_does_not_call_disable_when_true() {
-    let called = Cell::new(false);
-    sync_autorun_with_handlers(true, || {}, || called.set(true));
-    assert!(!called.get());
-}
-
-#[test]
-fn sync_autorun_with_handlers_does_not_call_enable_when_false() {
-    let called = Cell::new(false);
-    sync_autorun_with_handlers(false, || called.set(true), || {});
-    assert!(!called.get());
-}
-
-// -------------------------------------------------------------------------
-// sync_autorun_with_handlers — verify mutual exclusivity
-// -------------------------------------------------------------------------
-
 #[test]
 fn sync_autorun_with_handlers_enable_and_disable_are_mutually_exclusive() {
     let enable_count = Cell::new(0u32);

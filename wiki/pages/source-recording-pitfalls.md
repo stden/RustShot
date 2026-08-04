@@ -2,8 +2,8 @@
 
 # Source: Screen Recording Pitfalls
 
-* **Original Title**: Почему запись экрана ломается: путь от кадра до MP4
-* **File**: `articles/003-screen-recording-pitfalls.ru.md`
+* **Original Title**: Why Screen Recording Breaks: The Path from Frame to MP4
+* **File**: `articles/003-screen-recording-pitfalls.md`
 * **Topic**: Video Encoding, Media Foundation, Pipeline Design.
 
 ## Key Takeaways

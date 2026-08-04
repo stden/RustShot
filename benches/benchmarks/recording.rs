@@ -142,6 +142,49 @@ pub(crate) fn bench_rgba_to_bgra_bottom_up(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Production exact-fit native frame copy
+// ---------------------------------------------------------------------------
+
+pub(crate) fn bench_exact_fit_frame_copy(c: &mut Criterion) {
+    const WIDTH: u32 = 1920;
+    const HEIGHT: u32 = 1080;
+    let len = WIDTH as usize * HEIGHT as usize * 4;
+    let source = patterned_bytes(len);
+    let mut optimized_output = vec![0xcc; len];
+    let mut redundant_clear_output = vec![0xcc; len];
+    let mut group = c.benchmark_group("exact_fit_frame_copy_1080p");
+
+    group.bench_function("production", |b| {
+        b.iter(|| {
+            record::benchmark_copy_bgra_frame_exact_fit(
+                black_box(&source),
+                WIDTH,
+                HEIGHT,
+                black_box(&mut optimized_output),
+            )
+            .unwrap();
+        });
+    });
+
+    // Reproduces the old implementation's full-buffer zeroing immediately
+    // before the production copy overwrites every byte.
+    group.bench_function("with_redundant_clear", |b| {
+        b.iter(|| {
+            redundant_clear_output.fill(0);
+            record::benchmark_copy_bgra_frame_exact_fit(
+                black_box(&source),
+                WIDTH,
+                HEIGHT,
+                black_box(&mut redundant_clear_output),
+            )
+            .unwrap();
+        });
+    });
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // record::pack_u32_pair
 // ---------------------------------------------------------------------------
 

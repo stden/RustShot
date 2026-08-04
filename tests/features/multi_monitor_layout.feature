@@ -88,3 +88,69 @@ Feature: Physical layout of gap-separated monitors
       | width | height |
       | 1920  | 1080   |
       | 1920  | 1080   |
+
+  @selection-2.1
+  Scenario: The primary monitor anchors physical space even with a logical offset
+    Given the mixed-DPI monitor layout:
+      | logical_x | logical_y | logical_width | logical_height | physical_width | physical_height | primary |
+      | 100       | 200       | 1920          | 1080           | 2880           | 1620            | yes     |
+    When the physical screen layout is built
+    Then the physical layout is:
+      | x | y | width | height |
+      | 0 | 0 | 2880  | 1620   |
+
+  @selection-2.2
+  Scenario: Horizontally adjacent mixed-DPI monitors use physical widths
+    Given the mixed-DPI monitor layout:
+      | logical_x | logical_y | logical_width | logical_height | physical_width | physical_height | primary |
+      | 0         | 0         | 1920          | 1080           | 1920           | 1080            | yes     |
+      | 1920      | 0         | 1707          | 960            | 2560           | 1440            | no      |
+    When the physical screen layout is built
+    Then the physical layout is:
+      | x    | y | width | height |
+      | 0    | 0 | 1920  | 1080   |
+      | 1920 | 0 | 2560  | 1440   |
+
+  @selection-2.3
+  Scenario: Vertically stacked monitors use physical heights
+    Given the mixed-DPI monitor layout:
+      | logical_x | logical_y | logical_width | logical_height | physical_width | physical_height | primary |
+      | 0         | 0         | 1920          | 1080           | 1920           | 1080            | yes     |
+      | 0         | 1080      | 1920          | 1080           | 1920           | 1080            | no      |
+    When the physical screen layout is built
+    Then the physical layout is:
+      | x | y    | width | height |
+      | 0 | 0    | 1920  | 1080   |
+      | 0 | 1080 | 1920  | 1080   |
+
+  @selection-2.4
+  Scenario: An empty monitor layout is rejected clearly
+    Given no monitor layout entries
+    When the physical screen layout is built
+    Then building the physical layout fails mentioning "No screens"
+
+  @selection-2.5
+  Scenario: Without a primary monitor the first entry becomes the anchor
+    Given the mixed-DPI monitor layout:
+      | logical_x | logical_y | logical_width | logical_height | physical_width | physical_height | primary |
+      | 0         | 0         | 1920          | 1080           | 1920           | 1080            | no      |
+      | 1920      | 0         | 2560          | 1440           | 2560           | 1440            | no      |
+    When the physical screen layout is built
+    Then the physical layout is:
+      | x    | y | width | height |
+      | 0    | 0 | 1920  | 1080   |
+      | 1920 | 0 | 2560  | 1440   |
+
+  @selection-2.6 @selection-2.7
+  Scenario: Normalization shifts negative origins and spans the virtual desktop
+    Given the resolved physical monitor layout:
+      | logical_x | logical_y | logical_width | logical_height | physical_x | physical_y | physical_width | physical_height |
+      | -1920     | 0         | 1920          | 1080           | -2560      | -750       | 2560           | 1440            |
+      | 0         | 0         | 1920          | 1080           | 0          | 0          | 1920           | 1080            |
+    When the resolved physical layout is normalized
+    Then its original physical origin is (-2560, -750)
+    And its normalized desktop size is 4480 x 1830
+    And the normalized physical layout is:
+      | x    | y   | width | height |
+      | 0    | 0   | 2560  | 1440   |
+      | 2560 | 750 | 1920  | 1080   |

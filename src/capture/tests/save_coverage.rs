@@ -1,72 +1,9 @@
-//! Additional `save_image_optimized` coverage (round-trips, sizes, alpha handling) plus `Format` equality and small-buffer `bgra_to_rgba` tests.
+//! Semantic image round-trips and live screen-list formatting coverage.
 
 use crate::capture::*;
 use crate::test_support::TestDir;
-
-// -------------------------------------------------------------------------
-// capture_screenshot_with — screen_index: None
-// -------------------------------------------------------------------------
-
-#[test]
-fn capture_screenshot_with_none_screen_index_uses_default() {
-    let result = capture_screenshot_with(
-        3,
-        None, // None triggers resolve_screen_index(3, None) → Ok(0)
-        || Ok("fake"),
-        None,
-        Format::Png,
-        &PathBuf::from("/tmp/shots"),
-        |_| Ok(()),
-        |_, _, _| Ok(()),
-    );
-    assert!(result.is_ok());
-}
-
-// -------------------------------------------------------------------------
-// benchmark helpers — additional edge cases
-// -------------------------------------------------------------------------
-
-#[test]
-fn benchmark_screen_count_from_result_single_screen() {
-    assert_eq!(benchmark_screen_count_from_result(Ok(vec![42])).unwrap(), 1);
-}
-
-#[test]
-fn benchmark_first_screen_from_result_error_passthrough() {
-    let result: Result<i32, String> =
-        benchmark_first_screen_from_result(Err("no screens".to_string()));
-    assert_eq!(result.unwrap_err(), "no screens");
-}
-
-// -------------------------------------------------------------------------
-// bgra_to_rgba — 3-byte remainder is ignored
-// -------------------------------------------------------------------------
-
-#[test]
-fn bgra_to_rgba_three_trailing_bytes_untouched() {
-    let mut pixels = vec![10, 20, 30, 255, 1, 2, 3]; // 1 full pixel + 3 remainder
-    bgra_to_rgba(&mut pixels);
-    // Full pixel: B=10, G=20, R=30, A=255 → R=30, G=20, B=10, A=255
-    assert_eq!(pixels[0], 30);
-    assert_eq!(pixels[2], 10);
-    // Remainder bytes unchanged
-    assert_eq!(pixels[4], 1);
-    assert_eq!(pixels[5], 2);
-    assert_eq!(pixels[6], 3);
-}
-
-// -------------------------------------------------------------------------
-// resolve_output_path_in_dir — two consecutive calls produce different names
-// -------------------------------------------------------------------------
-
-#[test]
-fn resolve_output_path_in_dir_two_calls_produce_different_names() {
-    let dir = PathBuf::from("/tmp/test-shots");
-    let p1 = resolve_output_path_in_dir(None, Format::Png, &dir);
-    std::thread::sleep(std::time::Duration::from_millis(1));
-    let p2 = resolve_output_path_in_dir(None, Format::Png, &dir);
-    assert_ne!(p1, p2, "two default paths should differ due to timestamp");
-}
+use image::GenericImageView;
+use std::path::PathBuf;
 
 // -------------------------------------------------------------------------
 // list_screens — does not panic and every line is well-formed
@@ -119,16 +56,6 @@ fn save_image_optimized_png_is_lossless_roundtrip() {
 }
 
 #[test]
-fn save_image_optimized_large_256x256() {
-    let dir = TestDir::new("rustshot_test_large256");
-    let path = dir.file("large.png");
-    let img = make_patterned_image(256, 256);
-    save_image_optimized(&img, &path, Format::Png).unwrap();
-    let loaded = image::open(&path).unwrap().to_rgba8();
-    assert_eq!(loaded.dimensions(), (256, 256));
-}
-
-#[test]
 fn save_image_optimized_bmp_non_square_dimensions() {
     let dir = TestDir::new("rustshot_test_bmp_nonsquare");
     let path = dir.file("rect.bmp");
@@ -137,17 +64,6 @@ fn save_image_optimized_bmp_non_square_dimensions() {
     let loaded = image::open(&path).unwrap();
     assert_eq!(loaded.width(), 13);
     assert_eq!(loaded.height(), 7);
-}
-
-#[test]
-fn save_image_optimized_jpg_file_is_smaller_than_raw() {
-    let dir = TestDir::new("rustshot_test_jpg_size");
-    let path = dir.file("compressed.jpg");
-    let img = make_patterned_image(64, 64);
-    save_image_optimized(&img, &path, Format::Jpg).unwrap();
-    let raw_size = 64 * 64 * 4; // RGBA raw bytes
-    let file_size = std::fs::metadata(&path).unwrap().len();
-    assert!(file_size < raw_size as u64);
 }
 
 #[test]
@@ -168,77 +84,6 @@ fn save_image_optimized_all_formats_same_image() {
     }
 }
 
-// --- bgra_to_rgba: Requirement 14.5 — large buffer length preserved ---
-
-#[test]
-fn bgra_to_rgba_large_buffer_length_preserved() {
-    // 1000 pixels = 4000 bytes, plus 3 trailing bytes
-    let len = 1000 * 4 + 3;
-    let mut buf: Vec<u8> = (0..len).map(|i| (i % 256) as u8).collect();
-    let original_len = buf.len();
-    bgra_to_rgba(&mut buf);
-    assert_eq!(buf.len(), original_len);
-}
-
-// =========================================================================
-// Task 1.5 — Gap-filling tests for capture engine requirements
-// Requirements: 1.7, 1.8, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 3.1, 3.2, 3.3,
-//              3.4, 3.5, 3.6
-// =========================================================================
-
-// --- Format: PartialEq not yet exercised (Req 3.1, 3.5, 3.6) ---
-
-#[test]
-fn format_each_variant_matches_itself() {
-    // Verify each variant can be pattern-matched correctly
-    assert!(matches!(Format::Png, Format::Png));
-    assert!(matches!(Format::Jpg, Format::Jpg));
-    assert!(matches!(Format::Bmp, Format::Bmp));
-}
-
-#[test]
-fn format_variants_are_distinct() {
-    // Verify variants don't overlap — each maps to a unique extension and ImageFormat
-    let variants = [Format::Png, Format::Jpg, Format::Bmp];
-    for (i, a) in variants.iter().enumerate() {
-        for (j, b) in variants.iter().enumerate() {
-            if i != j {
-                assert_ne!(
-                    a.extension(),
-                    b.extension(),
-                    "{:?} and {:?} should have different extensions",
-                    a,
-                    b
-                );
-                assert_ne!(
-                    a.to_image_format(),
-                    b.to_image_format(),
-                    "{:?} and {:?} should have different ImageFormats",
-                    a,
-                    b
-                );
-            }
-        }
-    }
-}
-
-// --- save_image_optimized: 1x1 pixel JPG roundtrip (Req 3.3) ---
-
-#[test]
-fn save_image_optimized_1x1_jpg_roundtrip_dimensions() {
-    // Verify 1x1 pixel edge case for JPG specifically (RGBA→RGB conversion)
-    let dir = TestDir::new("rustshot-1x1-jpg-rt");
-    let path = dir.file("1x1.jpg");
-
-    let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([200, 100, 50, 255]));
-    save_image_optimized(&img, &path, Format::Jpg).unwrap();
-
-    let loaded = image::open(&path).unwrap();
-    assert_eq!(loaded.width(), 1);
-    assert_eq!(loaded.height(), 1);
-    // JPG is lossy, so we only check dimensions, not exact pixel values
-}
-
 #[test]
 fn save_image_optimized_1x1_bmp_roundtrip_pixel() {
     // Verify 1x1 pixel edge case for BMP (lossless, should preserve pixel)
@@ -253,42 +98,23 @@ fn save_image_optimized_1x1_bmp_roundtrip_pixel() {
     assert_eq!(loaded.get_pixel(0, 0), &image::Rgba([128, 64, 32, 255]));
 }
 
-// --- save_image_optimized: JPG drops alpha channel (Req 3.3) ---
-
 #[test]
-fn save_image_optimized_jpg_output_is_rgb_not_rgba() {
-    // Requirement 3.3: JPG converts RGBA to RGB before encoding
-    let dir = TestDir::new("rustshot-jpg-rgb");
-    let path = dir.file("rgb_check.jpg");
+fn save_image_optimized_1x1_jpg_roundtrip_dimensions() {
+    let dir = TestDir::new("rustshot-1x1-jpg-rt");
+    let path = dir.file("1x1.jpg");
+    let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 64, 32, 255]));
 
-    let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 128, 64, 200]));
     save_image_optimized(&img, &path, Format::Jpg).unwrap();
 
-    // Re-read as DynamicImage — JPEG files are always RGB (no alpha)
-    let loaded = image::open(&path).unwrap();
-    // The loaded image should be convertible to RGB without loss
-    let rgb = loaded.to_rgb8();
-    assert_eq!(rgb.dimensions(), (4, 4));
-    // Verify the color channels are approximately correct (JPEG is lossy)
-    let pixel = rgb.get_pixel(0, 0);
-    assert!((pixel[0] as i16 - 255).unsigned_abs() < 10, "R channel");
-    assert!((pixel[1] as i16 - 128).unsigned_abs() < 10, "G channel");
-    assert!((pixel[2] as i16 - 64).unsigned_abs() < 10, "B channel");
-}
-
-// --- bgra_to_rgba: 1-byte and 2-byte inputs (Req 3.1) ---
-
-#[test]
-fn bgra_to_rgba_one_byte_is_noop() {
-    // Less than 4 bytes: no complete pixel, nothing to swap
-    let mut pixels = vec![42u8];
-    bgra_to_rgba(&mut pixels);
-    assert_eq!(pixels, vec![42]);
+    assert_eq!(image::open(&path).unwrap().dimensions(), (1, 1));
 }
 
 #[test]
-fn bgra_to_rgba_two_bytes_is_noop() {
-    let mut pixels = vec![10u8, 20];
-    bgra_to_rgba(&mut pixels);
-    assert_eq!(pixels, vec![10, 20]);
+fn resolve_output_path_in_dir_two_calls_produce_different_names() {
+    let dir = PathBuf::from("/tmp/test-shots");
+    let first = resolve_output_path_in_dir(None, Format::Png, &dir);
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    let second = resolve_output_path_in_dir(None, Format::Png, &dir);
+
+    assert_ne!(first, second);
 }

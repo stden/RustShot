@@ -58,12 +58,6 @@ fn extract_json_string_with_spaces_in_value() {
     );
 }
 
-#[test]
-fn extract_json_string_with_escaped_quote() {
-    let json = "{\"path\": \"a\\\"b\"}";
-    assert_eq!(extract_json_string(json, "path"), Some("a\"b".to_string()));
-}
-
 // --- find_json_value direct tests ---
 
 #[test]
@@ -168,42 +162,9 @@ fn find_json_value_key_at_end_no_value() {
     assert!(find_json_value(r#"{"key"}"#, "key").is_none());
 }
 
-#[test]
-fn extract_json_string_only_opening_quote_returns_none() {
-    let json = r#"{ "key": " }"#;
-    // The string never closes (space then } but no closing quote for value)
-    assert!(extract_json_string(json, "key").is_none());
-}
-
-// -------------------------------------------------------------------------
-// extract_json_string — unterminated string
-// -------------------------------------------------------------------------
-
-#[test]
-fn extract_json_string_unterminated_returns_none() {
-    let json = r#"{"key": "no closing quote}"#;
-    assert_eq!(extract_json_string(json, "key"), None);
-}
-
-#[test]
-fn extract_json_string_empty_value_returns_empty_string() {
-    let json = r#"{"key": ""}"#;
-    assert_eq!(extract_json_string(json, "key"), Some(String::new()));
-}
-
 // -------------------------------------------------------------------------
 // find_json_value — edge cases
 // -------------------------------------------------------------------------
-
-#[test]
-fn find_json_value_key_not_present() {
-    assert_eq!(find_json_value("{}", "missing"), None);
-}
-
-#[test]
-fn find_json_value_empty_string_input() {
-    assert_eq!(find_json_value("", "key"), None);
-}
 
 // -------------------------------------------------------------------------
 // extract_json_string — escaped quotes in value

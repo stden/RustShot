@@ -12,7 +12,7 @@
 //! at runtime and round-trip fidelity is covered by unit tests.
 //!
 //! On Windows the tray menu opens a native settings dialog
-//! ([`crate::settings_dialog`]); on other platforms the settings
+//! (`crate::settings_dialog`); on other platforms the settings
 //! file is opened in the default editor.
 
 use crate::capture::Format;
@@ -100,6 +100,20 @@ impl Fps {
 impl Default for Fps {
     fn default() -> Self {
         Self::DEFAULT
+    }
+}
+
+impl TryFrom<u32> for Fps {
+    type Error = String;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<Fps> for u32 {
+    fn from(fps: Fps) -> Self {
+        fps.get()
     }
 }
 

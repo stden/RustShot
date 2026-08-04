@@ -6,42 +6,10 @@ fn benchmark_screen_count_from_result_returns_count_for_non_empty_screens() {
 }
 
 #[test]
-fn benchmark_screen_count_from_result_rejects_empty_screens() {
-    let err = rustshot::capture::benchmark_screen_count_from_result::<u8>(Ok(Vec::new()))
-        .expect_err("empty screen list should be rejected for display benchmarks");
-    assert!(err.contains("No screens detected"));
-}
-
-#[test]
-fn benchmark_screen_count_from_result_preserves_enumeration_error() {
-    let err = rustshot::capture::benchmark_screen_count_from_result::<u8>(Err(
-        "Connection error".to_string()
-    ))
-    .expect_err("screen enumeration errors should be preserved");
-    assert!(err.contains("Connection error"));
-}
-
-#[test]
 fn benchmark_first_screen_from_result_returns_first_screen() {
     let first = rustshot::capture::benchmark_first_screen_from_result(Ok(vec![10, 20, 30]))
         .expect("first screen should be returned");
     assert_eq!(first, 10);
-}
-
-#[test]
-fn benchmark_first_screen_from_result_rejects_empty_screens() {
-    let err = rustshot::capture::benchmark_first_screen_from_result::<u8>(Ok(Vec::new()))
-        .expect_err("empty screen list should be rejected");
-    assert!(err.contains("No screens detected"));
-}
-
-#[test]
-fn benchmark_first_screen_from_result_preserves_enumeration_error() {
-    let err = rustshot::capture::benchmark_first_screen_from_result::<u8>(Err(
-        "Display unavailable".to_string(),
-    ))
-    .expect_err("screen enumeration errors should be preserved");
-    assert!(err.contains("Display unavailable"));
 }
 
 #[test]

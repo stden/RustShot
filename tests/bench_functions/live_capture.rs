@@ -11,7 +11,7 @@
 /// `xvfb-run`, so these tests still exercise real capture there; the skip only
 /// engages on truly headless machines (e.g. a bare SSH session).
 fn display_available() -> bool {
-    if cfg!(windows) {
+    if cfg!(any(windows, target_os = "macos")) {
         return true;
     }
     std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()

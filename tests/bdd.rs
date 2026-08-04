@@ -6,17 +6,26 @@
 
 use cucumber::gherkin::Step;
 use cucumber::{given, then, when, World};
-use rustshot::{capture, cli, mcp, record, selection, settings};
+use rustshot::{capture, cli, mcp, record, selection, settings, tray};
 use serde_json::Value;
 use std::path::PathBuf;
+
+#[path = "bdd/requirements.rs"]
+mod requirements;
 
 /// Monitor input row for layout building: logical position and size, physical
 /// size, primary flag — the tuple shape the `selection::benchmark_*` API takes.
 type MonitorInput = (i32, i32, u32, u32, u32, u32, bool);
 /// A monitor's physical geometry as (x, y, width, height).
 type PhysicalRect = (i32, i32, u32, u32);
+/// A normalized layout and its virtual-desktop bounds.
+type NormalizedLayout = (Vec<PhysicalRect>, i32, i32, u32, u32);
+/// The selected monitor index and monitor-relative recording rectangle.
+type RecordingSelection = (usize, PhysicalRect);
 /// A monitor as (origin, size) for overlay targeting.
 type Monitor = ((i32, i32), (u32, u32));
+/// A fully resolved monitor layout with logical and physical geometry.
+type ResolvedPhysicalLayout = (i32, i32, u32, u32, i32, i32, u32, u32);
 
 /// Shared scenario state. Every field defaults to a benign value so unrelated
 /// scenarios do not interfere; each `When` step records its computed result in
@@ -45,6 +54,10 @@ struct RustShotWorld {
     validate_result: Option<Result<(), String>>,
     frame_duration: Option<i64>,
     round_result: Option<u32>,
+    strict_fps_result: Option<Result<u32, String>>,
+    recording_dimensions_result: Option<Result<(u32, u32, usize), String>>,
+    frame_timing_result: Option<Result<(i64, i64), String>>,
+    bitrate_result: Option<Result<u32, String>>,
 
     // --- selection drag ---
     drag_start: (i32, i32),
@@ -62,12 +75,21 @@ struct RustShotWorld {
     unsupported_ext: Option<Option<String>>,
     resolved_path: Option<PathBuf>,
 
+    // --- requirement-level screenshot pipeline ---
+    capture_pipeline_result: Option<Result<PathBuf, String>>,
+    capture_pipeline_stages: Vec<String>,
+    screenshot_parent_result: Option<Result<(), String>>,
+    screenshot_parent_root: Option<PathBuf>,
+    image_encoder: Option<String>,
+
     // --- screen index resolution ---
     screen_index_result: Option<Result<usize, String>>,
 
     // --- checked dimension rounding and pixel conversion ---
     checked_round_result: Option<Result<u32, String>>,
     bgra_conversion_result: Option<Result<(), String>>,
+    converted_pixels: Option<Result<Vec<u8>, String>>,
+    packed_pair: Option<u64>,
 
     // --- MCP protocol ---
     // Outer Option: a message was sent; inner Option: the server's reply
@@ -78,6 +100,30 @@ struct RustShotWorld {
     monitor_inputs: Vec<MonitorInput>,
     layout_result: Option<Result<Vec<PhysicalRect>, String>>,
     layout_sizes_result: Option<Result<Vec<(u32, u32)>, String>>,
+    resolved_layout_inputs: Vec<ResolvedPhysicalLayout>,
+    normalized_layout_result: Option<Result<NormalizedLayout, String>>,
+
+    // --- selection requirement boundaries ---
+    ranges_overlap: Option<bool>,
+    monitor_scale_ratio: Option<f32>,
+    scaled_gap: Option<i32>,
+    physical_coordinate: Option<i32>,
+    typed_physical_point: Option<Result<selection::PhysicalPoint, String>>,
+    typed_physical_size: Option<Result<selection::PhysicalSize, String>>,
+    scale_factor_result: Option<Result<selection::ScaleFactor, String>>,
+    physical_monitors: Vec<(i32, i32, u32, u32, bool)>,
+    recording_selection_result: Option<Result<RecordingSelection, String>>,
+    cursor_monitor: Option<Option<usize>>,
+    preferred_monitor: Option<Option<usize>>,
+
+    // --- settings persistence requirements ---
+    settings_input: Option<settings::Settings>,
+    serialized_settings: Option<String>,
+    parsed_settings: Option<settings::Settings>,
+
+    // --- tray domain requirements ---
+    tray_action: Option<Option<tray::MenuAction>>,
+    tray_pixels: Option<Vec<u8>>,
 
     // --- active window capture boundary ---
     active_window_dir: Option<PathBuf>,
@@ -94,6 +140,12 @@ struct RustShotWorld {
     // True when the When step skipped its call because no display server is
     // available; the Then step then asserts nothing (live-capture policy).
     mcp_display_skipped: bool,
+
+    // --- cross-platform live-capture E2E ---
+    live_capture_active: bool,
+    live_capture_path: Option<PathBuf>,
+    live_capture_process: Option<std::process::Output>,
+    live_capture_elapsed: Option<std::time::Duration>,
 }
 
 fn app_mode_name(mode: cli::AppMode) -> &'static str {
@@ -836,7 +888,8 @@ fn recording_start_zero_region(world: &mut RustShotWorld) {
         physical_height: 0,
     };
     let dir = std::env::temp_dir().join("rustshot_bdd_zero_region");
-    match record::RecordingSession::start_in_dir(0, 0, region, 30, dir) {
+    match record::RecordingSession::start_in_dir(0, 0, region, settings::Fps::new(30).unwrap(), dir)
+    {
         Ok(session) => {
             // Should be unreachable; stop the runaway recorder before failing.
             let _ = session.stop();
@@ -873,6 +926,105 @@ fn assert_layout_sizes(world: &mut RustShotWorld, step: &Step) {
         .as_ref()
         .unwrap_or_else(|error| panic!("building layout inputs failed: {error}"));
     assert_eq!(actual, &expected);
+}
+
+// ===========================================================================
+// Cross-platform live-capture E2E
+// ===========================================================================
+
+#[given(regex = r#"^the live capture scenario targets \"(linux|macos)\"$"#)]
+fn target_live_capture_platform(world: &mut RustShotWorld, platform: String) {
+    world.live_capture_active = std::env::consts::OS == platform;
+
+    if world.live_capture_active
+        && platform == "linux"
+        && std::env::var_os("DISPLAY").is_none()
+        && std::env::var_os("WAYLAND_DISPLAY").is_none()
+        && std::env::var_os("RUSTSHOT_LIVE_CAPTURE_STRICT").is_none()
+    {
+        eprintln!("skipping Linux live-capture scenario: no display server");
+        world.live_capture_active = false;
+    }
+}
+
+#[when("screen 0 is captured as PNG by the RustShot CLI with timing")]
+fn capture_screen_zero_with_timing(world: &mut RustShotWorld) {
+    if !world.live_capture_active {
+        return;
+    }
+
+    let path = std::env::temp_dir().join(format!(
+        "rustshot_bdd_capture_{}_{}.png",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is before the Unix epoch")
+            .as_nanos()
+    ));
+    let started = std::time::Instant::now();
+    let process = std::process::Command::new(env!("CARGO_BIN_EXE_RustShot"))
+        .args(["--cli", "--screen", "0", "--format", "png", "--output"])
+        .arg(&path)
+        .output()
+        .expect("failed to launch the RustShot CLI");
+
+    world.live_capture_elapsed = Some(started.elapsed());
+    world.live_capture_process = Some(process);
+    world.live_capture_path = Some(path);
+}
+
+#[then("the captured PNG is a valid non-empty screen image")]
+fn assert_live_capture_image(world: &mut RustShotWorld) {
+    if !world.live_capture_active {
+        return;
+    }
+
+    let process = world
+        .live_capture_process
+        .as_ref()
+        .expect("the RustShot CLI was not launched");
+    assert!(
+        process.status.success(),
+        "capture process failed (status {}): stdout={} stderr={}",
+        process.status,
+        String::from_utf8_lossy(&process.stdout),
+        String::from_utf8_lossy(&process.stderr)
+    );
+
+    let path = world
+        .live_capture_path
+        .as_ref()
+        .expect("the capture output path was not recorded");
+    let metadata = std::fs::metadata(path).expect("the CLI did not create the screenshot file");
+    assert!(metadata.len() > 100, "captured PNG is suspiciously small");
+    let image = image::open(path).expect("the captured file is not a decodable image");
+    assert!(image.width() > 0, "captured image width must be non-zero");
+    assert!(image.height() > 0, "captured image height must be non-zero");
+}
+
+#[then(regex = r"^the timed capture completes within (\d+) milliseconds$")]
+fn assert_live_capture_duration(world: &mut RustShotWorld, maximum_ms: u64) {
+    if !world.live_capture_active {
+        return;
+    }
+
+    let elapsed = world
+        .live_capture_elapsed
+        .expect("the capture duration was not recorded");
+    eprintln!(
+        "{} screen capture completed in {:.2} ms",
+        std::env::consts::OS,
+        elapsed.as_secs_f64() * 1_000.0
+    );
+    assert!(
+        elapsed <= std::time::Duration::from_millis(maximum_ms),
+        "capture took {:.2} ms, exceeding the {maximum_ms} ms E2E limit",
+        elapsed.as_secs_f64() * 1_000.0
+    );
+
+    if let Some(path) = world.live_capture_path.take() {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 fn main() {

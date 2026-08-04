@@ -3,7 +3,7 @@
 # Source: Rust Best Practices
 
 * **Type**: Technical Documentation / Tutorial
-* **Original Title**: Лучшие практики Rust: код и производительность
+* **Original Title**: Rust Best Practices: Code and Performance
 * **File**: `docs/rust-best-practices.md` in the central `iopm` repo (moved out of RustShot as general, non-project-specific guidance)
 * **Topic**: Rust development, Performance, Testing, Project structure.
 

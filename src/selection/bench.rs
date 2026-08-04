@@ -114,6 +114,57 @@ pub fn benchmark_normalize_physical_screen_layouts(
     ))
 }
 
+/// Normalize already-resolved physical monitor rectangles for executable specs.
+#[allow(dead_code)]
+#[doc(hidden)]
+pub fn benchmark_normalize_resolved_physical_layouts(
+    inputs: &[BenchmarkResolveLayout],
+) -> Result<(Vec<BenchmarkNormalizedLayout>, i32, i32, u32, u32), String> {
+    let layouts: Vec<PhysicalScreenLayout> = inputs
+        .iter()
+        .map(
+            |&(
+                logical_x,
+                logical_y,
+                logical_width,
+                logical_height,
+                physical_x,
+                physical_y,
+                physical_width,
+                physical_height,
+            )| PhysicalScreenLayout {
+                logical_x,
+                logical_y,
+                logical_width,
+                logical_height,
+                physical_x,
+                physical_y,
+                physical_width,
+                physical_height,
+            },
+        )
+        .collect();
+    let (normalized, origin_x, origin_y, width, height) =
+        normalize_physical_screen_layouts(&layouts)?;
+    Ok((
+        normalized
+            .into_iter()
+            .map(|layout| {
+                (
+                    layout.physical_x,
+                    layout.physical_y,
+                    layout.physical_width,
+                    layout.physical_height,
+                )
+            })
+            .collect(),
+        origin_x,
+        origin_y,
+        width,
+        height,
+    ))
+}
+
 /// Expose `resolve_recording_selection` for benchmarks.
 #[allow(dead_code)]
 #[doc(hidden)]

@@ -46,6 +46,7 @@ criterion_group!(
     recording::bench_frame_duration_hns,
     recording::bench_round_to_even,
     recording::bench_rgba_to_bgra_bottom_up,
+    recording::bench_exact_fit_frame_copy,
     recording::bench_pack_u32_pair,
     recording::bench_validate_recording_start,
     recording::bench_get_recording_dir,

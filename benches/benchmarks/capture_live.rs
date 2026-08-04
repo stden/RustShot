@@ -23,17 +23,32 @@ pub(crate) fn bench_capture_screenshot(c: &mut Criterion) {
             return;
         }
     };
+
+    if let Err(err) = capture::capture_screenshot_in_dir(None, Format::Png, None, &dir) {
+        benchmark_skip("capture_screenshot", &err);
+        std::fs::remove_dir_all(&dir).ok();
+        return;
+    }
+    for index in 0..screen_count {
+        if let Err(err) = capture::capture_screenshot_in_dir(None, Format::Png, Some(index), &dir) {
+            benchmark_skip("capture_screenshot", &err);
+            std::fs::remove_dir_all(&dir).ok();
+            return;
+        }
+    }
+
     let mut group = c.benchmark_group("capture_screenshot");
 
     // Benchmark: default screen (cursor-based or primary)
     group.bench_function("default_screen", |b| {
         b.iter(|| {
-            let _ = capture::capture_screenshot_in_dir(
+            capture::capture_screenshot_in_dir(
                 black_box(None),
                 black_box(Format::Png),
                 black_box(None),
                 black_box(&dir),
-            );
+            )
+            .unwrap();
         });
     });
 
@@ -41,12 +56,13 @@ pub(crate) fn bench_capture_screenshot(c: &mut Criterion) {
     for i in 0..screen_count {
         group.bench_function(format!("screen_{}", i), |b| {
             b.iter(|| {
-                let _ = capture::capture_screenshot_in_dir(
+                capture::capture_screenshot_in_dir(
                     black_box(None),
                     black_box(Format::Png),
                     black_box(Some(i)),
                     black_box(&dir),
-                );
+                )
+                .unwrap();
             });
         });
     }
@@ -55,12 +71,13 @@ pub(crate) fn bench_capture_screenshot(c: &mut Criterion) {
     group.bench_function("all_screens", |b| {
         b.iter(|| {
             for i in 0..screen_count {
-                let _ = capture::capture_screenshot_in_dir(
+                capture::capture_screenshot_in_dir(
                     black_box(None),
                     black_box(Format::Png),
                     black_box(Some(i)),
                     black_box(&dir),
-                );
+                )
+                .unwrap();
             }
         });
     });
@@ -78,40 +95,25 @@ pub(crate) fn bench_capture_screenshot(c: &mut Criterion) {
 pub(crate) fn bench_capture_screenshot_stages(c: &mut Criterion) {
     let mut group = c.benchmark_group("capture_screenshot_stages");
 
-    // Stage 1: screen capture only (no save)
+    // Stage 1: production monitor capture only (no encoding or file I/O).
     match capture::benchmark_first_screen_from_result(benchmark_screens()) {
         Ok(screen) => {
+            if let Err(err) = capture::benchmark_capture_monitor_image(&screen) {
+                benchmark_skip("capture_screenshot_stages/monitor_capture_only", &err);
+                group.finish();
+                return;
+            }
             group.bench_function("screen_capture_only", |b| {
                 b.iter(|| {
-                    let _ = black_box(screen.capture());
+                    black_box(capture::benchmark_capture_monitor_image(black_box(&screen)))
+                        .unwrap();
                 });
             });
         }
         Err(err) => benchmark_skip("capture_screenshot_stages/screen_capture_only", &err),
     }
 
-    // Stage 2: image conversion (RgbaImage::from_raw on a captured frame)
-    match capture::benchmark_first_screen_from_result(benchmark_screens()) {
-        Ok(screen) => match screen.capture() {
-            Ok(captured) => {
-                let w = captured.width();
-                let h = captured.height();
-                let raw = captured.into_raw();
-                group.bench_function("image_conversion", |b| {
-                    b.iter(|| {
-                        let _ = black_box(RgbaImage::from_raw(w, h, raw.clone()));
-                    });
-                });
-            }
-            Err(err) => benchmark_skip(
-                "capture_screenshot_stages/image_conversion",
-                &format!("Failed to capture screen: {err}"),
-            ),
-        },
-        Err(err) => benchmark_skip("capture_screenshot_stages/image_conversion", &err),
-    }
-
-    // Stage 3-9: save benchmarks on a synthetic 1920x1080 image
+    // Encoding stages on a synthetic 1920x1080 image.
     let synth = RgbaImage::from_pixel(1920, 1080, image::Rgba([100, 150, 200, 255]));
     let synth_rgb = capture::benchmark_rgb_image_from_rgba(&synth);
     let bench_dir = std::env::temp_dir().join("rustshot_bench_stages");

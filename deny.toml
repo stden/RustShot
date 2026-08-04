@@ -1,0 +1,44 @@
+[graph]
+all-features = true
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[advisories]
+ignore = [
+    # Both quick-xml versions are build dependencies of the Linux display
+    # bindings. RustShot never parses XML with them at runtime, so the reported
+    # denial-of-service paths are unreachable until those bindings upgrade.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml is used only while generating Linux display bindings" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml is used only while generating Linux display bindings" },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

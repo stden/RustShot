@@ -3,44 +3,21 @@
 use crate::record::*;
 
 #[test]
-fn recording_session_start_rejects_zero_fps() {
-    let result = RecordingSession::start(
-        0,
-        0,
-        Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        },
-        0,
-    );
-
-    assert!(matches!(
-        result,
-        Err(ref error) if error == "Recording FPS must be greater than 0"
-    ));
-}
-
-#[test]
-fn recording_session_start_in_dir_rejects_zero_fps() {
+fn recording_session_start_in_dir_accepts_validated_fps() {
     let result = RecordingSession::start_in_dir(
         0,
         0,
         Region {
             physical_x: 0,
             physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
+            physical_width: 0,
+            physical_height: 0,
         },
-        0,
+        Fps::new(30).unwrap(),
         PathBuf::from("/tmp/custom-recordings"),
     );
 
-    assert!(matches!(
-        result,
-        Err(ref error) if error == "Recording FPS must be greater than 0"
-    ));
+    assert!(result.is_err());
 }
 
 // -------------------------------------------------------------------------
@@ -169,7 +146,7 @@ fn recording_session_start_nonzero_fps_fails_on_non_windows() {
             physical_width: 100,
             physical_height: 100,
         },
-        30,
+        Fps::new(30).unwrap(),
     );
     assert!(result.is_err());
     // Can't use unwrap_err (no Debug on RecordingSession), so use match
@@ -183,51 +160,22 @@ fn recording_session_start_nonzero_fps_fails_on_non_windows() {
 #[test]
 fn record_loop_returns_error_on_non_windows() {
     let (_, rx) = mpsc::sync_channel(1);
+    let region = Region {
+        physical_x: 0,
+        physical_y: 0,
+        physical_width: 100,
+        physical_height: 100,
+    };
+    let dimensions = RecordingDimensions::try_from(region).unwrap();
     let result = record_loop(
         PathBuf::from("/tmp/test.mp4"),
         0,
         0,
-        Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        },
-        30,
+        region,
+        dimensions,
+        Fps::new(30).unwrap(),
         rx,
     );
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("only supported on Windows"));
-}
-
-// -------------------------------------------------------------------------
-// Region derive traits
-// -------------------------------------------------------------------------
-
-#[test]
-fn region_clone_produces_equal_value() {
-    let r = Region {
-        physical_x: 10,
-        physical_y: 20,
-        physical_width: 100,
-        physical_height: 200,
-    };
-    let cloned = r;
-    assert_eq!(cloned.physical_x, r.physical_x);
-    assert_eq!(cloned.physical_y, r.physical_y);
-    assert_eq!(cloned.physical_width, r.physical_width);
-    assert_eq!(cloned.physical_height, r.physical_height);
-}
-
-#[test]
-fn region_debug_repr_is_non_empty() {
-    let r = Region {
-        physical_x: 0,
-        physical_y: 0,
-        physical_width: 1,
-        physical_height: 1,
-    };
-    let debug = format!("{:?}", r);
-    assert!(!debug.is_empty());
-    assert!(debug.contains("Region"));
 }

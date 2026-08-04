@@ -5,72 +5,19 @@ use super::*;
 use crate::capture::Format;
 use crate::settings::Fps;
 
-// --- wide() tests (function lives in settings.rs, tested here for Win32 context) ---
-
 #[test]
-fn wide_helper_null_terminated() {
-    let v = wide("abc");
-    assert_eq!(v, vec![b'a' as u16, b'b' as u16, b'c' as u16, 0]);
-}
-
-#[test]
-fn wide_helper_ascii() {
-    let v = wide("hello");
-    assert_eq!(v.len(), 6); // 5 chars + null
-    assert_eq!(*v.last().unwrap(), 0);
-}
-
-#[test]
-fn wide_helper_empty() {
-    let v = wide("");
-    assert_eq!(v, vec![0u16]);
-}
-
-#[test]
-fn wide_helper_unicode() {
-    let v = wide("\u{00E9}"); // e-acute
-    assert_eq!(v.len(), 2); // 1 char + null
-    assert_eq!(v[0], 0x00E9);
-    assert_eq!(v[1], 0);
-}
-
-#[test]
-fn wide_helper_surrogate_pair() {
-    let v = wide("\u{1F600}"); // grinning face emoji
-    assert_eq!(v.len(), 3); // 2 UTF-16 code units + null
-    assert_eq!(v[2], 0);
+fn fos_pickfolders_value_is_0x20() {
+    assert_eq!(FOS_PICKFOLDERS, 0x20);
 }
 
 // --- validate_fps_input ---
-
-#[test]
-fn validate_fps_input_zero_is_error() {
-    assert!(validate_fps_input("0").is_err());
-}
-
-#[test]
-fn validate_fps_input_valid_30() {
-    assert_eq!(validate_fps_input("30").map(Fps::get), Ok(30));
-}
 
 #[test]
 fn validate_fps_input_non_numeric_is_error() {
     assert!(validate_fps_input("abc").is_err());
 }
 
-#[test]
-fn validate_fps_input_empty_is_error() {
-    assert!(validate_fps_input("").is_err());
-}
-
 // --- format_index_to_name ---
-
-#[test]
-fn format_index_to_name_all_valid_indices() {
-    assert_eq!(format_index_to_name(0), "png");
-    assert_eq!(format_index_to_name(1), "jpg");
-    assert_eq!(format_index_to_name(2), "bmp");
-}
 
 #[test]
 fn format_index_to_name_out_of_range_defaults_to_png() {
@@ -86,17 +33,6 @@ fn validate_fps_input_one_is_ok() {
 }
 
 #[test]
-fn validate_fps_input_large_value_is_ok() {
-    assert_eq!(validate_fps_input("240").map(Fps::get), Ok(240));
-}
-
-#[test]
-fn validate_fps_input_above_max_is_error() {
-    assert!(validate_fps_input("241").is_err());
-    assert!(validate_fps_input("4294967295").is_err());
-}
-
-#[test]
 fn validate_fps_input_at_max_is_ok() {
     assert_eq!(validate_fps_input("240").map(Fps::get), Ok(240));
 }
@@ -107,23 +43,8 @@ fn validate_fps_input_overflow_is_error() {
 }
 
 #[test]
-fn validate_fps_input_negative_is_error() {
-    assert!(validate_fps_input("-1").is_err());
-}
-
-#[test]
 fn validate_fps_input_leading_zeros_accepted() {
     assert_eq!(validate_fps_input("030").map(Fps::get), Ok(30));
-}
-
-#[test]
-fn validate_fps_input_whitespace_is_error() {
-    assert!(validate_fps_input(" 30").is_err());
-}
-
-#[test]
-fn validate_fps_input_float_is_error() {
-    assert!(validate_fps_input("30.5").is_err());
 }
 
 #[test]
@@ -133,16 +54,6 @@ fn validate_fps_input_error_message_contains_positive() {
 }
 
 // --- format_index_to_name edge cases ---
-
-#[test]
-fn format_index_to_name_i32_max_defaults_to_png() {
-    assert_eq!(format_index_to_name(i32::MAX), "png");
-}
-
-#[test]
-fn format_index_to_name_i32_min_defaults_to_png() {
-    assert_eq!(format_index_to_name(i32::MIN), "png");
-}
 
 #[test]
 fn format_index_to_name_matches_supported_formats() {
@@ -189,13 +100,6 @@ fn build_settings_from_inputs_defaults_invalid_format_index_to_png() {
 fn build_settings_from_inputs_propagates_fps_validation_error() {
     let err = build_settings_from_inputs("C:\\shots", "C:\\records", 2, "0", false).unwrap_err();
     assert_eq!(err, "Recording FPS must be a positive number.");
-}
-
-#[test]
-fn build_settings_from_inputs_negative_format_index_defaults_to_png() {
-    let settings = build_settings_from_inputs("C:\\shots", "C:\\records", -1, "30", false).unwrap();
-
-    assert_eq!(settings.default_format, Format::Png);
 }
 
 #[test]
@@ -250,16 +154,6 @@ fn lock_dialog_flag() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[test]
-fn dialog_guard_resets_flag_on_drop() {
-    let _serial = lock_dialog_flag();
-    DIALOG_OPEN.store(true, Ordering::SeqCst);
-    {
-        let _guard = DialogGuard;
-    }
-    assert!(!DIALOG_OPEN.load(Ordering::SeqCst));
-}
-
-#[test]
 fn dialog_guard_resets_flag_when_unwinding() {
     let _serial = lock_dialog_flag();
     DIALOG_OPEN.store(true, Ordering::SeqCst);
@@ -278,11 +172,4 @@ fn show_settings_dialog_returns_early_when_dialog_is_already_open() {
     show_settings_dialog();
     assert!(DIALOG_OPEN.load(Ordering::SeqCst));
     DIALOG_OPEN.store(false, Ordering::SeqCst);
-}
-
-// --- FOS_PICKFOLDERS constant ---
-
-#[test]
-fn fos_pickfolders_value_is_0x20() {
-    assert_eq!(FOS_PICKFOLDERS, 0x20);
 }

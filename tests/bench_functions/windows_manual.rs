@@ -158,7 +158,7 @@ fn manual_recording_session_creates_non_empty_mp4() {
             physical_width: width,
             physical_height: height,
         },
-        5,
+        rustshot::settings::Fps::new(5).unwrap(),
     )
     .expect("live recording should start");
 
@@ -195,7 +195,7 @@ fn manual_recording_session_survives_five_seconds() {
             physical_width: width,
             physical_height: height,
         },
-        5,
+        rustshot::settings::Fps::new(5).unwrap(),
     )
     .expect("5-second live recording should start");
 
@@ -236,7 +236,7 @@ fn manual_recording_session_with_odd_region_dimensions_creates_valid_mp4() {
             physical_width: width,
             physical_height: height,
         },
-        5,
+        rustshot::settings::Fps::new(5).unwrap(),
     )
     .expect("odd-dimension live recording should start");
 

@@ -185,13 +185,6 @@ fn output_path_arg_is_none_for_non_string_value() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn mime_type_covers_every_format() {
-    assert_eq!(mime_type(Format::Png), "image/png");
-    assert_eq!(mime_type(Format::Jpg), "image/jpeg");
-    assert_eq!(mime_type(Format::Bmp), "image/bmp");
-}
-
-#[test]
 fn mime_type_is_consistent_with_format_extension() {
     for format in Format::ALL {
         let subtype = mime_type(format)

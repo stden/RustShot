@@ -80,7 +80,8 @@ pub(super) unsafe fn wmf_record(
     screen_x: i32,
     screen_y: i32,
     region: Region,
-    fps: u32,
+    dimensions: RecordingDimensions,
+    fps: Fps,
     stop_rx: mpsc::Receiver<()>,
 ) -> Result<PathBuf, String> {
     use windows::{core::PCWSTR, Win32::Media::MediaFoundation::*};
@@ -90,9 +91,8 @@ pub(super) unsafe fn wmf_record(
 
     // Release all Media Foundation COM objects before shutting down MF/COM.
     let result = (|| -> Result<PathBuf, String> {
-        // Ensure even dimensions (H264 requirement)
-        let width = checked_round_to_even(region.physical_width)?;
-        let height = checked_round_to_even(region.physical_height)?;
+        let width = dimensions.width().get();
+        let height = dimensions.height().get();
         let mut frame_source = RecordingFrameSource::new(screen_x, screen_y, region)?;
 
         let path_wide = crate::settings::wide(&output_path.to_string_lossy());
@@ -111,13 +111,13 @@ pub(super) unsafe fn wmf_record(
             .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)
             .map_err(|e| format!("out SetGUID H264: {e}"))?;
         out_video
-            .SetUINT32(&MF_MT_AVG_BITRATE, recording_bitrate(width, height, fps))
+            .SetUINT32(&MF_MT_AVG_BITRATE, recording_bitrate(dimensions, fps).get())
             .map_err(|e| format!("out SetUINT32 bitrate: {e}"))?;
         out_video
             .SetUINT64(&MF_MT_FRAME_SIZE, pack_u32_pair(width, height))
             .map_err(|e| format!("out SetUINT64 frame size: {e}"))?;
         out_video
-            .SetUINT64(&MF_MT_FRAME_RATE, pack_u32_pair(fps, 1))
+            .SetUINT64(&MF_MT_FRAME_RATE, pack_u32_pair(fps.get(), 1))
             .map_err(|e| format!("out SetUINT64 frame rate: {e}"))?;
         out_video
             .SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
@@ -155,7 +155,7 @@ pub(super) unsafe fn wmf_record(
             .SetUINT64(&MF_MT_FRAME_SIZE, pack_u32_pair(width, height))
             .map_err(|e| format!("in SetUINT64 frame size: {e}"))?;
         in_video
-            .SetUINT64(&MF_MT_FRAME_RATE, pack_u32_pair(fps, 1))
+            .SetUINT64(&MF_MT_FRAME_RATE, pack_u32_pair(fps.get(), 1))
             .map_err(|e| format!("in SetUINT64 frame rate: {e}"))?;
         in_video
             .SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
@@ -181,14 +181,14 @@ pub(super) unsafe fn wmf_record(
             .BeginWriting()
             .map_err(|e| format!("BeginWriting: {e}"))?;
 
-        let frame_interval = Duration::from_secs(1) / fps;
+        let frame_interval = Duration::from_secs(1) / fps.get();
 
-        let mut frame_index = 0i64;
+        let mut frame_index = FrameIndex::ZERO;
         let mut has_frame = false;
         let mut timeline_start = None;
         let mut terminal_error = None;
         // Preallocated once and reused for every Media Foundation sample.
-        let mut bgra_buffer = vec![0u8; checked_rgba_len(width, height)?];
+        let mut bgra_buffer = vec![0u8; dimensions.rgba_len()];
 
         loop {
             if recording_stop_requested(&stop_rx) {
@@ -216,25 +216,19 @@ pub(super) unsafe fn wmf_record(
                 continue;
             }
 
-            let (timestamp_hns, frame_duration_hns) = frame_timing_hns(frame_index, fps);
+            let timing = frame_timing_hns(frame_index, fps);
 
-            if let Err(e) = write_video_sample(
-                &sink_writer,
-                video_idx,
-                &bgra_buffer,
-                timestamp_hns,
-                frame_duration_hns,
-            ) {
+            if let Err(e) = write_video_sample(&sink_writer, video_idx, &bgra_buffer, timing) {
                 terminal_error = Some(format!("Failed to write frame {frame_index}: {e}"));
                 break;
             }
 
             let timeline_start = *timeline_start.get_or_insert(t0);
-            frame_index += 1;
+            frame_index = frame_index.next();
 
             let next_deadline = timeline_start
                 + frame_interval
-                    .checked_mul(frame_index as u32)
+                    .checked_mul(frame_index.deadline_multiplier())
                     .unwrap_or(Duration::MAX);
             if let Some(remaining) = next_deadline.checked_duration_since(std::time::Instant::now())
             {
@@ -269,8 +263,7 @@ unsafe fn write_video_sample(
     sink_writer: &windows::Win32::Media::MediaFoundation::IMFSinkWriter,
     stream_index: u32,
     data: &[u8],
-    timestamp_hns: i64,
-    duration_hns: i64,
+    timing: FrameTiming,
 ) -> Result<(), String> {
     use windows::Win32::Media::MediaFoundation::*;
 
@@ -292,10 +285,10 @@ unsafe fn write_video_sample(
         .AddBuffer(&buffer)
         .map_err(|e| format!("AddBuffer: {e}"))?;
     sample
-        .SetSampleTime(timestamp_hns)
+        .SetSampleTime(timing.timestamp().get())
         .map_err(|e| format!("SetSampleTime: {e}"))?;
     sample
-        .SetSampleDuration(duration_hns)
+        .SetSampleDuration(timing.duration().get())
         .map_err(|e| format!("SetSampleDuration: {e}"))?;
     sink_writer
         .WriteSample(stream_index, &sample)

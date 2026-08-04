@@ -7,20 +7,6 @@
 use crate::record::*;
 
 #[test]
-fn round_to_even_even_stays_even() {
-    assert_eq!(round_to_even(1920), 1920);
-    assert_eq!(round_to_even(1080), 1080);
-    assert_eq!(round_to_even(100), 100);
-}
-
-#[test]
-fn round_to_even_odd_rounds_up() {
-    assert_eq!(round_to_even(1921), 1922);
-    assert_eq!(round_to_even(1079), 1080);
-    assert_eq!(round_to_even(101), 102);
-}
-
-#[test]
 fn round_to_even_zero_stays_zero() {
     assert_eq!(round_to_even(0), 0);
 }

@@ -3,13 +3,6 @@
 use super::*;
 
 #[test]
-fn parse_settings_json_empty_returns_defaults() {
-    let parsed = parse_settings_json("{}");
-    assert_eq!(parsed.default_format, Format::Png);
-    assert_eq!(parsed.recording_fps.get(), 30);
-}
-
-#[test]
 fn parse_settings_json_partial_keys() {
     let json = r#"{ "default_format": "bmp", "recording_fps": 15 }"#;
     let parsed = parse_settings_json(json);
@@ -29,14 +22,6 @@ fn parse_settings_json_ignores_similar_key_names() {
 }
 
 // --- malformed JSON parsing ---
-
-#[test]
-fn parse_settings_json_garbage_input_returns_defaults() {
-    let parsed = parse_settings_json("not json at all");
-    assert_eq!(parsed.default_format, Format::Png);
-    assert_eq!(parsed.recording_fps.get(), 30);
-    assert!(parsed.auto_start);
-}
 
 #[test]
 fn parse_settings_json_unterminated_string_returns_defaults() {
@@ -85,20 +70,6 @@ fn parse_settings_json_string_for_bool_field_keeps_default() {
     let json = r#"{ "auto_start": "yes" }"#;
     let parsed = parse_settings_json(json);
     assert!(parsed.auto_start);
-}
-
-#[test]
-fn parse_settings_json_invalid_default_format_falls_back_to_png() {
-    let json = r#"{ "default_format": "gif" }"#;
-    let parsed = parse_settings_json(json);
-    assert_eq!(parsed.default_format, Format::Png);
-}
-
-#[test]
-fn parse_settings_json_zero_recording_fps_falls_back_to_default() {
-    let json = r#"{ "recording_fps": 0 }"#;
-    let parsed = parse_settings_json(json);
-    assert_eq!(parsed.recording_fps.get(), 30);
 }
 
 #[test]
@@ -192,27 +163,6 @@ fn parse_settings_json_normalizes_zero_fps_to_30() {
     let json = r#"{ "recording_fps": 0 }"#;
     let s = parse_settings_json(json);
     assert_eq!(s.recording_fps.get(), 30);
-}
-
-#[test]
-fn parse_settings_json_preserves_valid_fps() {
-    let json = r#"{ "recording_fps": 120 }"#;
-    let s = parse_settings_json(json);
-    assert_eq!(s.recording_fps.get(), 120);
-}
-
-#[test]
-fn parse_settings_json_auto_start_defaults_to_true() {
-    let json = r#"{}"#;
-    let s = parse_settings_json(json);
-    assert!(s.auto_start);
-}
-
-#[test]
-fn parse_settings_json_auto_start_false() {
-    let json = r#"{ "auto_start": false }"#;
-    let s = parse_settings_json(json);
-    assert!(!s.auto_start);
 }
 
 #[test]

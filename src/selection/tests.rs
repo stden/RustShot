@@ -4,6 +4,7 @@ use crate::selection::*;
 
 mod adjacency_and_layouts;
 mod app_state_and_scaling;
+mod domain_types;
 mod edge_cases_wave2;
 mod geometry_edges;
 mod layout_fallbacks;

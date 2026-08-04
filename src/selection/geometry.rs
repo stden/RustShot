@@ -1,11 +1,33 @@
 //! Pure coordinate math: scale factors, ranges, drag rectangles, and screen lookup.
 
+use super::{PhysicalPoint, PhysicalSize, ScaleFactor};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Region {
     pub physical_x: i32,
     pub physical_y: i32,
     pub physical_width: u32,
     pub physical_height: u32,
+}
+
+impl Region {
+    /// Construct a selection region from explicitly physical coordinates.
+    pub const fn from_physical(origin: PhysicalPoint, size: PhysicalSize) -> Self {
+        Self {
+            physical_x: origin.x(),
+            physical_y: origin.y(),
+            physical_width: size.width(),
+            physical_height: size.height(),
+        }
+    }
+
+    pub const fn origin(self) -> PhysicalPoint {
+        PhysicalPoint::new(self.physical_x, self.physical_y)
+    }
+
+    pub const fn size(self) -> PhysicalSize {
+        PhysicalSize::new(self.physical_width, self.physical_height)
+    }
 }
 
 /// Choose the virtual-desktop scale factor.
@@ -107,16 +129,7 @@ pub(super) fn scaled_physical_dimension(
     logical_size: u32,
     scale_factor: f32,
 ) -> Result<u32, String> {
-    if !scale_factor.is_finite() || scale_factor <= 0.0 {
-        return Err("Display scale factor must be positive".to_string());
-    }
-
-    let scaled_size = (logical_size as f64) * (scale_factor as f64);
-    if !(0.0..=(u32::MAX as f64)).contains(&scaled_size) {
-        return Err("Physical screen size is out of range".to_string());
-    }
-
-    Ok(scaled_size.ceil() as u32)
+    ScaleFactor::try_from(scale_factor)?.scale_extent(logical_size)
 }
 
 /// Map a destination overlay pixel to the source screenshot using nearest-
@@ -160,16 +173,16 @@ pub(super) fn map_overlay_drag_to_image(
     overlay_size: (u32, u32),
     image_size: (u32, u32),
 ) -> Option<Region> {
-    let start = (
+    let start = PhysicalPoint::new(
         map_overlay_coordinate_to_image(start.0, overlay_size.0, image_size.0)?,
         map_overlay_coordinate_to_image(start.1, overlay_size.1, image_size.1)?,
     );
-    let end = (
+    let end = PhysicalPoint::new(
         map_overlay_coordinate_to_image(end.0, overlay_size.0, image_size.0)?,
         map_overlay_coordinate_to_image(end.1, overlay_size.1, image_size.1)?,
     );
 
-    build_region_from_drag(start, end)
+    build_region_from_physical_drag(start, end)
 }
 
 /// Convert drag start/end screen coordinates into a [`Region`].
@@ -200,21 +213,24 @@ pub(super) fn map_overlay_drag_to_image(
 /// assert!(build_region_from_drag((10, 10), (14, 14)).is_none());
 /// ```
 pub fn build_region_from_drag(start: (i32, i32), end: (i32, i32)) -> Option<Region> {
+    build_region_from_physical_drag(start.into(), end.into())
+}
+
+/// Build a normalized region without losing its physical coordinate-space type.
+pub fn build_region_from_physical_drag(start: PhysicalPoint, end: PhysicalPoint) -> Option<Region> {
     // Normalize drag direction so every caller gets a canonical rectangle
     // regardless of whether the user dragged top-left → bottom-right or the
     // reverse.
-    let x1 = start.0.min(end.0);
-    let y1 = start.1.min(end.1);
-    let width = (start.0.max(end.0) - x1) as u32;
-    let height = (start.1.max(end.1) - y1) as u32;
+    let x1 = start.x().min(end.x());
+    let y1 = start.y().min(end.y());
+    let width = (start.x().max(end.x()) - x1) as u32;
+    let height = (start.y().max(end.y()) - y1) as u32;
 
     if width > 5 && height > 5 {
-        Some(Region {
-            physical_x: x1,
-            physical_y: y1,
-            physical_width: width,
-            physical_height: height,
-        })
+        Some(Region::from_physical(
+            PhysicalPoint::new(x1, y1),
+            PhysicalSize::new(width, height),
+        ))
     } else {
         None
     }

@@ -14,7 +14,7 @@ fn bgra_region_copy_respects_source_pitch_and_flips_rows() {
         physical_width: 2,
         physical_height: 2,
     };
-    let mut output = vec![0; 2 * 2 * 4];
+    let mut output = vec![0xcc; 2 * 2 * 4];
 
     copy_bgra_region_bottom_up(&source, 16, 3, 2, region, 2, 2, &mut output).unwrap();
 
@@ -131,7 +131,7 @@ fn scrgb_copy_tone_maps_hdr_preserves_hue_and_flips_rows() {
     source.extend(pixel(0x0000, 0x0000, 0x3c00));
     source.extend(pixel(0x4400, 0x4400, 0x4400));
     source.extend([0xbb; 8]);
-    let mut output = vec![0; 2 * 2 * 4];
+    let mut output = vec![0xcc; 2 * 2 * 4];
 
     copy_scrgb_region_bottom_up(
         &source,

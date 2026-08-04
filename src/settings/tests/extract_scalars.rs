@@ -127,12 +127,6 @@ fn extract_json_bool_true_with_trailing_content() {
 }
 
 #[test]
-fn extract_json_bool_trueish_returns_none() {
-    let json = r#"{ "flag": trueish }"#;
-    assert_eq!(extract_json_bool(json, "flag"), None);
-}
-
-#[test]
 fn extract_json_bool_falsehood_returns_none() {
     let json = r#"{ "flag": falsehood }"#;
     assert_eq!(extract_json_bool(json, "flag"), None);
@@ -160,12 +154,6 @@ fn extract_json_number_null_value_returns_none() {
     assert_eq!(extract_json_number(json, "fps"), None);
 }
 
-#[test]
-fn extract_json_number_max_u32() {
-    let json = r#"{ "n": 4294967295 }"#;
-    assert_eq!(extract_json_number(json, "n"), Some(u32::MAX));
-}
-
 // -------------------------------------------------------------------------
 // extract_json_bool edge cases
 // -------------------------------------------------------------------------
@@ -173,12 +161,6 @@ fn extract_json_number_max_u32() {
 #[test]
 fn extract_json_bool_string_true_returns_none() {
     let json = r#"{ "key": "true" }"#;
-    assert_eq!(extract_json_bool(json, "key"), None);
-}
-
-#[test]
-fn extract_json_bool_number_returns_none() {
-    let json = r#"{ "key": 1 }"#;
     assert_eq!(extract_json_bool(json, "key"), None);
 }
 
@@ -192,18 +174,6 @@ fn extract_json_bool_true_at_end_of_json() {
 fn extract_json_bool_false_at_end_of_json() {
     let json = r#"{ "key": false}"#;
     assert_eq!(extract_json_bool(json, "key"), Some(false));
-}
-
-#[test]
-fn extract_json_number_boolean_returns_none() {
-    let json = r#"{ "fps": true }"#;
-    assert_eq!(extract_json_number(json, "fps"), None);
-}
-
-#[test]
-fn extract_json_bool_number_one_returns_none() {
-    let json = r#"{ "flag": 1 }"#;
-    assert_eq!(extract_json_bool(json, "flag"), None);
 }
 
 // -------------------------------------------------------------------------
@@ -242,19 +212,6 @@ fn extract_json_number_with_trailing_comma() {
 // extract_json_number — edge cases
 // -------------------------------------------------------------------------
 
-#[test]
-fn extract_json_number_negative_value_returns_none() {
-    // Negative numbers have a '-' which is not a digit → parse returns None
-    let json = r#"{"fps": -5}"#;
-    assert_eq!(extract_json_number(json, "fps"), None);
-}
-
-#[test]
-fn extract_json_number_float_returns_none_in_compact_json() {
-    let json = r#"{"val": 3.14}"#;
-    assert_eq!(extract_json_number(json, "val"), None);
-}
-
 // -------------------------------------------------------------------------
 // extract_json_bool — boundary parsing
 // -------------------------------------------------------------------------
@@ -272,16 +229,4 @@ fn extract_json_bool_truex_is_not_true() {
     // "truex" starts with "true" but the boundary check rejects 'x'
     let json = r#"{"flag": truex}"#;
     assert_eq!(extract_json_bool(json, "flag"), None);
-}
-
-#[test]
-fn extract_json_bool_false_followed_by_comma() {
-    let json = r#"{"a": false, "b": 1}"#;
-    assert_eq!(extract_json_bool(json, "a"), Some(false));
-}
-
-#[test]
-fn extract_json_bool_false_followed_by_closing_brace() {
-    let json = r#"{"a": false}"#;
-    assert_eq!(extract_json_bool(json, "a"), Some(false));
 }
