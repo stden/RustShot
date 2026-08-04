@@ -6,7 +6,7 @@ use crate::capture::platform::{
 };
 use std::cell::Cell;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 // --- frame_crop_within_window: PrintWindow output -> extended-frame crop ---
 
@@ -163,16 +163,16 @@ fn capture_worker_result_is_returned_before_the_deadline() {
 #[test]
 fn capture_worker_timeout_does_not_wait_for_the_worker_to_finish() {
     let (sender, receiver) = mpsc::channel::<Result<(), String>>();
+    let (release_sender, release_receiver) = mpsc::channel();
     let worker = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(250));
+        release_receiver.recv().unwrap();
         let _ = sender.send(Ok(()));
     });
-    let started = Instant::now();
 
     let error = receive_capture_result(receiver, Duration::from_millis(20), "GDI").unwrap_err();
 
     assert!(error.contains("timed out"));
-    assert!(started.elapsed() < Duration::from_millis(150));
+    release_sender.send(()).unwrap();
     worker.join().unwrap();
 }
 
