@@ -4,23 +4,60 @@
 use crate::record::*;
 use std::time::Duration;
 
+fn fps(value: u32) -> Fps {
+    Fps::new(value).unwrap()
+}
+
+fn dimensions(width: u32, height: u32) -> RecordingDimensions {
+    RecordingDimensions::try_from(Region {
+        physical_x: 0,
+        physical_y: 0,
+        physical_width: width,
+        physical_height: height,
+    })
+    .unwrap()
+}
+
+fn timing(frame_index: u64, fps_value: u32) -> (i64, i64) {
+    let timing = frame_timing_hns(FrameIndex::new(frame_index), fps(fps_value));
+    (timing.timestamp().get(), timing.duration().get())
+}
+
+fn bitrate(width: u32, height: u32, fps_value: u32) -> u32 {
+    recording_bitrate(dimensions(width, height), fps(fps_value)).get()
+}
+
 // -------------------------------------------------------------------------
 // frame_index_for_elapsed — wall-clock anchored recording timeline
 // -------------------------------------------------------------------------
 
 #[test]
 fn elapsed_frame_index_tracks_wall_clock_when_encoder_falls_behind() {
-    assert_eq!(frame_index_for_elapsed(Duration::ZERO, 60), 0);
-    assert_eq!(frame_index_for_elapsed(Duration::from_millis(16), 60), 0);
-    assert_eq!(frame_index_for_elapsed(Duration::from_millis(17), 60), 1);
-    assert_eq!(frame_index_for_elapsed(Duration::from_millis(500), 60), 30);
-    assert_eq!(frame_index_for_elapsed(Duration::from_secs(10), 30), 300);
+    assert_eq!(frame_index_for_elapsed(Duration::ZERO, fps(60)).get(), 0);
+    assert_eq!(
+        frame_index_for_elapsed(Duration::from_millis(16), fps(60)).get(),
+        0
+    );
+    assert_eq!(
+        frame_index_for_elapsed(Duration::from_millis(17), fps(60)).get(),
+        1
+    );
+    assert_eq!(
+        frame_index_for_elapsed(Duration::from_millis(500), fps(60)).get(),
+        30
+    );
+    assert_eq!(
+        frame_index_for_elapsed(Duration::from_secs(10), fps(30)).get(),
+        300
+    );
 }
 
 #[test]
-fn elapsed_frame_index_handles_invalid_and_extreme_inputs() {
-    assert_eq!(frame_index_for_elapsed(Duration::from_secs(1), 0), 0);
-    assert_eq!(frame_index_for_elapsed(Duration::MAX, u32::MAX), i64::MAX);
+fn elapsed_frame_index_saturates_for_extreme_elapsed_time() {
+    assert_eq!(
+        frame_index_for_elapsed(Duration::MAX, Fps::DEFAULT).get(),
+        i64::MAX
+    );
 }
 
 // -------------------------------------------------------------------------
@@ -29,7 +66,7 @@ fn elapsed_frame_index_handles_invalid_and_extreme_inputs() {
 
 #[test]
 fn rational_frame_timing_has_no_one_second_drift_at_30fps() {
-    let frames: Vec<_> = (0..30).map(|index| frame_timing_hns(index, 30)).collect();
+    let frames: Vec<_> = (0..30).map(|index| timing(index, 30)).collect();
 
     assert_eq!(frames[0], (0, 333_333));
     assert_eq!(frames[1], (333_333, 333_333));
@@ -41,21 +78,12 @@ fn rational_frame_timing_has_no_one_second_drift_at_30fps() {
 }
 
 #[test]
-fn frame_timing_hns_guards_return_zero() {
-    // Negative frame indices and 0 fps must not panic or divide by zero.
-    assert_eq!(frame_timing_hns(-1, 30), (0, 0));
-    assert_eq!(frame_timing_hns(i64::MIN, 30), (0, 0));
-    assert_eq!(frame_timing_hns(0, 0), (0, 0));
-    assert_eq!(frame_timing_hns(-5, 0), (0, 0));
-}
-
-#[test]
 fn frame_timing_hns_non_divisor_rates_close_each_second_exactly() {
     // 24 and 144 do not divide 10^7 evenly: per-frame durations vary by one
     // tick, but the last frame of the first second must end exactly on the
     // one-second boundary.
     for fps in [24u32, 144] {
-        let (start, duration) = frame_timing_hns(i64::from(fps) - 1, fps);
+        let (start, duration) = timing(u64::from(fps - 1), fps);
         assert_eq!(start + duration, 10_000_000, "fps={fps}");
     }
 }
@@ -64,9 +92,9 @@ fn frame_timing_hns_non_divisor_rates_close_each_second_exactly() {
 fn frame_timing_hns_large_index_at_240fps_is_exact() {
     // 10^7 frames at 240 fps: start = 10^7 * 10^7 / 240 with no accumulated
     // rounding error, and the frame still abuts its successor exactly.
-    let (start, duration) = frame_timing_hns(10_000_000, 240);
+    let (start, duration) = timing(10_000_000, 240);
     assert_eq!(start, 416_666_666_666);
-    assert_eq!(start + duration, frame_timing_hns(10_000_001, 240).0);
+    assert_eq!(start + duration, timing(10_000_001, 240).0);
 }
 
 // -------------------------------------------------------------------------
@@ -75,10 +103,10 @@ fn frame_timing_hns_large_index_at_240fps_is_exact() {
 
 #[test]
 fn recording_bitrate_scales_with_frame_size_and_rate() {
-    let hd = recording_bitrate(1280, 720, 30);
-    let full_hd = recording_bitrate(1920, 1080, 30);
-    let high_refresh = recording_bitrate(1920, 1080, 60);
-    let ultra_hd = recording_bitrate(3840, 2160, 30);
+    let hd = bitrate(1280, 720, 30);
+    let full_hd = bitrate(1920, 1080, 30);
+    let high_refresh = bitrate(1920, 1080, 60);
+    let ultra_hd = bitrate(3840, 2160, 30);
 
     assert!(hd < full_hd);
     assert!(full_hd < high_refresh);
@@ -90,34 +118,25 @@ fn recording_bitrate_scales_with_frame_size_and_rate() {
 fn recording_bitrate_unclamped_value_is_exact() {
     // 1920 * 1080 * 30 * 12 / 100 = 7_464_960 — inside the clamp range,
     // so the raw pixel-throughput value is returned unchanged.
-    assert_eq!(recording_bitrate(1920, 1080, 30), 7_464_960);
+    assert_eq!(bitrate(1920, 1080, 30), 7_464_960);
 }
 
 #[test]
 fn recording_bitrate_clamps_small_input_to_floor() {
     // Raw value 100 * 100 * 30 * 12 / 100 = 36_000 is below the 2 Mbit floor.
-    assert_eq!(recording_bitrate(100, 100, 30), 2_000_000);
+    assert_eq!(bitrate(100, 100, 30), 2_000_000);
 }
 
 #[test]
-fn recording_bitrate_zero_inputs_clamp_to_floor() {
-    assert_eq!(recording_bitrate(0, 0, 0), 2_000_000);
-    assert_eq!(recording_bitrate(0, 1080, 60), 2_000_000);
-    assert_eq!(recording_bitrate(1920, 1080, 0), 2_000_000);
+fn recording_bitrate_smallest_valid_input_clamps_to_floor() {
+    assert_eq!(bitrate(1, 1, 1), 2_000_000);
 }
 
 #[test]
 fn recording_bitrate_clamps_huge_input_to_ceiling() {
     // Raw value 7680 * 4320 * 120 * 12 / 100 = 477_757_440 exceeds the
     // 50 Mbit ceiling.
-    assert_eq!(recording_bitrate(7680, 4320, 120), 50_000_000);
-}
-
-#[test]
-fn recording_bitrate_saturating_mul_reaches_ceiling_for_max_inputs() {
-    // u32::MAX everywhere overflows the u64 product; the saturating_mul
-    // chain must land on the ceiling instead of wrapping around.
-    assert_eq!(recording_bitrate(u32::MAX, u32::MAX, u32::MAX), 50_000_000);
+    assert_eq!(bitrate(7680, 4320, 120), 50_000_000);
 }
 
 // -------------------------------------------------------------------------

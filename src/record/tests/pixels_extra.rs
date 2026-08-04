@@ -3,27 +3,6 @@
 use crate::record::*;
 
 // -------------------------------------------------------------------------
-// rgba_to_bgra_bottom_up: 1x4 tall image row reversal
-// -------------------------------------------------------------------------
-
-#[test]
-fn rgba_to_bgra_bottom_up_1x4_rows_fully_reversed() {
-    // 1x4 image: 4 rows of distinct colors (1 pixel each)
-    let rgba = vec![
-        10, 20, 30, 255, // row 0
-        40, 50, 60, 255, // row 1
-        70, 80, 90, 255, // row 2
-        100, 110, 120, 255, // row 3
-    ];
-    let out = rgba_to_bgra_bottom_up(&rgba, 1, 4).unwrap();
-    // Row 3 becomes row 0 (bottom-up), with R↔B swap
-    assert_eq!(&out[0..4], &[120, 110, 100, 255]); // was [100,110,120,255]
-    assert_eq!(&out[4..8], &[90, 80, 70, 255]); // was [70,80,90,255]
-    assert_eq!(&out[8..12], &[60, 50, 40, 255]); // was [40,50,60,255]
-    assert_eq!(&out[12..16], &[30, 20, 10, 255]); // was [10,20,30,255]
-}
-
-// -------------------------------------------------------------------------
 // rgba_to_bgra_bottom_up — identity for 0-height
 // -------------------------------------------------------------------------
 

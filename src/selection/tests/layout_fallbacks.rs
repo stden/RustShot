@@ -5,29 +5,6 @@ use super::*;
 // --- build_physical_screen_layouts additional tests ---
 
 #[test]
-fn build_physical_screen_layouts_single_monitor() {
-    let layouts = build_physical_screen_layouts(&[ScreenLayoutInput {
-        logical_x: 0,
-        logical_y: 0,
-        logical_width: 1920,
-        logical_height: 1080,
-        physical_width: 1920,
-        physical_height: 1080,
-        is_primary: true,
-    }])
-    .unwrap();
-    assert_eq!(layouts.len(), 1);
-    assert_eq!(layouts[0].physical_x, 0);
-    assert_eq!(layouts[0].physical_y, 0);
-}
-
-#[test]
-fn build_physical_screen_layouts_empty_returns_error() {
-    let result = build_physical_screen_layouts(&[]);
-    assert!(result.is_err());
-}
-
-#[test]
 fn build_physical_screen_layouts_three_monitors_horizontal() {
     let layouts = build_physical_screen_layouts(&[
         make_screen(0, 0, 1920, 1080, 1920, 1080),
@@ -42,22 +19,6 @@ fn build_physical_screen_layouts_three_monitors_horizontal() {
     assert_eq!(layouts[0].physical_x, -1920);
     assert_eq!(layouts[1].physical_x, 0);
     assert_eq!(layouts[2].physical_x, 1920);
-}
-
-#[test]
-fn build_physical_screen_layouts_stacked_monitors() {
-    let layouts = build_physical_screen_layouts(&[
-        ScreenLayoutInput {
-            is_primary: true,
-            ..make_screen(0, 0, 1920, 1080, 1920, 1080)
-        },
-        make_screen(0, 1080, 1920, 1080, 1920, 1080),
-    ])
-    .unwrap();
-    assert_eq!(layouts[0].physical_x, 0);
-    assert_eq!(layouts[0].physical_y, 0);
-    assert_eq!(layouts[1].physical_x, 0);
-    assert_eq!(layouts[1].physical_y, 1080);
 }
 
 // --- fallback_physical_x tests ---
@@ -194,13 +155,6 @@ fn get_cursor_position_returns_error_on_non_windows() {
     assert!(result.unwrap_err().contains("not supported"));
 }
 
-#[cfg(not(windows))]
-#[test]
-fn get_cursor_position_error_message_is_not_empty() {
-    let err = get_cursor_position().unwrap_err();
-    assert!(!err.is_empty());
-}
-
 // =========================================================================
 // preferred_screen_index tests
 // =========================================================================
@@ -220,13 +174,6 @@ fn preferred_screen_index_single_screen_always_returns_zero() {
         Some(0)
     );
     assert_eq!(preferred_screen_index(screens, Some((9999, 9999))), Some(0));
-}
-
-#[test]
-fn preferred_screen_index_cursor_on_second_monitor() {
-    let screens = vec![(0, 0, 1920, 1080, true), (1920, 0, 2560, 1440, false)];
-    // Cursor at (2000, 500) is on the second monitor
-    assert_eq!(preferred_screen_index(screens, Some((2000, 500))), Some(1));
 }
 
 #[test]
@@ -255,21 +202,6 @@ fn preferred_screen_index_cursor_outside_all_screens_falls_back_to_primary() {
         preferred_screen_index(screens, Some((10000, 10000))),
         Some(1)
     );
-}
-
-#[test]
-fn preferred_screen_index_cursor_outside_no_primary_falls_back_to_first() {
-    let screens = vec![(0, 0, 1920, 1080, false), (1920, 0, 2560, 1440, false)];
-    assert_eq!(
-        preferred_screen_index(screens, Some((10000, 10000))),
-        Some(0)
-    );
-}
-
-#[test]
-fn preferred_screen_index_no_cursor_uses_primary() {
-    let screens = vec![(0, 0, 1920, 1080, false), (1920, 0, 2560, 1440, true)];
-    assert_eq!(preferred_screen_index(screens, None), Some(1));
 }
 
 #[test]

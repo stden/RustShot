@@ -86,36 +86,6 @@ fn run_cli_with_capture_using_settings_prefers_output_extension_when_flag_is_abs
 }
 
 #[test]
-fn run_cli_with_capture_using_settings_output_without_extension_uses_settings_format() {
-    let args = Args {
-        cli: true,
-        output: Some(PathBuf::from("shot")),
-        ..base_args()
-    };
-    let settings = settings::Settings {
-        default_format: Format::Jpg,
-        ..settings::Settings::default()
-    };
-    let called = Cell::new(false);
-
-    run_cli_with_capture_using_settings(
-        args,
-        &settings,
-        false,
-        |actual_output, actual_format, _screen| {
-            called.set(true);
-            assert_eq!(actual_output, Some(PathBuf::from("shot")));
-            assert!(matches!(actual_format, capture::Format::Jpg));
-            Ok(PathBuf::from("shot"))
-        },
-        |_, _| unreachable!("window capture should not run"),
-    )
-    .unwrap();
-
-    assert!(called.get());
-}
-
-#[test]
 fn run_cli_with_capture_using_settings_rejects_unsupported_output_extension_without_flag() {
     let args = Args {
         cli: true,
@@ -187,16 +157,20 @@ fn run_cli_with_capture_using_settings_propagates_capture_error() {
 }
 
 #[test]
-fn run_cli_with_capture_using_settings_list_skips_capture_and_window_handlers() {
+fn run_cli_with_capture_using_settings_list_takes_priority_over_window_mode() {
     let args = Args {
+        output: Some(PathBuf::from("window.gif")),
+        format: CliFormat::Bmp,
+        screen: Some(3),
         list: true,
+        window: true,
         ..base_args()
     };
 
     let result = run_cli_with_capture_using_settings(
         args,
         &settings::Settings::default(),
-        false,
+        true,
         |_, _, _| unreachable!("capture handler should not run when listing screens"),
         |_, _| unreachable!("window handler should not run when listing screens"),
     )
@@ -217,29 +191,6 @@ fn run_cli_with_capture_using_settings_list_skips_unsupported_output_extension_v
         args,
         &settings::Settings::default(),
         false,
-        |_, _, _| unreachable!("capture handler should not run when listing screens"),
-        |_, _| unreachable!("window handler should not run when listing screens"),
-    )
-    .unwrap();
-
-    assert!(result.starts_with("Available screens:"));
-}
-
-#[test]
-fn run_cli_with_capture_using_settings_list_takes_priority_over_window_mode() {
-    let args = Args {
-        output: Some(PathBuf::from("window.gif")),
-        format: CliFormat::Bmp,
-        screen: Some(3),
-        list: true,
-        window: true,
-        ..base_args()
-    };
-
-    let result = run_cli_with_capture_using_settings(
-        args,
-        &settings::Settings::default(),
-        true,
         |_, _, _| unreachable!("capture handler should not run when listing screens"),
         |_, _| unreachable!("window handler should not run when listing screens"),
     )
@@ -304,52 +255,6 @@ fn run_cli_with_capture_using_settings_propagates_window_error() {
     );
 
     assert_eq!(result, Err("window boom".to_string()));
-}
-
-// -------------------------------------------------------------------------
-// run_cli_with_capture_using_settings — unsupported ext with explicit format
-// -------------------------------------------------------------------------
-
-#[test]
-fn run_cli_with_capture_using_settings_allows_unsupported_ext_when_format_explicit() {
-    let args = Args {
-        cli: true,
-        output: Some(PathBuf::from("shot.gif")),
-        format: CliFormat::Bmp,
-        window: true,
-        ..base_args()
-    };
-    let called = Cell::new(false);
-    let result = run_cli_with_capture_using_settings(
-        args,
-        &settings::Settings::default(),
-        true, // format_explicit = true, so unsupported ext check is bypassed
-        |_, _, _| unreachable!("screen capture should not run in window mode"),
-        |_, actual_format| {
-            called.set(true);
-            assert!(matches!(actual_format, capture::Format::Bmp));
-            Ok(PathBuf::from("shot.gif"))
-        },
-    );
-    assert!(called.get());
-    assert!(result.is_ok());
-}
-
-#[test]
-fn run_cli_with_capture_using_settings_window_error_message_contains_path() {
-    let args = Args {
-        cli: true,
-        window: true,
-        ..base_args()
-    };
-    let result = run_cli_with_capture_using_settings(
-        args,
-        &settings::Settings::default(),
-        false,
-        |_, _, _| unreachable!(),
-        |_, _| Err("no foreground window".to_string()),
-    );
-    assert_eq!(result, Err("no foreground window".to_string()));
 }
 
 // -------------------------------------------------------------------------

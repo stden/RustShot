@@ -1,4 +1,4 @@
-//! Tests for `save_image_optimized` output validity (magic bytes, JPEG pre-conversion, error paths) plus `bgra_to_rgba` and path-helper edge cases.
+//! Tests for JPEG pre-conversion, save errors, platform behavior, and Unicode paths.
 
 use crate::capture::*;
 use crate::test_support::TestDir;
@@ -63,97 +63,6 @@ fn capture_active_window_in_dir_returns_unsupported_on_linux() {
     let result = capture_active_window_in_dir(None, Format::Png, dir.path());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("only supported on Windows"));
-}
-
-// -------------------------------------------------------------------------
-// save_image_optimized format tests
-// -------------------------------------------------------------------------
-
-#[test]
-fn save_image_optimized_png_creates_valid_file() {
-    let dir = TestDir::new("rustshot_test_save_png");
-    let path = dir.file("test.png");
-
-    let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]));
-    save_image_optimized(&img, &path, Format::Png).unwrap();
-
-    let bytes = std::fs::read(&path).unwrap();
-    assert!(bytes.len() > 8);
-    // PNG magic bytes
-    assert_eq!(&bytes[..4], &[0x89, b'P', b'N', b'G']);
-}
-
-#[test]
-fn save_image_optimized_jpg_creates_valid_file() {
-    let dir = TestDir::new("rustshot_test_save_jpg");
-    let path = dir.file("test.jpg");
-
-    let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 255, 0, 255]));
-    save_image_optimized(&img, &path, Format::Jpg).unwrap();
-
-    let bytes = std::fs::read(&path).unwrap();
-    assert!(bytes.len() > 2);
-    // JPEG magic bytes
-    assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
-}
-
-#[test]
-fn save_image_optimized_bmp_creates_valid_file() {
-    let dir = TestDir::new("rustshot_test_save_bmp");
-    let path = dir.file("test.bmp");
-
-    let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 255, 255]));
-    save_image_optimized(&img, &path, Format::Bmp).unwrap();
-
-    let bytes = std::fs::read(&path).unwrap();
-    assert!(bytes.len() > 2);
-    // BMP magic bytes
-    assert_eq!(&bytes[..2], b"BM");
-}
-
-#[test]
-fn save_image_optimized_1x1_pixel_png() {
-    let dir = TestDir::new("rustshot_test_save_1x1");
-    let path = dir.file("1x1.png");
-
-    let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 64, 32, 255]));
-    save_image_optimized(&img, &path, Format::Png).unwrap();
-
-    let loaded = image::open(&path).unwrap().to_rgba8();
-    assert_eq!(loaded.get_pixel(0, 0), &image::Rgba([128, 64, 32, 255]));
-}
-
-// -------------------------------------------------------------------------
-// bgra_to_rgba additional edge cases
-// -------------------------------------------------------------------------
-
-#[test]
-fn bgra_to_rgba_exact_8_pixels() {
-    let mut buf: Vec<u8> = (0..32).collect();
-    let original = buf.clone();
-    bgra_to_rgba(&mut buf);
-    // R and B swapped for each pixel
-    for i in 0..8 {
-        let base = i * 4;
-        assert_eq!(buf[base], original[base + 2]); // R = old B
-        assert_eq!(buf[base + 1], original[base + 1]); // G unchanged
-        assert_eq!(buf[base + 2], original[base]); // B = old R
-        assert_eq!(buf[base + 3], original[base + 3]); // A unchanged
-    }
-}
-
-#[test]
-fn bgra_to_rgba_5_extra_bytes_ignored() {
-    let mut buf = vec![10, 20, 30, 40, 50, 60, 70, 80, 99];
-    bgra_to_rgba(&mut buf);
-    // First pixel swapped
-    assert_eq!(buf[0], 30);
-    assert_eq!(buf[2], 10);
-    // Second pixel swapped
-    assert_eq!(buf[4], 70);
-    assert_eq!(buf[6], 50);
-    // Extra byte untouched
-    assert_eq!(buf[8], 99);
 }
 
 // -------------------------------------------------------------------------

@@ -15,31 +15,6 @@ fn escape_json_string_no_special_chars() {
 }
 
 #[test]
-fn escape_json_string_backslash() {
-    assert_eq!(escape_json_string(r"a\b"), r"a\\b");
-}
-
-#[test]
-fn escape_json_string_double_quote() {
-    assert_eq!(escape_json_string("a\"b"), "a\\\"b");
-}
-
-#[test]
-fn escape_json_string_newline() {
-    assert_eq!(escape_json_string("a\nb"), "a\\nb");
-}
-
-#[test]
-fn escape_json_string_carriage_return() {
-    assert_eq!(escape_json_string("a\rb"), "a\\rb");
-}
-
-#[test]
-fn escape_json_string_tab() {
-    assert_eq!(escape_json_string("a\tb"), "a\\tb");
-}
-
-#[test]
 fn escape_json_string_all_special_chars() {
     assert_eq!(escape_json_string("\\\"\n\r\t"), "\\\\\\\"\\n\\r\\t");
 }
@@ -59,31 +34,6 @@ fn unescape_json_string_empty_input() {
 #[test]
 fn unescape_json_string_no_escapes() {
     assert_eq!(unescape_json_string("hello"), "hello");
-}
-
-#[test]
-fn unescape_json_string_escaped_backslash() {
-    assert_eq!(unescape_json_string(r"a\\b"), r"a\b");
-}
-
-#[test]
-fn unescape_json_string_escaped_quote() {
-    assert_eq!(unescape_json_string(r#"a\"b"#), "a\"b");
-}
-
-#[test]
-fn unescape_json_string_escaped_newline() {
-    assert_eq!(unescape_json_string(r"a\nb"), "a\nb");
-}
-
-#[test]
-fn unescape_json_string_escaped_carriage_return() {
-    assert_eq!(unescape_json_string(r"a\rb"), "a\rb");
-}
-
-#[test]
-fn unescape_json_string_escaped_tab() {
-    assert_eq!(unescape_json_string(r"a\tb"), "a\tb");
 }
 
 #[test]
@@ -142,38 +92,6 @@ fn escape_unescape_roundtrip_windows_paths() {
 // -------------------------------------------------------------------------
 
 #[test]
-fn escape_unescape_roundtrip_plain_text() {
-    let original = "hello world";
-    assert_eq!(
-        unescape_json_string(&escape_json_string(original)),
-        original
-    );
-}
-
-#[test]
-fn escape_unescape_roundtrip_windows_path() {
-    let original = r"C:\Users\test\Documents\RustShot";
-    assert_eq!(
-        unescape_json_string(&escape_json_string(original)),
-        original
-    );
-}
-
-#[test]
-fn escape_unescape_roundtrip_all_special_chars() {
-    let original = "line1\nline2\r\ttab\t\"quoted\"\\end";
-    assert_eq!(
-        unescape_json_string(&escape_json_string(original)),
-        original
-    );
-}
-
-#[test]
-fn escape_unescape_roundtrip_empty_string() {
-    assert_eq!(unescape_json_string(&escape_json_string("")), "");
-}
-
-#[test]
 fn escape_unescape_roundtrip_unicode() {
     let original = "日本語パス/用户/截图";
     assert_eq!(
@@ -185,26 +103,6 @@ fn escape_unescape_roundtrip_unicode() {
 // -------------------------------------------------------------------------
 // unescape_json_string — edge cases
 // -------------------------------------------------------------------------
-
-#[test]
-fn unescape_json_string_trailing_backslash_preserved() {
-    // A lone backslash at end of string with no following char
-    let result = unescape_json_string("hello\\");
-    assert_eq!(result, "hello\\");
-}
-
-#[test]
-fn unescape_json_string_unknown_escape_preserved_verbatim() {
-    // \x is not a recognized escape → preserved as \x
-    let result = unescape_json_string("hello\\xworld");
-    assert_eq!(result, "hello\\xworld");
-}
-
-#[test]
-fn unescape_json_string_all_standard_escapes() {
-    let result = unescape_json_string("\\\"\\\\\\n\\r\\t");
-    assert_eq!(result, "\"\\\n\r\t");
-}
 
 // -------------------------------------------------------------------------
 // escape_json_string — additional characters

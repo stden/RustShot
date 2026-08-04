@@ -8,7 +8,7 @@
 //! 4. Save the image in the requested format (PNG / JPG / BMP).
 //!
 //! The public entry point is [`capture_screenshot`].  An internal
-//! [`capture_screenshot_with`] variant accepts injected closures for unit testing
+//! `capture_screenshot_with` variant accepts injected closures for unit testing
 //! without real screen hardware.
 
 use image::ImageFormat;
@@ -281,7 +281,7 @@ pub fn capture_screenshot_in_dir(
         Some(requested) => resolve_screen_index(screens.len(), Some(requested))?,
         None => {
             // Prefer the screen under the cursor, fall back to primary
-            let cursor_pos = crate::selection::get_cursor_position().ok();
+            let cursor_pos = crate::selection::get_cursor_position().ok().map(Into::into);
             let screen_rects: Vec<_> = screens
                 .iter()
                 .map(|s| {

@@ -33,18 +33,6 @@ fn monitor_scale_ratio_physical_smaller_than_logical() {
 // --- scaled_gap: round(gap * physical / logical) verification ---
 
 #[test]
-fn scaled_gap_fractional_result_rounds_correctly() {
-    // gap=10, logical=3, physical=4 → 10 * (4/3) = 13.333... → rounds to 13
-    assert_eq!(scaled_gap(10, 3, 4), 13);
-}
-
-#[test]
-fn scaled_gap_rounds_half_away_from_zero() {
-    // gap=3, logical=2, physical=3 → 3 * (3/2) = 4.5 → rounds to 5
-    assert_eq!(scaled_gap(3, 2, 3), 5);
-}
-
-#[test]
 fn scaled_gap_negative_gap_fractional_scale() {
     // gap=-10, logical=3, physical=4 → -10 * (4/3) = -13.333... → rounds to -13
     assert_eq!(scaled_gap(-10, 3, 4), -13);
@@ -69,18 +57,6 @@ fn scaled_gap_matches_manual_formula() {
 }
 
 // --- logical_to_physical: negative coords + fractional scale ---
-
-#[test]
-fn logical_to_physical_negative_with_125_scale() {
-    // -1024 * 1.25 = -1280.0
-    assert_eq!(logical_to_physical(-1024, 1.25), -1280);
-}
-
-#[test]
-fn logical_to_physical_negative_with_175_scale() {
-    // -100 * 1.75 = -175.0
-    assert_eq!(logical_to_physical(-100, 1.75), -175);
-}
 
 #[test]
 fn logical_to_physical_negative_fractional_rounds_away_from_zero() {

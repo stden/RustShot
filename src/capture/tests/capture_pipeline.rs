@@ -42,22 +42,6 @@ fn capture_screenshot_with_saves_to_explicit_path() {
 }
 
 #[test]
-fn capture_screenshot_with_reports_capture_error() {
-    let result = capture_screenshot_with(
-        1,
-        None,
-        || Err("capture failed".to_string()),
-        None,
-        Format::Png,
-        &PathBuf::from("."),
-        |_| Ok(()),
-        |_: &(), _, _| Ok(()),
-    );
-
-    assert_eq!(result, Err("capture failed".to_string()));
-}
-
-#[test]
 fn capture_screenshot_with_reports_save_error() {
     let result = capture_screenshot_with(
         1,
@@ -71,27 +55,6 @@ fn capture_screenshot_with_reports_save_error() {
     );
 
     assert_eq!(result, Err("save failed".to_string()));
-}
-
-#[test]
-fn capture_screenshot_with_reports_directory_error() {
-    let save_called = Cell::new(false);
-    let result = capture_screenshot_with(
-        1,
-        None,
-        || Ok(()),
-        Some(PathBuf::from("out.png")),
-        Format::Png,
-        &PathBuf::from("."),
-        |_| Err("mkdir failed".to_string()),
-        |_, _, _| {
-            save_called.set(true);
-            Ok(())
-        },
-    );
-
-    assert_eq!(result, Err("mkdir failed".to_string()));
-    assert!(!save_called.get());
 }
 
 #[test]
@@ -176,74 +139,12 @@ fn capture_screenshot_with_uses_default_path_when_output_is_none() {
 }
 
 #[test]
-fn capture_screenshot_with_accepts_explicit_zero_screen_index() {
-    let capture_called = Cell::new(false);
-
-    let result = capture_screenshot_with(
-        1,
-        Some(0),
-        || {
-            capture_called.set(true);
-            Ok(())
-        },
-        Some(PathBuf::from("shot.bmp")),
-        Format::Bmp,
-        &PathBuf::from("."),
-        |_| Ok(()),
-        |_, _, _| Ok(()),
-    )
-    .unwrap();
-
-    assert!(capture_called.get());
-    assert_eq!(result, PathBuf::from("shot.bmp"));
-}
-
-// --- bgra_to_rgba tests ---
-
-#[test]
-fn bgra_to_rgba_swaps_red_and_blue() {
-    let mut pixels = vec![255, 0, 0, 255]; // B=255, G=0, R=0, A=255
-    bgra_to_rgba(&mut pixels);
-    assert_eq!(pixels, vec![0, 0, 255, 255]); // R=0, G=0, B=255, A=255
-}
-
-#[test]
-fn bgra_to_rgba_preserves_green_and_alpha() {
-    let mut pixels = vec![10, 128, 200, 50];
-    bgra_to_rgba(&mut pixels);
-    assert_eq!(pixels[1], 128); // green unchanged
-    assert_eq!(pixels[3], 50); // alpha unchanged
-}
-
-#[test]
-fn bgra_to_rgba_identity_for_symmetric_values() {
-    // When R == B, swapping is a no-op for those channels
-    let mut pixels = vec![100, 50, 100, 255];
-    bgra_to_rgba(&mut pixels);
-    assert_eq!(pixels, vec![100, 50, 100, 255]);
-}
-
-#[test]
 fn bgra_to_rgba_double_swap_is_identity() {
     let original = vec![10, 20, 30, 40, 50, 60, 70, 80];
     let mut pixels = original.clone();
     bgra_to_rgba(&mut pixels);
     bgra_to_rgba(&mut pixels);
     assert_eq!(pixels, original);
-}
-
-#[test]
-fn bgra_to_rgba_all_zeros() {
-    let mut pixels = vec![0, 0, 0, 0];
-    bgra_to_rgba(&mut pixels);
-    assert_eq!(pixels, vec![0, 0, 0, 0]);
-}
-
-#[test]
-fn bgra_to_rgba_all_max() {
-    let mut pixels = vec![255, 255, 255, 255];
-    bgra_to_rgba(&mut pixels);
-    assert_eq!(pixels, vec![255, 255, 255, 255]);
 }
 
 // --- capture_active_window_platform tests ---

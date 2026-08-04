@@ -2,8 +2,8 @@
 
 # Source: Screenshot Architecture
 
-* **Original Title**: Архитектура скриншот-утилиты: маленькая программа, много скрытой сложности
-* **File**: `articles/002-screenshot-architecture.ru.md`
+* **Original Title**: Screenshot Utility Architecture: A Small Program with a Lot of Hidden Complexity
+* **File**: `articles/002-screenshot-architecture.md`
 * **Topic**: Software Architecture, Modular Design, State Management.
 
 ## Key Takeaways

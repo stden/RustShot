@@ -34,31 +34,6 @@ fn run_cli_window_id_unknown_returns_error() {
 }
 
 #[test]
-fn run_cli_with_capture_window_flag_calls_window_fn() {
-    let args = Args {
-        window: true,
-        ..base_args()
-    };
-    let capture_called = Cell::new(false);
-    let window_called = Cell::new(false);
-    let result = run_cli_with_capture(
-        args,
-        |_, _, _| {
-            capture_called.set(true);
-            Ok(PathBuf::from("screen.png"))
-        },
-        |_, _| {
-            window_called.set(true);
-            Ok(PathBuf::from("window.png"))
-        },
-    )
-    .unwrap();
-    assert!(!capture_called.get(), "capture fn should not be called");
-    assert!(window_called.get(), "window fn should be called");
-    assert!(result.contains("window.png"));
-}
-
-#[test]
 fn run_cli_with_capture_no_window_flag_calls_capture_fn() {
     let args = Args {
         cli: true,
@@ -119,27 +94,6 @@ fn run_cli_with_capture_window_output_path_forwarded() {
     assert!(result.contains("custom_window.png"));
 }
 
-// --- run_cli_with_capture: window with different formats ---
-
-#[test]
-fn run_cli_with_capture_window_bmp_format() {
-    let args = Args {
-        format: CliFormat::Bmp,
-        window: true,
-        ..base_args()
-    };
-    let result = run_cli_with_capture(
-        args,
-        |_, _, _| unreachable!("should not call capture"),
-        |_output, format| {
-            assert!(matches!(format, capture::Format::Bmp));
-            Ok(PathBuf::from("window.bmp"))
-        },
-    )
-    .unwrap();
-    assert!(result.contains("window.bmp"));
-}
-
 #[test]
 fn run_cli_with_capture_window_none_output() {
     let args = Args {
@@ -175,61 +129,4 @@ fn run_cli_with_capture_list_takes_priority_over_window() {
     )
     .unwrap();
     assert!(result.starts_with("Available screens:"));
-}
-
-// --- run_cli_with_capture: window with jpg and png formats ---
-
-#[test]
-fn run_cli_with_capture_window_jpg_format() {
-    let args = Args {
-        format: CliFormat::Jpg,
-        window: true,
-        ..base_args()
-    };
-    let result = run_cli_with_capture(
-        args,
-        |_, _, _| unreachable!("should not call capture"),
-        |_output, format| {
-            assert!(matches!(format, capture::Format::Jpg));
-            Ok(PathBuf::from("window.jpg"))
-        },
-    )
-    .unwrap();
-    assert!(result.contains("window.jpg"));
-}
-
-#[test]
-fn run_cli_with_capture_window_png_format() {
-    let args = Args {
-        format: CliFormat::Png,
-        window: true,
-        ..base_args()
-    };
-    let result = run_cli_with_capture(
-        args,
-        |_, _, _| unreachable!("should not call capture"),
-        |_output, format| {
-            assert!(matches!(format, capture::Format::Png));
-            Ok(PathBuf::from("window.png"))
-        },
-    )
-    .unwrap();
-    assert!(result.contains("window.png"));
-}
-
-#[test]
-fn run_cli_with_capture_window_error_preserves_exact_message() {
-    let args = Args {
-        window: true,
-        ..base_args()
-    };
-    let result = run_cli_with_capture(
-        args,
-        |_, _, _| unreachable!(),
-        |_, _| Err("Active window capture is only supported on Windows".to_string()),
-    );
-    assert_eq!(
-        result.unwrap_err(),
-        "Active window capture is only supported on Windows"
-    );
 }

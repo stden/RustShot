@@ -3,7 +3,7 @@
 # Source: GitHub Actions CI/CD
 
 * **Type**: Technical Documentation / Tutorial
-* **Original Title**: GitHub Actions: CI/CD pipeline для Rust
+* **Original Title**: GitHub Actions: A CI/CD Pipeline for Rust
 * **File**: `docs/github-pipeline.md`
 * **Topic**: CI/CD, GitHub Actions, Rust automation.
 

@@ -30,15 +30,15 @@ Chronological record of wiki operations (ingests, queries, linting).
 * Updated `index.md` with Templates link.
 
 ## [2026-04-19] Batch Ingest | Core Articles
-* Processed `wiki/raw/002-screenshot-architecture.ru.md`.
-* Processed `wiki/raw/003-screen-recording-pitfalls.ru.md`.
-* Processed `wiki/raw/004-release-is-a-feature.ru.md`.
+* Processed `articles/002-screenshot-architecture.md`.
+* Processed `articles/003-screen-recording-pitfalls.md`.
+* Processed `articles/004-release-is-a-feature.md`.
 * Created concept pages: `architecture-overview.md`, `screen-recording.md`, `release-distribution.md`.
 * Created source summaries: `source-architecture.md`, `source-recording-pitfalls.md`, `source-release-feature.md`.
 * Updated `index.md`.
 
 ## [2026-04-19] Ingest | Pixels Lie
-* Processed `wiki/raw/001-pixels-lie.ru.md`.
+* Processed `articles/001-pixels-lie.md`.
 * Created concept page: `dpi-coordinate-systems.md`.
 * Created source summary: `source-pixels-lie.md`.
 * Updated `index.md`.

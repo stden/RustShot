@@ -32,3 +32,15 @@ Feature: Building a selection region from a mouse drag
     Given a drag from (0, 0) to (6, 6)
     When the drag region is built
     Then a region is produced at (0, 0) sized 6 x 6
+
+  @selection-3.1
+  Scenario: An identical drag start and end is rejected
+    Given a drag from (500, 300) to (500, 300)
+    When the drag region is built
+    Then no region is produced
+
+  @selection-3.2
+  Scenario: A drag spanning negative coordinates is normalized
+    Given a drag from (-50, -30) to (60, 80)
+    When the drag region is built
+    Then a region is produced at (-50, -30) sized 110 x 110

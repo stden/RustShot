@@ -295,8 +295,6 @@ Head over to [**Releases**](https://github.com/stden/RustShot/releases) and grab
 
 ---
 
-[Версия на русском языке (README.ru.md)](README.ru.md)
-
 ## Testing
 
 - Executable specifications (BDD): Gherkin features in `tests/features/`, run with

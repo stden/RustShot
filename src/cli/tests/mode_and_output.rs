@@ -10,45 +10,24 @@ use std::io::{self, Write};
 // =========================================================================
 
 #[test]
-fn cli_mode_all_false() {
-    assert!(!should_run_cli_mode(
-        false, false, false, false, false, false
-    ));
-}
+fn cli_mode_covers_idle_each_trigger_and_combined_flags() {
+    let cases = [
+        ([false, false, false, false, false, false], false),
+        ([true, false, false, false, false, false], true),
+        ([false, true, false, false, false, false], true),
+        ([false, false, true, false, false, false], true),
+        ([false, false, false, true, false, false], true),
+        ([false, false, false, false, true, false], true),
+        ([false, false, false, false, false, true], true),
+        ([true, true, true, true, true, true], true),
+    ];
 
-#[test]
-fn cli_mode_cli_flag() {
-    assert!(should_run_cli_mode(true, false, false, false, false, false));
-}
-
-#[test]
-fn cli_mode_list_flag() {
-    assert!(should_run_cli_mode(false, true, false, false, false, false));
-}
-
-#[test]
-fn cli_mode_window_flag() {
-    assert!(should_run_cli_mode(false, false, true, false, false, false));
-}
-
-#[test]
-fn cli_mode_has_output() {
-    assert!(should_run_cli_mode(false, false, false, true, false, false));
-}
-
-#[test]
-fn cli_mode_has_screen() {
-    assert!(should_run_cli_mode(false, false, false, false, true, false));
-}
-
-#[test]
-fn cli_mode_format_explicit() {
-    assert!(should_run_cli_mode(false, false, false, false, false, true));
-}
-
-#[test]
-fn cli_mode_multiple_flags() {
-    assert!(should_run_cli_mode(true, true, true, true, true, true));
+    for ([cli, list, window, output, screen, format], expected) in cases {
+        assert_eq!(
+            should_run_cli_mode(cli, list, window, output, screen, format),
+            expected
+        );
+    }
 }
 
 // =========================================================================
@@ -73,14 +52,6 @@ fn screen_list_multiple() {
     assert!(output.starts_with("Available screens:"));
     assert!(output.contains("  Screen 0: 1920x1080"));
     assert!(output.contains("  Screen 1: 2560x1440"));
-}
-
-#[test]
-fn screen_list_with_string_vec() {
-    let screens = vec!["A".to_string(), "B".to_string()];
-    let output = format_screen_list_output(screens);
-    assert!(output.contains("  A"));
-    assert!(output.contains("  B"));
 }
 
 // =========================================================================
@@ -118,13 +89,6 @@ fn write_error_line_appends_newline() {
     let mut buf = Vec::new();
     write_error_line(&mut buf, "hello").unwrap();
     assert_eq!(String::from_utf8(buf).unwrap(), "hello\n");
-}
-
-#[test]
-fn write_error_line_empty_message() {
-    let mut buf = Vec::new();
-    write_error_line(&mut buf, "").unwrap();
-    assert_eq!(String::from_utf8(buf).unwrap(), "\n");
 }
 
 #[test]

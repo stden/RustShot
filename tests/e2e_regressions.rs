@@ -15,7 +15,7 @@ fn oversized_recording_region_is_rejected_before_a_worker_starts() {
         0,
         0,
         region,
-        30,
+        settings::Fps::new(30).unwrap(),
         std::env::temp_dir().join("rustshot-e2e-invalid-recording"),
     );
 

@@ -53,7 +53,7 @@ pub(crate) fn run_select_record() {
         screen_x,
         screen_y,
         region,
-        settings.recording_fps.get(),
+        settings.recording_fps,
         settings.recordings_dir.clone(),
     ) {
         Ok(s) => s,

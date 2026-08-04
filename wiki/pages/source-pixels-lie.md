@@ -2,8 +2,8 @@
 
 # Source: Pixels Lie
 
-* **Original Title**: Почему пиксели лгут: DPI, scaling и многомониторный хаос
-* **File**: `articles/001-pixels-lie.ru.md`
+* **Original Title**: Why Pixels Lie: DPI, Scaling, and Multi-Monitor Chaos
+* **File**: `articles/001-pixels-lie.md`
 * **Topic**: DPI, Scaling, Multi-monitor coordinates.
 
 ## Key Takeaways

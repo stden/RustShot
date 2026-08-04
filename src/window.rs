@@ -222,15 +222,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn window_info_roundtrips_id() {
-        let w = WindowInfo {
-            id: 0xDEAD_BEEF,
-            title: "x".to_string(),
-        };
-        assert_eq!(w.id, 0xDEAD_BEEF);
-    }
-
     #[cfg(not(windows))]
     #[test]
     fn non_windows_returns_empty_and_errors() {

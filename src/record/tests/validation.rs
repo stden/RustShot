@@ -21,12 +21,6 @@ fn validate_recording_start_above_max_error_mentions_limit() {
 
 #[cfg(windows)]
 #[test]
-fn validate_recording_start_accepts_positive_fps_on_windows() {
-    assert!(validate_recording_start(30).is_ok());
-}
-
-#[cfg(windows)]
-#[test]
 fn validate_recording_start_accepts_1_fps_on_windows() {
     assert!(validate_recording_start(1).is_ok());
 }

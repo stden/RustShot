@@ -63,34 +63,6 @@ fn benchmark_rgb_image_from_rgba_drops_alpha() {
     assert_eq!(rgb.as_raw()[2], 200);
 }
 
-#[test]
-fn benchmark_rgb_image_from_rgba_preserves_dimensions() {
-    let rgba = image::RgbaImage::new(10, 20);
-    let rgb = benchmark_rgb_image_from_rgba(&rgba);
-    assert_eq!(rgb.width(), 10);
-    assert_eq!(rgb.height(), 20);
-}
-
-// -------------------------------------------------------------------------
-// default_screen_index edge cases
-// -------------------------------------------------------------------------
-
-#[test]
-fn default_screen_index_first_is_primary() {
-    assert_eq!(default_screen_index([true, false, false]), Some(0));
-}
-
-#[test]
-fn default_screen_index_primary_last() {
-    assert_eq!(default_screen_index([false, false, true]), Some(2));
-}
-
-#[test]
-fn default_screen_index_multiple_primaries_picks_first() {
-    let index = default_screen_index([false, true, true, false]).unwrap();
-    assert_eq!(index, 1, "should pick the first primary screen");
-}
-
 // -------------------------------------------------------------------------
 // resolve_output_path_in_dir tests
 // -------------------------------------------------------------------------

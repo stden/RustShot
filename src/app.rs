@@ -5,10 +5,10 @@
 //! unit tests in `crate::main_tests` can keep referring to items unqualified,
 //! exactly as they did when everything lived in `main.rs`.
 //!
-//! - [`autorun`] — Windows auto-start registry integration
-//! - [`cli_mode`] — CLI argument model, format policy, and one-shot capture flow
-//! - [`runtime`] — logging setup and the selection/recording child-process modes
-//! - [`tray_app`] — tray icon, global hotkeys, and the winit event-loop app
+//! - `autorun` — Windows auto-start registry integration
+//! - `cli_mode` — CLI argument model, format policy, and one-shot capture flow
+//! - `runtime` — logging setup and the selection/recording child-process modes
+//! - `tray_app` — tray icon, global hotkeys, and the winit event-loop app
 
 use clap::Parser;
 use log::{debug, error, info};

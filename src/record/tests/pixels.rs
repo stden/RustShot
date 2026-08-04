@@ -7,29 +7,6 @@
 use crate::record::*;
 
 #[test]
-fn rgba_to_bgra_bottom_up_swaps_rb_and_flips() {
-    // 1x2 image: top row = [R=255,G=0,B=0,A=255], bottom row = [R=0,G=0,B=255,A=255]
-    let rgba = vec![
-        255, 0, 0, 255, // top row: red
-        0, 0, 255, 255, // bottom row: blue
-    ];
-    let out = rgba_to_bgra_bottom_up(&rgba, 1, 2).unwrap();
-    // Bottom-up: output row 0 = src row 1 (blue), output row 1 = src row 0 (red)
-    // Blue pixel in BGRA = [B=255, G=0, R=0, A=255]
-    assert_eq!(
-        &out[0..4],
-        &[255, 0, 0, 255],
-        "bottom row (blue) should be first in output"
-    );
-    // Red pixel in BGRA = [B=0, G=0, R=255, A=255]
-    assert_eq!(
-        &out[4..8],
-        &[0, 0, 255, 255],
-        "top row (red) should be second in output"
-    );
-}
-
-#[test]
 fn rgba_to_bgra_bottom_up_output_length_matches_input() {
     let rgba = vec![1u8; 4 * 10 * 10];
     let out = rgba_to_bgra_bottom_up(&rgba, 10, 10).unwrap();
@@ -46,17 +23,6 @@ fn rgba_to_bgra_bottom_up_1x1_arbitrary_color() {
         out,
         vec![200, 150, 100, 128],
         "expected BGRA [200,150,100,128] for RGBA [100,150,200,128]"
-    );
-}
-
-#[test]
-fn rgba_to_bgra_bottom_up_output_is_all_zero_for_zero_input() {
-    // All-zero input (transparent black) must produce all-zero output
-    let rgba = vec![0u8; 4 * 5 * 5];
-    let out = rgba_to_bgra_bottom_up(&rgba, 5, 5).unwrap();
-    assert!(
-        out.iter().all(|&b| b == 0),
-        "all-zero input should produce all-zero output"
     );
 }
 

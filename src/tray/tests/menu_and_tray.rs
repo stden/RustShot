@@ -4,20 +4,8 @@
 use crate::tray::*;
 
 #[test]
-fn menu_receiver_does_not_panic() {
-    // menu_receiver() must be callable without panicking
-    let _recv = menu_receiver();
-}
-
-#[test]
 fn create_default_icon_succeeds() {
     assert!(create_default_icon().is_ok());
-}
-
-#[cfg(windows)]
-#[test]
-fn create_tray_smoke_test() {
-    let _ = create_tray();
 }
 
 #[test]
@@ -26,112 +14,18 @@ fn menu_constants_are_stable() {
     assert_eq!(MENU_CAPTURE_WINDOW, "capture_window");
     assert_eq!(MENU_OPEN_FOLDER, "open_folder");
     assert_eq!(MENU_EXIT, "exit");
-}
-
-#[test]
-fn menu_capture_window_constant_value() {
-    assert_eq!(MENU_CAPTURE_WINDOW, "capture_window");
-}
-
-#[test]
-fn menu_capture_constant_value() {
-    assert_eq!(MENU_CAPTURE, "capture");
-}
-
-#[test]
-fn menu_open_folder_constant_value() {
-    assert_eq!(MENU_OPEN_FOLDER, "open_folder");
-}
-
-#[test]
-fn menu_exit_constant_value() {
-    assert_eq!(MENU_EXIT, "exit");
-}
-
-#[test]
-fn menu_start_record_constant_value() {
     assert_eq!(MENU_START_RECORD, "start_record");
-}
-
-#[test]
-fn menu_stop_record_constant_value() {
     assert_eq!(MENU_STOP_RECORD, "stop_record");
-}
-
-#[test]
-fn toggle_record_label_mentions_start_and_stop() {
-    assert!(TOGGLE_RECORD_LABEL.contains("Start"));
-    assert!(TOGGLE_RECORD_LABEL.contains("Stop"));
-}
-
-#[test]
-fn menu_constants_are_non_empty() {
-    assert!(!MENU_CAPTURE.is_empty());
-    assert!(!MENU_CAPTURE_WINDOW.is_empty());
-    assert!(!MENU_OPEN_FOLDER.is_empty());
-    assert!(!MENU_EXIT.is_empty());
-    assert!(!MENU_START_RECORD.is_empty());
-    assert!(!MENU_STOP_RECORD.is_empty());
-}
-
-#[test]
-fn menu_constants_contain_no_whitespace() {
-    for id in [
-        MENU_CAPTURE,
-        MENU_CAPTURE_WINDOW,
-        MENU_OPEN_FOLDER,
-        MENU_EXIT,
-        MENU_START_RECORD,
-        MENU_STOP_RECORD,
-    ] {
-        assert!(
-            !id.contains(' '),
-            "menu ID should not contain spaces: '{id}'"
-        );
-    }
-}
-
-// --- MENU_SETTINGS constant ---
-
-#[test]
-fn menu_settings_constant_value() {
     assert_eq!(MENU_SETTINGS, "settings");
 }
 
 #[test]
-fn menu_settings_contains_no_whitespace() {
-    assert!(
-        !MENU_SETTINGS.contains(' '),
-        "settings menu ID should not contain spaces"
-    );
-}
-
-#[test]
-fn menu_settings_is_non_empty() {
-    assert!(!MENU_SETTINGS.is_empty());
-}
-
-// --- toggle_record_label ---
-
-#[test]
-fn toggle_record_label_mentions_hotkey() {
+fn toggle_record_label_describes_action_and_hotkey() {
+    assert!(TOGGLE_RECORD_LABEL.contains("Start"));
+    assert!(TOGGLE_RECORD_LABEL.contains("Stop"));
     assert!(
         TOGGLE_RECORD_LABEL.contains("Ctrl+Shift+R"),
         "label should mention the hotkey"
-    );
-}
-
-#[test]
-fn toggle_record_label_is_non_empty() {
-    assert!(!TOGGLE_RECORD_LABEL.is_empty());
-}
-
-#[test]
-fn toggle_record_label_contains_start_or_stop_keyword() {
-    let lower = TOGGLE_RECORD_LABEL.to_lowercase();
-    assert!(
-        lower.contains("start") || lower.contains("stop"),
-        "label should mention start or stop"
     );
 }
 

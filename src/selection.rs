@@ -4,9 +4,9 @@
 //! a child process is spawned with `--select`.  This module:
 //!
 //! 1. Detects which monitor the mouse cursor is on ([`get_cursor_position`]).
-//! 2. Captures only that monitor's screen image ([`capture_screen_at_cursor`]).
+//! 2. Captures only that monitor's screen image (`capture_screen_at_cursor`).
 //! 3. Opens a borderless, always-on-top window covering that single screen and
-//!    draws the screenshot as its background ([`SelectionApp`]).
+//!    draws the screenshot as its background (`SelectionApp`).
 //! 4. Lets the user drag a rectangle (crosshair → cyan border) and returns the
 //!    cropped [`image::RgbaImage`] or a [`Region`] for recording.
 //!
@@ -17,6 +17,7 @@
 
 mod bench;
 mod desktop;
+mod domain;
 mod geometry;
 mod layout;
 mod overlay;
@@ -27,6 +28,7 @@ mod overlay;
 #[allow(unused_imports)]
 pub use bench::*;
 pub use desktop::*;
+pub use domain::*;
 pub use geometry::*;
 // layout and overlay contain no fully-`pub` items (their contents are
 // `pub(super)`), so a visible re-export would re-export nothing and trip the

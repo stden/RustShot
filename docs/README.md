@@ -49,14 +49,14 @@ validation/timing, and drag→region. A spec that drifts from the code fails CI.
 
 | File | Topic |
 |------|-------|
-| [`INSTALLERS.md`](INSTALLERS.md) / [`.ru`](INSTALLERS.ru.md) | Installer overview. |
-| [`INNO_SETUP_PIPELINE.md`](INNO_SETUP_PIPELINE.md) / [`.ru`](INNO_SETUP_PIPELINE.ru.md) | Inno Setup packaging pipeline. |
+| [`INSTALLERS.md`](INSTALLERS.md) | Installer overview. |
+| [`INNO_SETUP_PIPELINE.md`](INNO_SETUP_PIPELINE.md) | Inno Setup packaging pipeline. |
 | [`github-pipeline.md`](github-pipeline.md) | CI pipeline notes. |
 
 ## 5. Narrative → `articles/` and `wiki/`
 
-[`articles/`](../articles/) holds four long-form RU essays on the engineering
-themes behind RustShot (indexed by [`ARTICLES.ru.md`](../ARTICLES.ru.md)).
+[`articles/`](../articles/) holds four long-form essays on the engineering
+themes behind RustShot (indexed by [`ARTICLES.md`](../ARTICLES.md)).
 [`wiki/`](../wiki/) is a synthesized knowledge base over them.
 
 ## 6. Not here — the central `iopm` repo

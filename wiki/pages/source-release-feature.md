@@ -2,8 +2,8 @@
 
 # Source: Release is a Feature
 
-* **Original Title**: Релиз как продукт: инсталлятор, pipeline и дисциплина поставки
-* **File**: `articles/004-release-is-a-feature.ru.md`
+* **Original Title**: Release as a Product: Installers, Pipelines, and Delivery Discipline
+* **File**: `articles/004-release-is-a-feature.md`
 * **Topic**: Release Engineering, CI/CD, Distribution.
 
 ## Key Takeaways

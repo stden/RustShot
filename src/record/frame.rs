@@ -84,7 +84,9 @@ fn copy_region_bottom_up(
             output.len()
         ));
     }
-    output[..output_required].fill(0);
+    if output_width != region.physical_width || output_height != region.physical_height {
+        output[..output_required].fill(0);
+    }
 
     let source_x = region.physical_x as usize;
     let source_y = region.physical_y as usize;
@@ -297,7 +299,9 @@ pub(super) fn copy_scrgb_region_bottom_up(
             output.len()
         ));
     }
-    output[..output_required].fill(0);
+    if output_width != region.physical_width || output_height != region.physical_height {
+        output[..output_required].fill(0);
+    }
 
     let source_x = region.physical_x as usize;
     let source_y = region.physical_y as usize;

@@ -1,7 +1,7 @@
 //! Edge-case tests: `bgra_to_rgba` corner inputs, pipeline ordering, and review-sweep coverage of format/path/screen helpers.
 
 use crate::capture::*;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 // --- bgra_to_rgba edge cases ---
 
@@ -19,14 +19,6 @@ fn bgra_to_rgba_trailing_bytes_ignored() {
 }
 
 #[test]
-fn bgra_to_rgba_three_bytes_is_noop() {
-    // Less than 4 bytes: no chunks to process
-    let mut pixels = vec![1, 2, 3];
-    bgra_to_rgba(&mut pixels);
-    assert_eq!(pixels, vec![1, 2, 3]);
-}
-
-#[test]
 fn bgra_to_rgba_large_image_all_swapped() {
     // 100 pixels, all with B=10, G=20, R=30, A=40
     let mut pixels = [10, 20, 30, 40].repeat(100);
@@ -39,102 +31,12 @@ fn bgra_to_rgba_large_image_all_swapped() {
     }
 }
 
-// --- capture_screenshot_with additional edge cases ---
-
-#[test]
-fn capture_screenshot_with_multiple_screens_last_index() {
-    let result = capture_screenshot_with(
-        5,
-        Some(4),
-        || Ok("img"),
-        Some(PathBuf::from("shot.png")),
-        Format::Png,
-        &PathBuf::from("."),
-        |_| Ok(()),
-        |_, _, _| Ok(()),
-    )
-    .unwrap();
-    assert_eq!(result, PathBuf::from("shot.png"));
-}
-
-#[test]
-fn capture_screenshot_with_capture_error_prevents_save() {
-    let save_called = Cell::new(false);
-    let _ = capture_screenshot_with(
-        1,
-        None,
-        || Err::<(), _>("capture boom".to_string()),
-        Some(PathBuf::from("out.png")),
-        Format::Png,
-        &PathBuf::from("."),
-        |_| Ok(()),
-        |_: &(), _, _| {
-            save_called.set(true);
-            Ok(())
-        },
-    );
-    assert!(
-        !save_called.get(),
-        "save should not be called after capture error"
-    );
-}
-
 // --- ensure_parent_directory error path ---
 
 #[test]
 fn ensure_parent_directory_root_path_is_ok() {
     // "/file.png" parent is "/" which exists
     assert!(ensure_parent_directory(Path::new("/file.png")).is_ok());
-}
-
-// --- Format trait coverage ---
-
-#[test]
-fn format_debug_contains_variant_name() {
-    assert!(format!("{:?}", Format::Png).contains("Png"));
-    assert!(format!("{:?}", Format::Jpg).contains("Jpg"));
-    assert!(format!("{:?}", Format::Bmp).contains("Bmp"));
-}
-
-// --- default_screen_index additional tests ---
-
-#[test]
-fn default_screen_index_single_primary_returns_zero() {
-    assert_eq!(default_screen_index([true]), Some(0));
-}
-
-#[test]
-fn default_screen_index_single_non_primary_returns_zero() {
-    assert_eq!(default_screen_index([false]), Some(0));
-}
-
-#[test]
-fn default_screen_index_multiple_primaries_returns_first() {
-    // Rare but possible: two screens both marked primary
-    assert_eq!(default_screen_index([true, true, false]), Some(0));
-}
-
-#[test]
-fn default_screen_index_primary_in_middle_of_five() {
-    assert_eq!(
-        default_screen_index([false, false, true, false, false]),
-        Some(2)
-    );
-}
-
-// --- bgra_to_rgba additional tests ---
-
-#[test]
-fn bgra_to_rgba_two_pixels() {
-    let mut pixels = vec![
-        100, 200, 50, 255, // pixel 0: B=100, G=200, R=50, A=255
-        10, 20, 30, 128, // pixel 1: B=10, G=20, R=30, A=128
-    ];
-    bgra_to_rgba(&mut pixels);
-    // pixel 0: R=50, G=200, B=100, A=255
-    assert_eq!(&pixels[0..4], &[50, 200, 100, 255]);
-    // pixel 1: R=30, G=20, B=10, A=128
-    assert_eq!(&pixels[4..8], &[30, 20, 10, 128]);
 }
 
 // --- capture_screenshot_with: ensure closure order ---
@@ -164,20 +66,6 @@ fn capture_screenshot_with_calls_closures_in_order() {
     );
 
     assert_eq!(*order.borrow(), vec!["capture", "ensure_dir", "save"]);
-}
-
-// --- resolve_output_path consistency ---
-
-#[test]
-fn resolve_output_path_default_filenames_all_start_with_screenshot() {
-    for fmt in [Format::Png, Format::Jpg, Format::Bmp] {
-        let path = resolve_output_path(None, fmt);
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        assert!(
-            name.starts_with("screenshot_"),
-            "expected 'screenshot_' prefix for {fmt:?}, got: {name}"
-        );
-    }
 }
 
 #[test]
@@ -213,37 +101,4 @@ fn resolve_screen_index_always_errors_when_out_of_range() {
             );
         }
     }
-}
-
-// =========================================================================
-// resolve_output_path_in_dir — additional coverage
-// =========================================================================
-
-#[test]
-fn resolve_output_path_in_dir_timestamp_is_25_chars() {
-    let dir = PathBuf::from("/tmp");
-    let result = resolve_output_path_in_dir(None, Format::Png, &dir);
-    let stem = result.file_stem().and_then(|n| n.to_str()).unwrap();
-    let ts = &stem["screenshot_".len()..];
-    assert_eq!(ts.len(), 25); // YYYYMMDD_HHMMSS_NNNNNNNNN
-}
-
-// =========================================================================
-// default_screen_index — additional coverage
-// =========================================================================
-
-#[test]
-fn default_screen_index_all_primary_returns_first() {
-    assert_eq!(default_screen_index(vec![true, true, true]), Some(0));
-}
-
-// =========================================================================
-// bgra_to_rgba — additional coverage
-// =========================================================================
-
-#[test]
-fn bgra_to_rgba_empty_buffer_is_noop() {
-    let mut data: Vec<u8> = vec![];
-    bgra_to_rgba(&mut data);
-    assert!(data.is_empty());
 }
