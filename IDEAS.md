@@ -11,10 +11,10 @@
 - [ ] ☁️ **Upload to cloud** — quick share via Imgur, S3, or custom server; copy link to clipboard
 - [ ] 📌 **Pin screenshot** — keep screenshot floating on top of all windows (always-on-top overlay)
 - [ ] 🕐 **History panel** — show recent screenshots in tray menu or separate window
-- [ ] ⌨️ **Custom hotkeys** — let user rebind PrintScreen and Ctrl+Shift+R via settings
+- [ ] ⌨️ **Custom hotkeys** — let users rebind capture and recording shortcuts via settings ([#9](https://github.com/stden/RustShot/issues/9))
 - [ ] ⚙️ **Expanded settings system** — make settings fully applied at runtime, cover hotkeys/startup behavior, and eventually add a native settings UI
 - [ ] 🪟 **Active window capture improvements** — refine the existing Alt+PrintScreen and tray capture flow with better UX, naming, and cross-platform support
-- [ ] 🐧 **Wayland support** — Linux Wayland screenshot capture (currently X11 only)
+- [ ] 🐧 **Wayland support** — Linux Wayland screenshot capture through desktop portals ([#10](https://github.com/stden/RustShot/issues/10))
 - [ ] 🍎 **macOS tray and hotkeys** — bring tray icon and global hotkeys to macOS
 - [ ] 🐧 **Linux tray and hotkeys** — bring tray icon and global hotkeys to Linux
 - [ ] 🔔 **Notification on capture** — show system toast/notification after screenshot or recording is saved
@@ -33,23 +33,24 @@
 
 ## 🚀 Performance
 
-- [ ] 📊 **Benchmark suite** — add `criterion` benchmarks for capture latency, BGRA conversion, overlay render
-- [ ] 🎯 **Target: capture < 100ms** — from hotkey press to clipboard
+- [x] 📊 **Benchmark suite** — Criterion covers capture, conversion, selection, recording, settings, CLI, and tray hot paths
+- [ ] 🎯 **Target: capture < 100ms** — measure hotkey-to-clipboard p50/p95 latency ([#6](https://github.com/stden/RustShot/issues/6))
 - [ ] 🎯 **Target: overlay 60fps** — selection overlay render during drag
 - [ ] 🎯 **Target: recording < 5% CPU** — 30fps recording CPU overhead
 - [ ] 🎯 **Target: startup < 500ms** — time to tray icon visible
 - [ ] 🎯 **Target: memory < 100MB** — for single 1920×1080 capture
-- [ ] 🔍 **Profile high-DPI** — selection overlay may be slow on 4K displays; needs profiling
+- [ ] 🔍 **Profile high-DPI** — add explicit 4K overlay redraw and memory budgets ([#7](https://github.com/stden/RustShot/issues/7))
 
 ## 🧪 Testing
 
 - [ ] 🧬 **Mutation testing** — use `cargo-mutants` to find untested logic
 - [ ] 📋 **Clipboard tests** — TC-CLIP-001 through TC-CLIP-006 (mock-based clipboard verification)
 - [ ] ⏱️ **Frame timing tests** — TC-FPS-001 through TC-FPS-004 (verify frame timestamp monotonicity)
-- [ ] 🪟 **Integration tests on Windows CI** — TC-SESSION-003, TC-SESSION-004 (real recording lifecycle)
+- [ ] 🪟 **Integration tests on Windows CI** — exercise the real recording lifecycle ([#8](https://github.com/stden/RustShot/issues/8))
 - [ ] 🔀 **Fuzzing** — fuzz BGRA conversion and region selection with random inputs
-- [ ] 📈 **Coverage tracking** — add `cargo-tarpaulin` or `llvm-cov` to CI; target >90% on testable logic
-- [ ] 🔄 **Property-based tests** — use `proptest` for BGRA↔RGBA roundtrip, region construction invariants
+- [x] 📈 **Coverage tracking** — Linux CI runs `cargo-tarpaulin` with a 40% coverage floor
+- [ ] 📈 **Target: coverage > 90%** — raise coverage for testable non-GUI logic
+- [x] 🔄 **Property-based tests** — `proptest` covers recording pixels, region invariants, and settings JSON
 
 ## 📦 Distribution
 
@@ -62,8 +63,8 @@
 
 ## ⚙️ CI/CD
 
-- [ ] 🚀 **Release pipeline** — GitHub Actions workflow to build and upload binaries on tag push
+- [x] 🚀 **Release pipeline** — tagged builds publish the Windows portable binary and installer
 - [ ] 📊 **Code coverage in CI** — publish coverage reports to Codecov or Coveralls
-- [ ] 📉 **Benchmark regression** — run benchmarks in CI, fail on >10% regression
+- [ ] 📉 **Benchmark regression** — compare PRs with `main` and fail confirmed regressions above 10% ([#5](https://github.com/stden/RustShot/issues/5))
 - [ ] 🌍 **Cross-compilation** — build Linux/macOS/Windows binaries from one CI run
 - [ ] 🌙 **Nightly builds** — automated nightly builds from main branch

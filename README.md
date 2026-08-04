@@ -245,6 +245,26 @@ cargo clippy   # 🔍 Lint it good
 cargo bench    # 🏎️ How fast is it?
 ```
 
+### ⚡ Performance benchmarks
+
+The Criterion suite includes the hot paths for capture, selection, recording,
+settings, CLI routing, and tray rendering. To measure the selection overlay's
+1920×1080 cursor redraw path in isolation:
+
+```bash
+cargo bench --bench benchmarks -- overlay_redraw/1920x1080_crosshair
+```
+
+On the reference Windows development machine, caching the immutable screenshot
+background reduced this redraw from about **2.70 ms to 0.30 ms** (about **89%**,
+or **9× faster**). Absolute timings depend on the machine, so use Criterion's
+before/after comparison when evaluating a change.
+
+The cache stores one `u32` pixel buffer for the selection session: about 8 MiB
+at 1920×1080 and 32 MiB at 3840×2160. It is rebuilt only when the overlay or
+captured image dimensions change; cursor and drag updates copy the cached frame
+and paint only the affected crosshair or border spans.
+
 ### 📐 The TDD way of life
 
 ```text
