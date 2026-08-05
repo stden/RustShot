@@ -5,6 +5,28 @@ use rustshot::selection;
 use std::hint::black_box;
 
 // ---------------------------------------------------------------------------
+// selection overlay redraw
+// ---------------------------------------------------------------------------
+
+pub(crate) fn bench_overlay_redraw(c: &mut Criterion) {
+    const WIDTH: u32 = 1920;
+    const HEIGHT: u32 = 1080;
+    let screenshot = crate::patterned_bytes(WIDTH as usize * HEIGHT as usize * 4);
+    let mut renderer =
+        selection::OverlayRedrawBenchmark::new(screenshot, (WIDTH, HEIGHT), (WIDTH, HEIGHT));
+    let mut group = c.benchmark_group("overlay_redraw");
+
+    group.bench_function("1920x1080_crosshair", |b| {
+        b.iter(|| {
+            renderer.redraw_crosshair(black_box((960, 540)));
+            black_box(renderer.output());
+        });
+    });
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // selection::build_region_from_drag
 // ---------------------------------------------------------------------------
 

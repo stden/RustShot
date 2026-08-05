@@ -18,6 +18,7 @@ The hard-won, non-obvious constraints are documented at the code they constrain:
 | `selection.rs::build_physical_screen_layouts` | Why there is **no global scale factor**; primary anchored at physical (0,0), neighbours inferred iteratively. |
 | `selection.rs::resolve_recording_selection` | Why a recording region must fit inside **one** monitor (no compositing path). |
 | `selection.rs::capture_screen_at_cursor` | Why the overlay covers only the cursor's monitor, and why the spanning-desktop overlay was abandoned. |
+| `selection/overlay.rs::OverlayPixelMapCache` | Why an immutable converted screenshot is cached for cursor redraws, when the cache is invalidated, and the one-frame memory tradeoff. |
 | `capture.rs` (capture → `from_raw`) | The forced `image` 0.24/0.25 bridge via `screenshots` 0.8, and its per-capture copy cost. |
 | `capture.rs::capture_active_window_platform` | Why `GetDC(None)` is deliberate (null HWND ≠ `Some(HWND::default())`). |
 | `record.rs` (recording hot loop) | Why the BGRA buffer is preallocated and capture is region-scoped (per-frame allocation was the lag source). |

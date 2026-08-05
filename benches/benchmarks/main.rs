@@ -75,6 +75,7 @@ criterion_group!(
     cli::bench_write_error_line,
     cli::bench_child_process_is_running,
     // selection
+    selection::bench_overlay_redraw,
     selection::bench_build_region_from_drag,
     selection::bench_virtual_desktop_scale_factor,
     selection::bench_logical_to_physical,

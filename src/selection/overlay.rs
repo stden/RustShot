@@ -41,6 +41,7 @@ pub(super) struct OverlayPixelMapCache {
     key: Option<((u32, u32), (u32, u32))>,
     pub(super) x: Vec<u32>,
     pub(super) y: Vec<u32>,
+    pub(super) background: Vec<u32>,
 }
 
 impl OverlayPixelMapCache {
@@ -57,12 +58,70 @@ impl OverlayPixelMapCache {
         self.key = Some(key);
         true
     }
+
+    /// Refresh both coordinate maps and the immutable screenshot background.
+    ///
+    /// The screenshot does not change during one selection session, so the
+    /// converted softbuffer pixels only need rebuilding after a resize.
+    pub(super) fn update_frame(
+        &mut self,
+        overlay_size: (u32, u32),
+        image_size: (u32, u32),
+        screenshot: &[u8],
+    ) -> bool {
+        let mappings_changed = self.update(overlay_size, image_size);
+        let expected_background_len = self.x.len().checked_mul(self.y.len());
+        if !mappings_changed && expected_background_len == Some(self.background.len()) {
+            return false;
+        }
+
+        self.background = build_overlay_background(screenshot, image_size.0, &self.x, &self.y);
+        true
+    }
 }
 
 fn pixel_axis_map(overlay_extent: u32, image_extent: u32) -> Vec<u32> {
     (0..overlay_extent)
         .filter_map(|pixel| map_overlay_pixel_to_image(pixel, overlay_extent, image_extent))
         .collect()
+}
+
+fn build_overlay_background(
+    screenshot: &[u8],
+    image_width: u32,
+    x_map: &[u32],
+    y_map: &[u32],
+) -> Vec<u32> {
+    let Some(output_len) = x_map.len().checked_mul(y_map.len()) else {
+        return Vec::new();
+    };
+    let mut background = vec![0; output_len];
+    let image_width = image_width as usize;
+    if image_width == 0 {
+        return background;
+    }
+
+    for (output_y, &source_y) in y_map.iter().enumerate() {
+        for (output_x, &source_x) in x_map.iter().enumerate() {
+            let Some(source_index) = (source_y as usize)
+                .checked_mul(image_width)
+                .and_then(|row| row.checked_add(source_x as usize))
+                .and_then(|pixel| pixel.checked_mul(4))
+            else {
+                continue;
+            };
+            let Some(pixel) = screenshot
+                .get(source_index..)
+                .and_then(|remaining| remaining.get(..3))
+            else {
+                continue;
+            };
+            background[output_y * x_map.len() + output_x] =
+                (u32::from(pixel[0]) << 16) | (u32::from(pixel[1]) << 8) | u32::from(pixel[2]);
+        }
+    }
+
+    background
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,6 +175,7 @@ impl OverlayDecoration {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn color_at(self, x: usize, y: usize) -> Option<(u32, u32, u32)> {
         match self {
             Self::None => None,
@@ -137,6 +197,118 @@ impl OverlayDecoration {
             }
         }
     }
+}
+
+fn fill_overlay_rectangle(
+    frame: &mut [u32],
+    frame_size: (usize, usize),
+    x_bounds: (usize, usize),
+    y_bounds: (usize, usize),
+    color: u32,
+) {
+    let (width, height) = frame_size;
+    let (x_start, x_end) = x_bounds;
+    let (y_start, y_end) = y_bounds;
+    if width == 0
+        || height == 0
+        || x_start > x_end
+        || y_start > y_end
+        || x_start >= width
+        || y_start >= height
+    {
+        return;
+    }
+
+    let x_end = x_end.min(width - 1);
+    let y_end = y_end.min(height - 1);
+    for y in y_start..=y_end {
+        let row_start = y * width;
+        frame[row_start + x_start..=row_start + x_end].fill(color);
+    }
+}
+
+fn paint_overlay_decoration(
+    frame: &mut [u32],
+    width: usize,
+    height: usize,
+    decoration: OverlayDecoration,
+) {
+    const CROSSHAIR_COLOR: u32 = 0x00ff_0000;
+    const BORDER_COLOR: u32 = 0x0000_c8ff;
+
+    match decoration {
+        OverlayDecoration::None => {}
+        OverlayDecoration::Crosshair { x, y } => {
+            fill_overlay_rectangle(
+                frame,
+                (width, height),
+                (0, width.saturating_sub(1)),
+                (y, y),
+                CROSSHAIR_COLOR,
+            );
+            fill_overlay_rectangle(
+                frame,
+                (width, height),
+                (x, x),
+                (0, height.saturating_sub(1)),
+                CROSSHAIR_COLOR,
+            );
+        }
+        OverlayDecoration::Border { x1, y1, x2, y2 } if x1 <= x2 && y1 <= y2 => {
+            let outer_x1 = x1.saturating_sub(1);
+            let outer_x2 = x2.saturating_add(1);
+            let outer_y1 = y1.saturating_sub(1);
+            let outer_y2 = y2.saturating_add(1);
+
+            fill_overlay_rectangle(
+                frame,
+                (width, height),
+                (outer_x1, outer_x2),
+                (outer_y1, y1.saturating_add(1)),
+                BORDER_COLOR,
+            );
+            fill_overlay_rectangle(
+                frame,
+                (width, height),
+                (outer_x1, outer_x2),
+                (y2.saturating_sub(1), outer_y2),
+                BORDER_COLOR,
+            );
+            fill_overlay_rectangle(
+                frame,
+                (width, height),
+                (outer_x1, x1.saturating_add(1)),
+                (outer_y1, outer_y2),
+                BORDER_COLOR,
+            );
+            fill_overlay_rectangle(
+                frame,
+                (width, height),
+                (x2.saturating_sub(1), outer_x2),
+                (outer_y1, outer_y2),
+                BORDER_COLOR,
+            );
+        }
+        OverlayDecoration::Border { .. } => {}
+    }
+}
+
+pub(super) fn compose_overlay_frame(
+    background: &[u32],
+    output: &mut [u32],
+    width: usize,
+    height: usize,
+    decoration: OverlayDecoration,
+) {
+    let Some(frame_len) = width.checked_mul(height) else {
+        return;
+    };
+    if background.len() < frame_len || output.len() < frame_len {
+        return;
+    }
+
+    output[..frame_len].copy_from_slice(&background[..frame_len]);
+    paint_overlay_decoration(&mut output[..frame_len], width, height, decoration);
 }
 
 /// Winit application handler for the fullscreen selection overlay.
@@ -192,9 +364,10 @@ impl SelectionApp {
         let Some(actual) = self.window.as_ref().map(|window| window.inner_size()) else {
             return;
         };
-        self.pixel_map.update(
+        self.pixel_map.update_frame(
             (actual.width, actual.height),
             (self.screen_width, self.screen_height),
+            &self.screenshot,
         );
 
         let Some(surface) = &mut self.surface else {
@@ -207,29 +380,15 @@ impl SelectionApp {
         // Use actual window size for the buffer; screenshot may differ due to DPI
         let buf_w = actual.width as usize;
         let buf_h = actual.height as usize;
-        let src_w = self.screen_width as usize;
         let decoration = OverlayDecoration::new(self.start_pos, self.current_pos, buf_w, buf_h);
 
-        for (y, &src_y) in self.pixel_map.y.iter().take(buf_h).enumerate() {
-            for (x, &src_x) in self.pixel_map.x.iter().take(buf_w).enumerate() {
-                let src_idx = (src_y as usize * src_w + src_x as usize) * 4;
-                let dst_idx = y * buf_w + x;
-
-                if src_idx + 3 <= self.screenshot.len() && dst_idx < buffer.len() {
-                    let mut r = self.screenshot[src_idx] as u32;
-                    let mut g = self.screenshot[src_idx + 1] as u32;
-                    let mut b = self.screenshot[src_idx + 2] as u32;
-
-                    if let Some((overlay_r, overlay_g, overlay_b)) = decoration.color_at(x, y) {
-                        r = overlay_r;
-                        g = overlay_g;
-                        b = overlay_b;
-                    }
-
-                    buffer[dst_idx] = (r << 16) | (g << 8) | b;
-                }
-            }
-        }
+        compose_overlay_frame(
+            &self.pixel_map.background,
+            &mut buffer,
+            buf_w,
+            buf_h,
+            decoration,
+        );
 
         let _ = buffer.present();
     }

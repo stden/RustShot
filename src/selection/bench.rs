@@ -269,3 +269,51 @@ where
             .collect()
     })
 }
+
+/// Stateful selection-overlay redraw fixture used by Criterion.
+#[doc(hidden)]
+pub struct OverlayRedrawBenchmark {
+    overlay_width: usize,
+    overlay_height: usize,
+    pixel_map: overlay::OverlayPixelMapCache,
+    output: Vec<u32>,
+}
+
+impl OverlayRedrawBenchmark {
+    #[doc(hidden)]
+    pub fn new(screenshot: Vec<u8>, image_size: (u32, u32), overlay_size: (u32, u32)) -> Self {
+        let mut pixel_map = overlay::OverlayPixelMapCache::default();
+        pixel_map.update_frame(overlay_size, image_size, &screenshot);
+        let output_len = (overlay_size.0 as usize)
+            .checked_mul(overlay_size.1 as usize)
+            .unwrap_or(0);
+        Self {
+            overlay_width: overlay_size.0 as usize,
+            overlay_height: overlay_size.1 as usize,
+            pixel_map,
+            output: vec![0; output_len],
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn redraw_crosshair(&mut self, position: (i32, i32)) {
+        let decoration = overlay::OverlayDecoration::new(
+            None,
+            Some(position),
+            self.overlay_width,
+            self.overlay_height,
+        );
+        overlay::compose_overlay_frame(
+            &self.pixel_map.background,
+            &mut self.output,
+            self.overlay_width,
+            self.overlay_height,
+            decoration,
+        );
+    }
+
+    #[doc(hidden)]
+    pub fn output(&self) -> &[u32] {
+        &self.output
+    }
+}

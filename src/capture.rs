@@ -398,9 +398,11 @@ pub fn capture_active_window_image() -> Result<image::RgbaImage, String> {
 /// The operation is in-place and allocation-free, which keeps the hot path
 /// cheap for full-screen captures.
 ///
-/// Possible improvements:
-/// - Use SIMD or wider chunking if profiling ever shows this channel swap to be
-///   a measurable bottleneck on large monitors.
+/// The x86/x86-64 implementation uses AVX2 when the CPU supports it and falls
+/// back to the portable scalar loop everywhere else. The runtime feature check
+/// keeps the binary compatible with older processors.
+///
+/// Possible improvement:
 /// - Validate producer pixel format up front if future capture backends can
 ///   return layouts other than BGRA.
 ///
@@ -415,9 +417,56 @@ pub fn capture_active_window_image() -> Result<image::RgbaImage, String> {
 /// ```
 #[allow(dead_code)]
 pub fn bgra_to_rgba(pixels: &mut [u8]) {
+    let complete_len = pixels.len() / 4 * 4;
+    let complete_pixels = &mut pixels[..complete_len];
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 support was checked at runtime. The helper uses
+        // unaligned accesses and stays within the complete-pixel prefix.
+        unsafe { bgra_to_rgba_avx2(complete_pixels) };
+        return;
+    }
+
+    bgra_to_rgba_scalar(complete_pixels);
+}
+
+#[inline]
+fn bgra_to_rgba_scalar(pixels: &mut [u8]) {
     for chunk in pixels.as_chunks_mut::<4>().0 {
         chunk.swap(0, 2); // swap B and R
     }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn bgra_to_rgba_avx2(pixels: &mut [u8]) {
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::{
+        _mm256_loadu_si256, _mm256_setr_epi8, _mm256_shuffle_epi8, _mm256_storeu_si256,
+    };
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::{
+        _mm256_loadu_si256, _mm256_setr_epi8, _mm256_shuffle_epi8, _mm256_storeu_si256,
+    };
+
+    let shuffle = _mm256_setr_epi8(
+        2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15, 2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11,
+        14, 13, 12, 15,
+    );
+    let vectorized_len = pixels.len() / 32 * 32;
+    let mut offset = 0;
+    while offset < vectorized_len {
+        // SAFETY: offset is below the vectorized length, so at least 32 bytes
+        // remain. The load/store intrinsics explicitly permit unaligned data.
+        let pointer = unsafe { pixels.as_mut_ptr().add(offset).cast() };
+        let value = unsafe { _mm256_loadu_si256(pointer) };
+        let value = _mm256_shuffle_epi8(value, shuffle);
+        unsafe { _mm256_storeu_si256(pointer, value) };
+        offset += 32;
+    }
+
+    bgra_to_rgba_scalar(&mut pixels[vectorized_len..]);
 }
 
 /// List all available screens as human-readable strings (e.g. `"Screen 0: 1920x1080"`).

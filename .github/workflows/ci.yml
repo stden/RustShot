@@ -100,7 +100,9 @@ jobs:
       - run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -noreset" cargo test
 
       - name: Install tarpaulin
-        run: cargo install cargo-tarpaulin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin
 
       # --engine llvm: the default ptrace engine builds with -C link-dead-code,
       # which force-instantiates a generic cast path in `pulp` (via screenshots
@@ -109,3 +111,61 @@ jobs:
       # generics, so `pulp` compiles.
       - name: Generate coverage
         run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -noreset" cargo tarpaulin --engine llvm --out xml --skip-clean --fail-under 40
+
+  benchmark:
+    name: Performance benchmarks
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure benchmark target
+        shell: pwsh
+        run: Add-Content -LiteralPath $env:GITHUB_ENV -Value "CARGO_TARGET_DIR=$env:RUNNER_TEMP\rustshot-benchmark-target"
+
+      - name: Test benchmark guard
+        run: pwsh -NoProfile -File scripts/benchmark_guard.ps1 -SelfTest
+
+      - name: Benchmark base branch
+        shell: pwsh
+        run: |
+          $baseWorktree = Join-Path $env:RUNNER_TEMP "rustshot-benchmark-base"
+          git worktree add --detach $baseWorktree "${{ github.event.pull_request.base.sha }}"
+          if (Test-Path (Join-Path $baseWorktree "benches\performance_gate.rs")) {
+            Push-Location $baseWorktree
+            try {
+              cargo bench --locked --bench performance_gate -- --save-baseline base
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            } finally {
+              Pop-Location
+            }
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value "BENCHMARK_BASELINE_AVAILABLE=true"
+          } else {
+            Write-Host "The base branch has no performance gate yet; absolute budgets will apply."
+          }
+
+      - name: Benchmark pull request
+        shell: pwsh
+        run: |
+          if ($env:BENCHMARK_BASELINE_AVAILABLE -eq "true") {
+            cargo bench --locked --bench performance_gate -- --baseline base
+          } else {
+            cargo bench --locked --bench performance_gate
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Enforce performance budgets
+        run: pwsh -NoProfile -File scripts/benchmark_guard.ps1 -CriterionRoot "$env:CARGO_TARGET_DIR\criterion" -RegressionThreshold 0.10
+
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-benchmark-report
+          path: ${{ runner.temp }}\rustshot-benchmark-target\criterion\performance_gate
+          if-no-files-found: warn
+          retention-days: 14

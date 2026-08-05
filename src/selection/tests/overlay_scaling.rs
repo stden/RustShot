@@ -37,6 +37,62 @@ fn overlay_pixel_map_cache_reuses_mappings_until_dimensions_change() {
 }
 
 #[test]
+fn overlay_frame_cache_reuses_rendered_background_until_dimensions_change() {
+    let screenshot = vec![
+        255, 0, 0, 255, 0, 255, 0, 255, // red, green
+        0, 0, 255, 255, 255, 255, 255, 255, // blue, white
+    ];
+    let mut mapping_only_cache = OverlayPixelMapCache::default();
+    assert!(mapping_only_cache.update((2, 2), (2, 2)));
+    assert!(mapping_only_cache.update_frame((2, 2), (2, 2), &screenshot));
+
+    let mut cache = OverlayPixelMapCache::default();
+
+    assert!(cache.update_frame((2, 2), (2, 2), &screenshot));
+    assert_eq!(
+        cache.background,
+        [0x00ff_0000, 0x0000_ff00, 0x0000_00ff, 0x00ff_ffff]
+    );
+    let background_ptr = cache.background.as_ptr();
+
+    assert!(!cache.update_frame((2, 2), (2, 2), &screenshot));
+    assert_eq!(cache.background.as_ptr(), background_ptr);
+
+    assert!(cache.update_frame((1, 2), (2, 2), &screenshot));
+    assert_eq!(cache.background, [0x0000_ff00, 0x00ff_ffff]);
+}
+
+#[test]
+fn composed_overlay_decorations_match_the_pointwise_reference() {
+    let width = 8;
+    let height = 6;
+    let background: Vec<u32> = (0..width * height).map(|pixel| pixel as u32).collect();
+    let decorations = [
+        OverlayDecoration::None,
+        OverlayDecoration::new(None, Some((3, 2)), width, height),
+        OverlayDecoration::new(Some((1, 1)), Some((6, 4)), width, height),
+        OverlayDecoration::new(Some((0, 0)), Some((7, 5)), width, height),
+        OverlayDecoration::new(Some((3, 2)), Some((3, 2)), width, height),
+    ];
+
+    for decoration in decorations {
+        let mut actual = vec![u32::MAX; background.len()];
+        compose_overlay_frame(&background, &mut actual, width, height, decoration);
+
+        let mut expected = background.clone();
+        for y in 0..height {
+            for x in 0..width {
+                if let Some((red, green, blue)) = decoration.color_at(x, y) {
+                    expected[y * width + x] = (red << 16) | (green << 8) | blue;
+                }
+            }
+        }
+
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
 fn overlay_decoration_computes_border_and_crosshair_once() {
     let border = OverlayDecoration::new(Some((10, 20)), Some((30, 40)), 100, 100);
     assert_eq!(border.color_at(10, 20), Some((0, 200, 255)));

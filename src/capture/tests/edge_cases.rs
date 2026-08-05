@@ -31,6 +31,29 @@ fn bgra_to_rgba_large_image_all_swapped() {
     }
 }
 
+#[test]
+fn bgra_to_rgba_matches_scalar_reference_for_unaligned_and_trailing_slices() {
+    for offset in 0..32 {
+        for len in 0..=129 {
+            let mut storage: Vec<u8> = (0..offset + len + 8)
+                .map(|index| ((index * 37 + 11) & 0xff) as u8)
+                .collect();
+            let pixels = &mut storage[offset..offset + len];
+            let mut expected = pixels.to_vec();
+            for pixel in expected.as_chunks_mut::<4>().0 {
+                pixel.swap(0, 2);
+            }
+
+            bgra_to_rgba(pixels);
+
+            assert_eq!(
+                pixels, expected,
+                "conversion differed for byte offset {offset} and length {len}"
+            );
+        }
+    }
+}
+
 // --- ensure_parent_directory error path ---
 
 #[test]

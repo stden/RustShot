@@ -17,38 +17,26 @@ pub(crate) fn bench_bgra_to_rgba(c: &mut Criterion) {
     let mut group = c.benchmark_group("bgra_to_rgba");
 
     // 4 pixels (16 bytes)
+    let mut four_pixels: Vec<u8> = (0..16).collect();
     group.bench_function("4px", |b| {
-        let src: Vec<u8> = (0..16).collect();
-        b.iter(|| {
-            let mut buf = src.clone();
-            capture::bgra_to_rgba(black_box(&mut buf));
-        });
+        b.iter(|| capture::bgra_to_rgba(black_box(&mut four_pixels)));
     });
 
     // 1K pixels (4 096 bytes)
+    let mut one_k_pixels: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
     group.bench_function("1K_px", |b| {
-        let src: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
-        b.iter(|| {
-            let mut buf = src.clone();
-            capture::bgra_to_rgba(black_box(&mut buf));
-        });
+        b.iter(|| capture::bgra_to_rgba(black_box(&mut one_k_pixels)));
     });
 
     // 1M pixels (4 194 304 bytes) — roughly a 1024x1024 image
+    let mut one_m_pixels = patterned_bytes(4_194_304);
     group.bench_function("1M_px", |b| {
-        let src = patterned_bytes(4_194_304);
-        b.iter(|| {
-            let mut buf = src.clone();
-            capture::bgra_to_rgba(black_box(&mut buf));
-        });
+        b.iter(|| capture::bgra_to_rgba(black_box(&mut one_m_pixels)));
     });
 
+    let mut frame_4k = patterned_bytes(3840 * 2160 * 4);
     group.bench_function("4k_frame", |b| {
-        let src = patterned_bytes(3840 * 2160 * 4);
-        b.iter(|| {
-            let mut buf = src.clone();
-            capture::bgra_to_rgba(black_box(&mut buf));
-        });
+        b.iter(|| capture::bgra_to_rgba(black_box(&mut frame_4k)));
     });
 
     group.finish();
