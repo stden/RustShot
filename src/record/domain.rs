@@ -4,47 +4,50 @@ use super::{checked_rgba_len, checked_round_to_even};
 use crate::selection::Region;
 use std::fmt;
 
-/// An even, non-zero H.264 output width.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Width(u32);
+/// Declare an even, non-zero H.264 output dimension.
+///
+/// The two axes differ only by name and by the noun their rejection message
+/// uses, so they are declared rather than written twice. That keeps the zero
+/// check and the round-to-even rule in one place: the failure this shape guards
+/// against is one axis quietly losing the rounding H.264 requires while the
+/// other keeps it.
+macro_rules! even_dimension {
+    ($(#[$attr:meta])* $name:ident, $noun:literal) => {
+        $(#[$attr])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+        pub(crate) struct $name(u32);
 
-impl TryFrom<u32> for Width {
-    type Error = String;
+        impl TryFrom<u32> for $name {
+            type Error = String;
 
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        if value == 0 {
-            return Err("Recording width must be greater than 0".to_string());
+            fn try_from(value: u32) -> Result<Self, Self::Error> {
+                if value == 0 {
+                    return Err(
+                        concat!("Recording ", $noun, " must be greater than 0").to_string()
+                    );
+                }
+                Ok(Self(checked_round_to_even(value)?))
+            }
         }
-        Ok(Self(checked_round_to_even(value)?))
-    }
-}
 
-impl Width {
-    pub(crate) const fn get(self) -> u32 {
-        self.0
-    }
-}
-
-/// An even, non-zero H.264 output height.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Height(u32);
-
-impl TryFrom<u32> for Height {
-    type Error = String;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        if value == 0 {
-            return Err("Recording height must be greater than 0".to_string());
+        impl $name {
+            pub(crate) const fn get(self) -> u32 {
+                self.0
+            }
         }
-        Ok(Self(checked_round_to_even(value)?))
-    }
+    };
 }
 
-impl Height {
-    pub(crate) const fn get(self) -> u32 {
-        self.0
-    }
-}
+even_dimension!(
+    /// An even, non-zero H.264 output width.
+    Width,
+    "width"
+);
+even_dimension!(
+    /// An even, non-zero H.264 output height.
+    Height,
+    "height"
+);
 
 /// Even, non-zero H.264 output dimensions with a checked RGBA buffer length.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,25 +130,34 @@ impl fmt::Display for FrameIndex {
     }
 }
 
-/// A Media Foundation timestamp measured in 100-nanosecond units.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct HnsTimestamp(i64);
+/// Declare a Media Foundation 100-nanosecond quantity.
+///
+/// A timestamp and a duration are both bare `i64` HNS counts, and passing one
+/// where the other belongs produces a video with wrong frame timing and no error
+/// anywhere. Separate types make that a compile error; declaring them keeps the
+/// pair symmetric.
+macro_rules! hns_quantity {
+    ($(#[$attr:meta])* $name:ident) => {
+        $(#[$attr])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(crate) struct $name(i64);
 
-impl HnsTimestamp {
-    pub(crate) const fn get(self) -> i64 {
-        self.0
-    }
+        impl $name {
+            pub(crate) const fn get(self) -> i64 {
+                self.0
+            }
+        }
+    };
 }
 
-/// A Media Foundation duration measured in 100-nanosecond units.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct HnsDuration(i64);
-
-impl HnsDuration {
-    pub(crate) const fn get(self) -> i64 {
-        self.0
-    }
-}
+hns_quantity!(
+    /// A Media Foundation timestamp measured in 100-nanosecond units.
+    HnsTimestamp
+);
+hns_quantity!(
+    /// A Media Foundation duration measured in 100-nanosecond units.
+    HnsDuration
+);
 
 /// Timestamp and duration for one encoded frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
