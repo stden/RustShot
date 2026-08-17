@@ -271,12 +271,17 @@ where
 }
 
 /// Stateful selection-overlay redraw fixture used by Criterion.
+///
+/// Mirrors `SelectionApp::draw`: [`Self::compose_full_frame`] is the first-frame
+/// path (softbuffer age 0), and [`Self::redraw_crosshair`] is the steady state
+/// every cursor move takes afterwards (age 1, incremental repaint).
 #[doc(hidden)]
 pub struct OverlayRedrawBenchmark {
     overlay_width: usize,
     overlay_height: usize,
     pixel_map: overlay::OverlayPixelMapCache,
     output: Vec<u32>,
+    last_decoration: overlay::OverlayDecoration,
 }
 
 impl OverlayRedrawBenchmark {
@@ -292,17 +297,38 @@ impl OverlayRedrawBenchmark {
             overlay_height: overlay_size.1 as usize,
             pixel_map,
             output: vec![0; output_len],
+            last_decoration: overlay::OverlayDecoration::None,
         }
     }
 
-    #[doc(hidden)]
-    pub fn redraw_crosshair(&mut self, position: (i32, i32)) {
-        let decoration = overlay::OverlayDecoration::new(
+    fn crosshair(&self, position: (i32, i32)) -> overlay::OverlayDecoration {
+        overlay::OverlayDecoration::new(
             None,
             Some(position),
             self.overlay_width,
             self.overlay_height,
+        )
+    }
+
+    /// Steady-state cursor-move redraw: repaint only the changed pixels.
+    #[doc(hidden)]
+    pub fn redraw_crosshair(&mut self, position: (i32, i32)) {
+        let decoration = self.crosshair(position);
+        overlay::redraw_overlay_frame(
+            &self.pixel_map.background,
+            &mut self.output,
+            self.overlay_width,
+            self.overlay_height,
+            self.last_decoration,
+            decoration,
         );
+        self.last_decoration = decoration;
+    }
+
+    /// First-frame path: rebuild the whole frame from the cached background.
+    #[doc(hidden)]
+    pub fn compose_full_frame(&mut self, position: (i32, i32)) {
+        let decoration = self.crosshair(position);
         overlay::compose_overlay_frame(
             &self.pixel_map.background,
             &mut self.output,
@@ -310,6 +336,7 @@ impl OverlayRedrawBenchmark {
             self.overlay_height,
             decoration,
         );
+        self.last_decoration = decoration;
     }
 
     #[doc(hidden)]

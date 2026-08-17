@@ -199,13 +199,56 @@ impl OverlayDecoration {
     }
 }
 
-fn fill_overlay_rectangle(
-    frame: &mut [u32],
+/// A run of overlay pixels, already clamped into the frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct OverlayRect {
+    pub(super) x: usize,
+    pub(super) y: usize,
+    pub(super) width: usize,
+    pub(super) height: usize,
+}
+
+/// The rectangles covered by one or two decorations, without heap allocation.
+///
+/// A crosshair paints two bars and a selection border four, so an incremental
+/// redraw — restore the previous decoration, paint the current one — never
+/// needs more than eight.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct OverlayDamage {
+    rects: [OverlayRect; Self::CAPACITY],
+    len: usize,
+}
+
+impl OverlayDamage {
+    const CAPACITY: usize = 8;
+
+    fn push(&mut self, rect: Option<OverlayRect>) {
+        if let Some(rect) = rect {
+            if self.len < Self::CAPACITY {
+                self.rects[self.len] = rect;
+                self.len += 1;
+            }
+        }
+    }
+
+    fn extend(&mut self, other: &Self) {
+        for rect in other.as_slice() {
+            self.push(Some(*rect));
+        }
+    }
+
+    pub(super) fn as_slice(&self) -> &[OverlayRect] {
+        &self.rects[..self.len]
+    }
+}
+
+/// Clamp a pair of inclusive pixel ranges into the frame, or `None` when the
+/// rectangle lies entirely outside it.
+fn clamped_overlay_rect(
     frame_size: (usize, usize),
     x_bounds: (usize, usize),
     y_bounds: (usize, usize),
-    color: u32,
-) {
+) -> Option<OverlayRect> {
     let (width, height) = frame_size;
     let (x_start, x_end) = x_bounds;
     let (y_start, y_end) = y_bounds;
@@ -216,14 +259,103 @@ fn fill_overlay_rectangle(
         || x_start >= width
         || y_start >= height
     {
-        return;
+        return None;
     }
 
     let x_end = x_end.min(width - 1);
     let y_end = y_end.min(height - 1);
-    for y in y_start..=y_end {
-        let row_start = y * width;
-        frame[row_start + x_start..=row_start + x_end].fill(color);
+    Some(OverlayRect {
+        x: x_start,
+        y: y_start,
+        width: x_end - x_start + 1,
+        height: y_end - y_start + 1,
+    })
+}
+
+/// The rectangles `decoration` paints, clamped into a `width` x `height` frame.
+///
+/// Painting and damage tracking both derive from this one list, so the reported
+/// damage cannot drift out of sync with the pixels actually written.
+fn decoration_rects(decoration: OverlayDecoration, width: usize, height: usize) -> OverlayDamage {
+    let frame = (width, height);
+    let mut damage = OverlayDamage::default();
+
+    match decoration {
+        OverlayDecoration::None => {}
+        OverlayDecoration::Crosshair { x, y } => {
+            damage.push(clamped_overlay_rect(
+                frame,
+                (0, width.saturating_sub(1)),
+                (y, y),
+            ));
+            damage.push(clamped_overlay_rect(
+                frame,
+                (x, x),
+                (0, height.saturating_sub(1)),
+            ));
+        }
+        OverlayDecoration::Border { x1, y1, x2, y2 } if x1 <= x2 && y1 <= y2 => {
+            let outer_x1 = x1.saturating_sub(1);
+            let outer_x2 = x2.saturating_add(1);
+            let outer_y1 = y1.saturating_sub(1);
+            let outer_y2 = y2.saturating_add(1);
+
+            damage.push(clamped_overlay_rect(
+                frame,
+                (outer_x1, outer_x2),
+                (outer_y1, y1.saturating_add(1)),
+            ));
+            damage.push(clamped_overlay_rect(
+                frame,
+                (outer_x1, outer_x2),
+                (y2.saturating_sub(1), outer_y2),
+            ));
+            damage.push(clamped_overlay_rect(
+                frame,
+                (outer_x1, x1.saturating_add(1)),
+                (outer_y1, outer_y2),
+            ));
+            damage.push(clamped_overlay_rect(
+                frame,
+                (x2.saturating_sub(1), outer_x2),
+                (outer_y1, outer_y2),
+            ));
+        }
+        OverlayDecoration::Border { .. } => {}
+    }
+
+    damage
+}
+
+/// The colour a decoration paints, or `None` when it paints nothing.
+fn decoration_color(decoration: OverlayDecoration) -> Option<u32> {
+    const CROSSHAIR_COLOR: u32 = 0x00ff_0000;
+    const BORDER_COLOR: u32 = 0x0000_c8ff;
+
+    match decoration {
+        OverlayDecoration::None => None,
+        OverlayDecoration::Crosshair { .. } => Some(CROSSHAIR_COLOR),
+        OverlayDecoration::Border { x1, y1, x2, y2 } if x1 <= x2 && y1 <= y2 => Some(BORDER_COLOR),
+        OverlayDecoration::Border { .. } => None,
+    }
+}
+
+fn fill_overlay_rect(frame: &mut [u32], frame_width: usize, rect: OverlayRect, color: u32) {
+    for row in rect.y..rect.y + rect.height {
+        let start = row * frame_width + rect.x;
+        frame[start..start + rect.width].fill(color);
+    }
+}
+
+fn restore_overlay_rect(
+    frame: &mut [u32],
+    background: &[u32],
+    frame_width: usize,
+    rect: OverlayRect,
+) {
+    for row in rect.y..rect.y + rect.height {
+        let start = row * frame_width + rect.x;
+        frame[start..start + rect.width].copy_from_slice(&background[start..start + rect.width]);
     }
 }
 
@@ -233,63 +365,11 @@ fn paint_overlay_decoration(
     height: usize,
     decoration: OverlayDecoration,
 ) {
-    const CROSSHAIR_COLOR: u32 = 0x00ff_0000;
-    const BORDER_COLOR: u32 = 0x0000_c8ff;
-
-    match decoration {
-        OverlayDecoration::None => {}
-        OverlayDecoration::Crosshair { x, y } => {
-            fill_overlay_rectangle(
-                frame,
-                (width, height),
-                (0, width.saturating_sub(1)),
-                (y, y),
-                CROSSHAIR_COLOR,
-            );
-            fill_overlay_rectangle(
-                frame,
-                (width, height),
-                (x, x),
-                (0, height.saturating_sub(1)),
-                CROSSHAIR_COLOR,
-            );
-        }
-        OverlayDecoration::Border { x1, y1, x2, y2 } if x1 <= x2 && y1 <= y2 => {
-            let outer_x1 = x1.saturating_sub(1);
-            let outer_x2 = x2.saturating_add(1);
-            let outer_y1 = y1.saturating_sub(1);
-            let outer_y2 = y2.saturating_add(1);
-
-            fill_overlay_rectangle(
-                frame,
-                (width, height),
-                (outer_x1, outer_x2),
-                (outer_y1, y1.saturating_add(1)),
-                BORDER_COLOR,
-            );
-            fill_overlay_rectangle(
-                frame,
-                (width, height),
-                (outer_x1, outer_x2),
-                (y2.saturating_sub(1), outer_y2),
-                BORDER_COLOR,
-            );
-            fill_overlay_rectangle(
-                frame,
-                (width, height),
-                (outer_x1, x1.saturating_add(1)),
-                (outer_y1, outer_y2),
-                BORDER_COLOR,
-            );
-            fill_overlay_rectangle(
-                frame,
-                (width, height),
-                (x2.saturating_sub(1), outer_x2),
-                (outer_y1, outer_y2),
-                BORDER_COLOR,
-            );
-        }
-        OverlayDecoration::Border { .. } => {}
+    let Some(color) = decoration_color(decoration) else {
+        return;
+    };
+    for &rect in decoration_rects(decoration, width, height).as_slice() {
+        fill_overlay_rect(frame, width, rect, color);
     }
 }
 
@@ -309,6 +389,75 @@ pub(super) fn compose_overlay_frame(
 
     output[..frame_len].copy_from_slice(&background[..frame_len]);
     paint_overlay_decoration(&mut output[..frame_len], width, height, decoration);
+}
+
+/// Repaint only the pixels the previous and current decorations cover.
+///
+/// The overlay redraws on every cursor move, but a crosshair or selection
+/// border touches a few thousand of the frame's millions of pixels. Restoring
+/// just the previous decoration's rectangles from the cached background and
+/// painting the new one turns a full-frame copy into a handful of thin row
+/// spans, which is what keeps dragging responsive at 4K.
+///
+/// `output` must still hold the frame `previous` was painted into. softbuffer
+/// reports exactly that as `Buffer::age() == 1`; when it reports anything else
+/// the buffer contents are unspecified and [`compose_overlay_frame`] has to
+/// rebuild the whole frame instead.
+///
+/// Returns the rectangles that changed, for `present_with_damage`.
+pub(super) fn redraw_overlay_frame(
+    background: &[u32],
+    output: &mut [u32],
+    width: usize,
+    height: usize,
+    previous: OverlayDecoration,
+    decoration: OverlayDecoration,
+) -> OverlayDamage {
+    let mut damage = OverlayDamage::default();
+    let Some(frame_len) = width.checked_mul(height) else {
+        return damage;
+    };
+    if background.len() < frame_len || output.len() < frame_len {
+        return damage;
+    }
+    let frame = &mut output[..frame_len];
+
+    let restored = decoration_rects(previous, width, height);
+    for &rect in restored.as_slice() {
+        restore_overlay_rect(frame, background, width, rect);
+    }
+
+    let painted = decoration_rects(decoration, width, height);
+    if let Some(color) = decoration_color(decoration) {
+        for &rect in painted.as_slice() {
+            fill_overlay_rect(frame, width, rect, color);
+        }
+    }
+
+    damage.extend(&restored);
+    damage.extend(&painted);
+    damage
+}
+
+/// Translate overlay damage into softbuffer's present rectangles.
+///
+/// Rectangles that do not fit softbuffer's `u32`/`NonZeroU32` shape are dropped
+/// rather than panicking; every rectangle produced by [`decoration_rects`] is
+/// non-empty and bounded by the frame, so this only guards against absurd
+/// window sizes.
+fn damage_rects(damage: &OverlayDamage) -> Vec<softbuffer::Rect> {
+    damage
+        .as_slice()
+        .iter()
+        .filter_map(|rect| {
+            Some(softbuffer::Rect {
+                x: u32::try_from(rect.x).ok()?,
+                y: u32::try_from(rect.y).ok()?,
+                width: NonZeroU32::new(u32::try_from(rect.width).ok()?)?,
+                height: NonZeroU32::new(u32::try_from(rect.height).ok()?)?,
+            })
+        })
+        .collect()
 }
 
 /// Winit application handler for the fullscreen selection overlay.
@@ -332,6 +481,10 @@ pub(super) struct SelectionApp {
     /// Error captured during window/surface setup (checked after event loop exits).
     pub(super) setup_error: Option<String>,
     pixel_map: OverlayPixelMapCache,
+    /// Decoration painted into the presented frame, when that frame is still
+    /// reusable as the base for an incremental redraw. `None` forces a full
+    /// recompose on the next draw.
+    last_decoration: Option<OverlayDecoration>,
 }
 
 impl SelectionApp {
@@ -357,6 +510,7 @@ impl SelectionApp {
             cancelled: false,
             setup_error: None,
             pixel_map: OverlayPixelMapCache::default(),
+            last_decoration: None,
         }
     }
 
@@ -364,11 +518,14 @@ impl SelectionApp {
         let Some(actual) = self.window.as_ref().map(|window| window.inner_size()) else {
             return;
         };
-        self.pixel_map.update_frame(
+        if self.pixel_map.update_frame(
             (actual.width, actual.height),
             (self.screen_width, self.screen_height),
             &self.screenshot,
-        );
+        ) {
+            // A rebuilt background invalidates whatever is on screen.
+            self.last_decoration = None;
+        }
 
         let Some(surface) = &mut self.surface else {
             return;
@@ -382,15 +539,36 @@ impl SelectionApp {
         let buf_h = actual.height as usize;
         let decoration = OverlayDecoration::new(self.start_pos, self.current_pos, buf_w, buf_h);
 
-        compose_overlay_frame(
-            &self.pixel_map.background,
-            &mut buffer,
-            buf_w,
-            buf_h,
-            decoration,
-        );
-
-        let _ = buffer.present();
+        // age 1 means the buffer still holds the frame presented last, which is
+        // the precondition for repainting only what changed.
+        let reusable = buffer.age() == 1;
+        match self.last_decoration.filter(|_| reusable) {
+            // The window already shows this exact frame: sub-pixel cursor moves
+            // that clamp to the same pixel need no work at all.
+            Some(previous) if previous == decoration => return,
+            Some(previous) => {
+                let damage = redraw_overlay_frame(
+                    &self.pixel_map.background,
+                    &mut buffer,
+                    buf_w,
+                    buf_h,
+                    previous,
+                    decoration,
+                );
+                let _ = buffer.present_with_damage(&damage_rects(&damage));
+            }
+            None => {
+                compose_overlay_frame(
+                    &self.pixel_map.background,
+                    &mut buffer,
+                    buf_w,
+                    buf_h,
+                    decoration,
+                );
+                let _ = buffer.present();
+            }
+        }
+        self.last_decoration = Some(decoration);
     }
 
     fn set_cursor_grab(&self, mode: CursorGrabMode) {

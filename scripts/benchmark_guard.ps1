@@ -15,8 +15,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $Budgets = @(
+    # Steady-state cursor-move redraw. The budget is deliberately far below the
+    # full-frame figure below: it is what fails if the overlay ever goes back to
+    # recomposing the whole frame on every mouse move.
     [pscustomobject]@{
         Benchmark = "performance_gate/selection_overlay_redraw_1080p"
+        MaximumNanoseconds = 200000.0
+    }
+    [pscustomobject]@{
+        Benchmark = "performance_gate/selection_overlay_first_frame_1080p"
         MaximumNanoseconds = 2000000.0
     }
     [pscustomobject]@{

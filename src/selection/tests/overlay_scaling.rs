@@ -93,6 +93,144 @@ fn composed_overlay_decorations_match_the_pointwise_reference() {
 }
 
 #[test]
+fn incremental_redraw_matches_a_full_recompose() {
+    // The incremental path is only correct if restoring the previous
+    // decoration's rectangles leaves exactly the frame a full recompose would
+    // have produced — including after switching between crosshair and border.
+    let width = 8;
+    let height = 6;
+    let background: Vec<u32> = (0..width * height).map(|pixel| pixel as u32).collect();
+    let sequence = [
+        OverlayDecoration::new(None, Some((3, 2)), width, height),
+        OverlayDecoration::new(None, Some((0, 0)), width, height),
+        OverlayDecoration::new(None, Some((7, 5)), width, height),
+        OverlayDecoration::new(Some((1, 1)), Some((6, 4)), width, height),
+        OverlayDecoration::new(Some((0, 0)), Some((7, 5)), width, height),
+        OverlayDecoration::new(Some((3, 2)), Some((3, 2)), width, height),
+        OverlayDecoration::None,
+        OverlayDecoration::new(None, Some((4, 3)), width, height),
+    ];
+
+    let mut incremental = background.clone();
+    let mut previous = OverlayDecoration::None;
+    for decoration in sequence {
+        redraw_overlay_frame(
+            &background,
+            &mut incremental,
+            width,
+            height,
+            previous,
+            decoration,
+        );
+
+        let mut expected = vec![u32::MAX; background.len()];
+        compose_overlay_frame(&background, &mut expected, width, height, decoration);
+        assert_eq!(
+            incremental, expected,
+            "incremental redraw diverged at {decoration:?}"
+        );
+
+        previous = decoration;
+    }
+}
+
+#[test]
+fn incremental_redraw_reports_the_pixels_it_changed() {
+    let width = 8;
+    let height = 6;
+    let background = vec![0u32; width * height];
+    let mut frame = background.clone();
+
+    // A crosshair paints one full row and one full column; moving it reports
+    // both the vacated and the newly painted bars.
+    let first = OverlayDecoration::new(None, Some((3, 2)), width, height);
+    let damage = redraw_overlay_frame(
+        &background,
+        &mut frame,
+        width,
+        height,
+        OverlayDecoration::None,
+        first,
+    );
+    assert_eq!(
+        damage.as_slice(),
+        [
+            OverlayRect {
+                x: 0,
+                y: 2,
+                width: 8,
+                height: 1
+            },
+            OverlayRect {
+                x: 3,
+                y: 0,
+                width: 1,
+                height: 6
+            },
+        ]
+    );
+
+    let second = OverlayDecoration::new(None, Some((5, 4)), width, height);
+    let damage = redraw_overlay_frame(&background, &mut frame, width, height, first, second);
+    assert_eq!(damage.as_slice().len(), 4, "two restored plus two painted");
+
+    // Nothing outside the reported rectangles may change: every difference from
+    // the background has to sit inside some reported rectangle.
+    let mut expected = vec![u32::MAX; background.len()];
+    compose_overlay_frame(&background, &mut expected, width, height, second);
+    for y in 0..height {
+        for x in 0..width {
+            if frame[y * width + x] == background[y * width + x] {
+                continue;
+            }
+            assert!(
+                damage.as_slice().iter().any(|rect| {
+                    x >= rect.x
+                        && x < rect.x + rect.width
+                        && y >= rect.y
+                        && y < rect.y + rect.height
+                }),
+                "changed pixel ({x}, {y}) was not reported as damaged"
+            );
+        }
+    }
+}
+
+#[test]
+fn incremental_redraw_rejects_mismatched_buffers() {
+    let width = 4;
+    let height = 3;
+    let background = vec![7u32; width * height];
+    let decoration = OverlayDecoration::new(None, Some((1, 1)), width, height);
+
+    // Too small an output buffer must be left untouched rather than panicking.
+    let mut short = vec![0u32; width * height - 1];
+    let damage = redraw_overlay_frame(
+        &background,
+        &mut short,
+        width,
+        height,
+        OverlayDecoration::None,
+        decoration,
+    );
+    assert!(damage.as_slice().is_empty());
+    assert_eq!(short, vec![0u32; width * height - 1]);
+
+    // As must a background that cannot cover the frame.
+    let mut frame = vec![0u32; width * height];
+    let damage = redraw_overlay_frame(
+        &[1, 2, 3],
+        &mut frame,
+        width,
+        height,
+        OverlayDecoration::None,
+        decoration,
+    );
+    assert!(damage.as_slice().is_empty());
+    assert_eq!(frame, vec![0u32; width * height]);
+}
+
+#[test]
 fn overlay_decoration_computes_border_and_crosshair_once() {
     let border = OverlayDecoration::new(Some((10, 20)), Some((30, 40)), 100, 100);
     assert_eq!(border.color_at(10, 20), Some((0, 200, 255)));

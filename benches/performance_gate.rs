@@ -26,9 +26,10 @@ fn performance_gate(c: &mut Criterion) {
         (WIDTH_1080P, HEIGHT_1080P),
         (WIDTH_1080P, HEIGHT_1080P),
     );
-    group.throughput(Throughput::Bytes(
-        u64::from(WIDTH_1080P) * u64::from(HEIGHT_1080P) * 4,
-    ));
+    // Steady-state cursor-move redraw. Deliberately declared before any
+    // throughput is set on the group: an incremental repaint touches a crosshair
+    // and its predecessor, not the frame, so a full-frame byte rate would be
+    // meaningless here.
     group.bench_function("selection_overlay_redraw_1080p", |b| {
         b.iter(|| {
             overlay.redraw_crosshair(black_box((960, 540)));
@@ -56,6 +57,19 @@ fn performance_gate(c: &mut Criterion) {
                 black_box(&mut media_foundation_frame),
             )
             .unwrap();
+        });
+    });
+
+    // Appended last on purpose: inserting a benchmark ahead of the three above
+    // changes the cache state they start from, which shows up as a phantom
+    // regression against their recorded baselines.
+    group.throughput(Throughput::Bytes(
+        u64::from(WIDTH_1080P) * u64::from(HEIGHT_1080P) * 4,
+    ));
+    group.bench_function("selection_overlay_first_frame_1080p", |b| {
+        b.iter(|| {
+            overlay.compose_full_frame(black_box((960, 540)));
+            black_box(overlay.output());
         });
     });
 
