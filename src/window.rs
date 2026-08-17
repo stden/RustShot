@@ -228,4 +228,16 @@ mod tests {
         assert!(list_windows().is_empty());
         assert!(capture_window_image(1).is_err());
     }
+
+    /// A `--window-id` from a stale window list must be rejected by name before
+    /// any capture backend is started, rather than surfacing as a WGC or GDI
+    /// failure further down.
+    #[cfg(windows)]
+    #[test]
+    fn unknown_window_id_is_rejected_before_capture() {
+        assert_eq!(
+            capture_window_image(u64::MAX),
+            Err(format!("No window with id {}", u64::MAX))
+        );
+    }
 }

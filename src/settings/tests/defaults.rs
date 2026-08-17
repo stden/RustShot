@@ -141,3 +141,11 @@ fn normalize_default_format_all_supported() {
     assert_eq!(Format::from_settings_str("jpg").extension(), "jpg");
     assert_eq!(Format::from_settings_str("bmp").extension(), "bmp");
 }
+
+#[test]
+fn fps_default_matches_the_named_default_constant() {
+    // `Default` and `Fps::DEFAULT` must not drift apart: settings parsing falls
+    // back to one and `Settings::default()` to the other.
+    assert_eq!(Fps::default(), Fps::DEFAULT);
+    assert_eq!(Fps::default().get(), 30);
+}

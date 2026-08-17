@@ -125,3 +125,54 @@ fn open_settings_dialog_returns_early_when_save_fails() {
     assert!(opened_paths.is_empty());
     assert!(!settings_path.is_file());
 }
+
+#[test]
+fn save_settings_reports_a_config_directory_it_cannot_create() {
+    struct PathGuard;
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            set_settings_path_for_tests(None);
+        }
+    }
+
+    let _global = lock_global_overrides();
+
+    // Put a regular file where the settings directory would have to go, so
+    // `create_dir_all` cannot succeed and the failure has to surface as a
+    // readable message instead of a silent no-op.
+    let temp_root = TestDir::new("rustshot_settings_blocked");
+    let blocker = temp_root.file("blocker");
+    std::fs::write(&blocker, b"not a directory").expect("test fixture file");
+    let _guard = PathGuard;
+    set_settings_path_for_tests(Some(blocker.join("RustShot").join("settings.json")));
+
+    let error = save_settings(&Settings::default())
+        .expect_err("a settings directory under a file cannot be created");
+    assert!(
+        error.starts_with("Failed to create config dir: "),
+        "unexpected message: {error}"
+    );
+}
+
+#[test]
+fn launch_editor_command_reports_a_missing_editor() {
+    struct EditorGuard;
+    impl Drop for EditorGuard {
+        fn drop(&mut self) {
+            set_open_file_in_editor_for_tests(None);
+        }
+    }
+
+    let _global = lock_global_overrides();
+
+    // With the injection point cleared, the real spawn runs. A program name that
+    // cannot exist proves the error is propagated rather than swallowed.
+    set_open_file_in_editor_for_tests(None);
+    let _guard = EditorGuard;
+
+    assert!(launch_editor_command(
+        "rustshot-editor-that-does-not-exist",
+        std::path::Path::new("settings.json")
+    )
+    .is_err());
+}

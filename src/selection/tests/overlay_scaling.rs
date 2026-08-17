@@ -310,6 +310,93 @@ fn overlay_decoration_border_halo_is_one_pixel_thick() {
 }
 
 #[test]
+fn target_overlay_monitor_falls_back_to_a_matching_origin() {
+    let monitors = [((0, 0), (1920, 1080)), ((1920, 0), (2560, 1440))];
+
+    // A monitor whose mode changed between capture and overlay creation still
+    // matches on its origin, which is what keeps the overlay on the right screen.
+    assert_eq!(
+        target_overlay_monitor_index(monitors, (1920, 0), (3840, 2160)),
+        Some(1)
+    );
+    // No origin match at all leaves the caller without a target monitor.
+    assert_eq!(
+        target_overlay_monitor_index(monitors, (100, 100), (800, 600)),
+        None
+    );
+}
+
+#[test]
+fn overlay_background_survives_degenerate_image_sizes_and_short_screenshots() {
+    let mut cache = OverlayPixelMapCache::default();
+
+    // A zero-width capture maps no pixels, so the background stays empty rather
+    // than indexing into the screenshot.
+    cache.update_frame((2, 2), (0, 2), &[0; 16]);
+    assert!(cache.background.is_empty());
+
+    // A screenshot shorter than the mapped coordinates leaves the pixels it
+    // cannot supply at their initial value instead of panicking.
+    let mut truncated = OverlayPixelMapCache::default();
+    truncated.update_frame((2, 2), (2, 2), &[255, 255, 255, 255]);
+    assert_eq!(truncated.background.len(), 4);
+    assert_eq!(truncated.background[1..], [0, 0, 0]);
+}
+
+#[test]
+fn overlay_composition_rejects_dimensions_that_overflow() {
+    let background = vec![0u32; 4];
+    let mut output = vec![7u32; 4];
+    let decoration = OverlayDecoration::Crosshair { x: 0, y: 0 };
+
+    // width * height overflows usize, so neither path may touch the buffer.
+    compose_overlay_frame(&background, &mut output, usize::MAX, 2, decoration);
+    assert_eq!(output, vec![7u32; 4]);
+
+    let damage = redraw_overlay_frame(
+        &background,
+        &mut output,
+        usize::MAX,
+        2,
+        OverlayDecoration::None,
+        decoration,
+    );
+    assert!(damage.as_slice().is_empty());
+    assert_eq!(output, vec![7u32; 4]);
+}
+
+#[test]
+fn inverted_border_decoration_paints_nothing() {
+    // `OverlayDecoration::new` normalises drags, but an inverted border is
+    // representable; it must be treated as empty rather than painted backwards.
+    let width = 4;
+    let height = 4;
+    let background = vec![3u32; width * height];
+    let inverted = OverlayDecoration::Border {
+        x1: 3,
+        y1: 3,
+        x2: 1,
+        y2: 1,
+    };
+
+    let mut composed = vec![0u32; width * height];
+    compose_overlay_frame(&background, &mut composed, width, height, inverted);
+    assert_eq!(composed, background);
+
+    let mut frame = background.clone();
+    let damage = redraw_overlay_frame(
+        &background,
+        &mut frame,
+        width,
+        height,
+        OverlayDecoration::None,
+        inverted,
+    );
+    assert!(damage.as_slice().is_empty());
+    assert_eq!(frame, background);
+}
+
+#[test]
 fn overlay_drag_mapping_scales_both_axes() {
     let region = map_overlay_drag_to_image((100, 50), (1100, 650), (1200, 800), (2400, 1600))
         .expect("scaled drag should produce a region");

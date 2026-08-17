@@ -185,3 +185,21 @@ fn capture_worker_disconnect_is_reported() {
 
     assert!(error.contains("stopped without returning a result"));
 }
+
+/// `SendableHwnd` is what lets a window handle cross into the capture worker
+/// thread without an `unsafe impl Send`, so the value must survive the trip to
+/// `isize` and back unchanged — including the high-bit patterns a 64-bit handle
+/// can carry.
+#[cfg(windows)]
+#[test]
+fn sendable_hwnd_round_trips_every_handle_pattern() {
+    use crate::capture::platform::SendableHwnd;
+    use windows::Win32::Foundation::HWND;
+
+    for raw in [0isize, 1, 0x0001_0044, -1, isize::MAX, isize::MIN] {
+        let original = HWND(raw as *mut core::ffi::c_void);
+        let restored = SendableHwnd::from(original).hwnd();
+        assert_eq!(restored.0 as isize, raw);
+        assert_eq!(restored, original);
+    }
+}

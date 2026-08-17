@@ -256,3 +256,50 @@ fn preferred_screen_index_priority_cursor_over_primary() {
     let screens = vec![(0, 0, 1920, 1080, true), (1920, 0, 2560, 1440, false)];
     assert_eq!(preferred_screen_index(screens, Some((2500, 200))), Some(1));
 }
+
+#[test]
+fn fallback_position_keeps_the_nearest_neighbor_found_first() {
+    // References are scanned in index order, so the nearest one may be seen
+    // before a farther one. The farther candidate must not overwrite it — the
+    // gap comparison, not the scan order, decides which neighbour anchors the
+    // target.
+    let horizontal = vec![
+        make_screen(2000, 0, 1920, 1080, 1920, 1080), // nearest, scanned first
+        make_screen(0, 0, 1920, 1080, 1920, 1080),    // farther, scanned second
+        make_screen(5000, 0, 1920, 1080, 1920, 1080), // target
+    ];
+    let positions = vec![Some(2000), Some(0), None];
+    assert_eq!(
+        fallback_physical_x(&horizontal, &positions, 2),
+        Some(5000),
+        "a left neighbour 1080px away beats one 3080px away"
+    );
+
+    // Same on the other side: the target sits left of both references.
+    let mirrored = vec![
+        make_screen(3000, 0, 1920, 1080, 1920, 1080), // nearest, scanned first
+        make_screen(5000, 0, 1920, 1080, 1920, 1080), // farther, scanned second
+        make_screen(0, 0, 1920, 1080, 1920, 1080),    // target
+    ];
+    let positions = vec![Some(3000), Some(5000), None];
+    assert_eq!(fallback_physical_x(&mirrored, &positions, 2), Some(0));
+
+    let vertical = vec![
+        make_screen(0, 2000, 1920, 1080, 1920, 1080), // nearest above
+        make_screen(0, 0, 1920, 1080, 1920, 1080),    // farther above
+        make_screen(0, 5000, 1920, 1080, 1920, 1080), // target
+    ];
+    let positions = vec![Some(2000), Some(0), None];
+    assert_eq!(fallback_physical_y(&vertical, &positions, 2), Some(5000));
+
+    let vertical_mirrored = vec![
+        make_screen(0, 3000, 1920, 1080, 1920, 1080), // nearest below
+        make_screen(0, 5000, 1920, 1080, 1920, 1080), // farther below
+        make_screen(0, 0, 1920, 1080, 1920, 1080),    // target
+    ];
+    let positions = vec![Some(3000), Some(5000), None];
+    assert_eq!(
+        fallback_physical_y(&vertical_mirrored, &positions, 2),
+        Some(0)
+    );
+}

@@ -142,3 +142,16 @@ proptest! {
         prop_assert_eq!(unescape_json_string(&escape_json_string(&s)), s);
     }
 }
+
+#[test]
+fn unescape_json_string_keeps_invalid_unicode_escapes_verbatim() {
+    // `settings.json` is hand-editable, so a malformed \u escape must survive
+    // as written rather than being silently dropped or replaced.
+    assert_eq!(unescape_json_string(r"\uZZZZ"), r"\uZZZZ");
+    // Fewer than four hex digits before the string ends.
+    assert_eq!(unescape_json_string(r"\u00"), r"\u00");
+    // A lone surrogate is valid hex but not a valid scalar value.
+    assert_eq!(unescape_json_string(r"\uD800"), r"\uD800");
+    // A well-formed escape still decodes.
+    assert_eq!(unescape_json_string(r"\u0041"), "A");
+}

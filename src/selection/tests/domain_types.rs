@@ -35,3 +35,26 @@ fn region_exposes_typed_physical_parts() {
     assert_eq!(region.origin(), origin);
     assert_eq!(region.size(), size);
 }
+
+#[test]
+fn logical_and_physical_newtypes_round_trip_through_tuples() {
+    // The newtypes exist to stop logical and physical coordinates being mixed
+    // up; the tuple conversions are how callers get in and out of them, so a
+    // round trip must be lossless in both directions.
+    assert_eq!(<(i32, i32)>::from(LogicalPoint::from((-3, 7))), (-3, 7));
+    assert_eq!(<(i32, i32)>::from(PhysicalPoint::from((5, -9))), (5, -9));
+    assert_eq!(
+        <(u32, u32)>::from(LogicalSize::from((1280, 720))),
+        (1280, 720)
+    );
+    assert_eq!(
+        <(u32, u32)>::from(PhysicalSize::from((1920, 1080))),
+        (1920, 1080)
+    );
+
+    // The accessors agree with the tuple the value was built from.
+    let point = LogicalPoint::from((11, -13));
+    assert_eq!((point.x(), point.y()), (11, -13));
+    let size = PhysicalSize::from((640, 480));
+    assert_eq!((size.width(), size.height()), (640, 480));
+}

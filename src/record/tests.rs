@@ -3,6 +3,7 @@
 
 mod domain;
 mod frame_capture;
+mod frame_errors;
 mod packing;
 mod paths;
 mod pixels;
