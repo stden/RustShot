@@ -406,6 +406,8 @@ pub fn rgba_to_bgra_bottom_up_into(
         .checked_mul(4)
         .ok_or_else(|| "Pixel row is too large".to_string())?;
     let height = height as usize;
+    // Resolved once for the frame, not once per row.
+    let swizzle = crate::capture::PixelSwizzle::detect();
 
     for y in 0..height {
         let src_start = y * row_bytes;
@@ -413,17 +415,7 @@ pub fn rgba_to_bgra_bottom_up_into(
         let src_row = &rgba[src_start..src_start + row_bytes];
         let dst_row = &mut out[dst_start..dst_start + row_bytes];
 
-        for (src_px, dst_px) in src_row
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(dst_row.as_chunks_mut::<4>().0.iter_mut())
-        {
-            dst_px[0] = src_px[2]; // B <- R
-            dst_px[1] = src_px[1]; // G <- G
-            dst_px[2] = src_px[0]; // R <- B
-            dst_px[3] = src_px[3]; // A <- A
-        }
+        swizzle.convert(src_row, dst_row);
     }
     Ok(())
 }

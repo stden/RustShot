@@ -220,17 +220,12 @@ pub(super) fn rgba_from_bgra_rows(
         .checked_mul(height as usize)
         .ok_or_else(|| "Captured image is too large".to_string())?;
     let mut rgba = vec![0u8; output_len];
+    // Resolved once for the frame, not once per row.
+    let swizzle = super::PixelSwizzle::detect();
     for row in 0..height as usize {
         let source = &mapped[row * row_pitch..row * row_pitch + row_bytes];
         let destination = &mut rgba[row * row_bytes..(row + 1) * row_bytes];
-        for (bgra, rgba) in source
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(destination.as_chunks_mut::<4>().0.iter_mut())
-        {
-            *rgba = [bgra[2], bgra[1], bgra[0], bgra[3]];
-        }
+        swizzle.convert(source, destination);
     }
     Ok(rgba)
 }

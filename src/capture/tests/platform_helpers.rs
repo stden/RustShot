@@ -203,3 +203,113 @@ fn sendable_hwnd_round_trips_every_handle_pattern() {
         assert_eq!(restored, original);
     }
 }
+
+// --- PixelSwizzle: the shared RGBA/BGRA converter ---
+
+/// Independent reference: the obvious per-pixel swap, kept deliberately naive.
+fn reference_swap_red_blue(source: &[u8]) -> Vec<u8> {
+    source
+        .chunks_exact(4)
+        .flat_map(|pixel| [pixel[2], pixel[1], pixel[0], pixel[3]])
+        .collect()
+}
+
+/// Every variant the running target can produce.
+///
+/// Naming the implementations in an enum is what makes this possible: the
+/// portable path stays testable on a machine that has AVX2, so CI cannot pass
+/// while the fallback is silently broken for older CPUs.
+fn all_swizzles() -> Vec<crate::capture::PixelSwizzle> {
+    use crate::capture::PixelSwizzle;
+
+    let mut variants = vec![PixelSwizzle::Portable];
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        variants.push(PixelSwizzle::Avx2);
+    }
+    variants
+}
+
+#[test]
+fn every_swizzle_matches_the_reference_across_vector_boundaries() {
+    // 32-byte AVX2 blocks mean the interesting lengths are those either side of
+    // a block boundary, so every tail length is exercised here.
+    for swizzle in all_swizzles() {
+        for pixels in 0..40usize {
+            let source: Vec<u8> = (0..pixels * 4).map(|index| (index % 251) as u8).collect();
+            let mut destination = vec![0u8; source.len()];
+            swizzle.convert(&source, &mut destination);
+            assert_eq!(
+                destination,
+                reference_swap_red_blue(&source),
+                "{swizzle:?} mismatch at {pixels} pixels"
+            );
+        }
+    }
+}
+
+#[test]
+fn detected_swizzle_agrees_with_the_portable_one() {
+    use crate::capture::PixelSwizzle;
+
+    // The whole point of the AVX2 path is that it is indistinguishable from the
+    // fallback, so a 4K-sized buffer must convert identically under both.
+    let source: Vec<u8> = (0..4096u32).map(|index| (index % 253) as u8).collect();
+    let mut detected = vec![0u8; source.len()];
+    let mut portable = vec![0u8; source.len()];
+
+    PixelSwizzle::detect().convert(&source, &mut detected);
+    PixelSwizzle::Portable.convert(&source, &mut portable);
+
+    assert_eq!(detected, portable);
+}
+
+#[test]
+fn in_place_swizzle_agrees_with_the_copying_one() {
+    for swizzle in all_swizzles() {
+        let source: Vec<u8> = (0..2048u32).map(|index| (index % 249) as u8).collect();
+        let mut copied = vec![0u8; source.len()];
+        swizzle.convert(&source, &mut copied);
+
+        let mut in_place = source.clone();
+        swizzle.convert_in_place(&mut in_place);
+
+        assert_eq!(in_place, copied, "{swizzle:?} in-place diverged");
+    }
+}
+
+#[test]
+fn swizzle_is_its_own_inverse() {
+    for swizzle in all_swizzles() {
+        let source: Vec<u8> = (0..1024u32).map(|index| (index % 256) as u8).collect();
+        let mut once = vec![0u8; source.len()];
+        let mut twice = vec![0u8; source.len()];
+
+        swizzle.convert(&source, &mut once);
+        swizzle.convert(&once, &mut twice);
+
+        assert_eq!(twice, source, "{swizzle:?} is not an involution");
+    }
+}
+
+#[test]
+fn swizzle_converts_only_whole_shared_pixels() {
+    for swizzle in all_swizzles() {
+        // A trailing partial pixel is left alone, matching `bgra_to_rgba`.
+        let source = [1, 2, 3, 4, 9, 9, 9];
+        let mut destination = [0u8; 7];
+        swizzle.convert(&source, &mut destination);
+        assert_eq!(destination, [3, 2, 1, 4, 0, 0, 0]);
+
+        // A destination shorter than the source stops at its own last whole
+        // pixel rather than panicking.
+        let mut short = [0u8; 5];
+        swizzle.convert(&source, &mut short);
+        assert_eq!(short, [3, 2, 1, 4, 0]);
+
+        // And a source shorter than the destination leaves the rest untouched.
+        let mut long = [7u8; 12];
+        swizzle.convert(&[1, 2, 3, 4], &mut long);
+        assert_eq!(long, [3, 2, 1, 4, 7, 7, 7, 7, 7, 7, 7, 7]);
+    }
+}

@@ -75,7 +75,13 @@ impl OverlayPixelMapCache {
             return false;
         }
 
-        self.background = build_overlay_background(screenshot, image_size.0, &self.x, &self.y);
+        build_overlay_background_into(
+            &mut self.background,
+            screenshot,
+            image_size.0,
+            &self.x,
+            &self.y,
+        );
         true
     }
 }
@@ -86,27 +92,110 @@ fn pixel_axis_map(overlay_extent: u32, image_extent: u32) -> Vec<u32> {
         .collect()
 }
 
-fn build_overlay_background(
+/// How one overlay row draws its pixels from the screenshot.
+///
+/// The overlay is a physical-pixel window sized to match the captured frame, so
+/// on a single-DPI monitor the two line up exactly and every column maps to
+/// itself. Naming that case separately is what lets the common path copy a whole
+/// row as a contiguous slice — no per-pixel coordinate lookup and no per-pixel
+/// bounds check, which is the difference between a vectorised loop and a scalar
+/// one. Mixed-DPI setups still take the general nearest-neighbour walk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ColumnSampling {
+    /// Overlay column *n* is screenshot column *n*.
+    Identity,
+    /// Columns come from a nearest-neighbour lookup table.
+    NearestNeighbour,
+}
+
+impl ColumnSampling {
+    fn of(x_map: &[u32]) -> Self {
+        if x_map
+            .iter()
+            .enumerate()
+            .all(|(index, &source_x)| source_x as usize == index)
+        {
+            Self::Identity
+        } else {
+            Self::NearestNeighbour
+        }
+    }
+}
+
+/// Pack RGBA bytes into softbuffer's `0RGB` pixels.
+///
+/// Expressed as a little-endian byte reorder rather than shift-and-or: the two
+/// are arithmetically identical, but this form is a pure byte shuffle that the
+/// compiler vectorises, and this loop runs once per pixel of the whole frame.
+/// Kept as a tight zip over two slices so the bounds checks stay outside it.
+#[inline]
+fn pack_rgba_row(source: &[u8], output: &mut [u32]) {
+    for (pixel, output) in source.as_chunks::<4>().0.iter().zip(output.iter_mut()) {
+        *output = u32::from_le_bytes([pixel[2], pixel[1], pixel[0], 0]);
+    }
+}
+
+/// Render the screenshot into `background`, reusing its existing allocation.
+///
+/// Takes the buffer by reference rather than returning a fresh `Vec` because a
+/// resize rebuilds it: handing back a new 8 MB zeroed vector each time costs
+/// more in first-touch page faults than the pixel conversion itself, and an
+/// overlay gets several resizes between the keypress and appearing on screen.
+pub(super) fn build_overlay_background_into(
+    background: &mut Vec<u32>,
     screenshot: &[u8],
     image_width: u32,
     x_map: &[u32],
     y_map: &[u32],
-) -> Vec<u32> {
+) {
     let Some(output_len) = x_map.len().checked_mul(y_map.len()) else {
-        return Vec::new();
+        background.clear();
+        return;
     };
-    let mut background = vec![0; output_len];
+    // Two different cheapest options, so pick per case. When the buffer is
+    // already the right size, clearing it in place avoids dropping and
+    // re-faulting 8 MB of pages. When it is not, `vec![0; n]` beats a resize:
+    // the allocator hands back pre-zeroed pages instead of memsetting them.
+    // Either way, pixels that no row supplies stay zero.
+    if background.len() == output_len {
+        background.fill(0);
+    } else {
+        *background = vec![0; output_len];
+    }
     let image_width = image_width as usize;
     if image_width == 0 {
-        return background;
+        return;
     }
 
+    // Overlay startup and every resize run this, so it sits inside the delay
+    // between the PrintScreen keypress and the overlay appearing.
+    let output_width = x_map.len();
+    let sampling = ColumnSampling::of(x_map);
     for (output_y, &source_y) in y_map.iter().enumerate() {
-        for (output_x, &source_x) in x_map.iter().enumerate() {
-            let Some(source_index) = (source_y as usize)
-                .checked_mul(image_width)
-                .and_then(|row| row.checked_add(source_x as usize))
-                .and_then(|pixel| pixel.checked_mul(4))
+        let Some(row_start) = (source_y as usize)
+            .checked_mul(image_width)
+            .and_then(|row| row.checked_mul(4))
+        else {
+            continue;
+        };
+        let output_row = &mut background[output_y * output_width..(output_y + 1) * output_width];
+
+        if sampling == ColumnSampling::Identity {
+            // The whole row is one contiguous run of source pixels. A row the
+            // screenshot cannot supply is left at its initial value.
+            if let Some(source_row) = screenshot
+                .get(row_start..)
+                .and_then(|rest| rest.get(..output_width * 4))
+            {
+                pack_rgba_row(source_row, output_row);
+                continue;
+            }
+        }
+
+        for (output_pixel, &source_x) in output_row.iter_mut().zip(x_map.iter()) {
+            let Some(source_index) = (source_x as usize)
+                .checked_mul(4)
+                .and_then(|offset| row_start.checked_add(offset))
             else {
                 continue;
             };
@@ -116,12 +205,9 @@ fn build_overlay_background(
             else {
                 continue;
             };
-            background[output_y * x_map.len() + output_x] =
-                (u32::from(pixel[0]) << 16) | (u32::from(pixel[1]) << 8) | u32::from(pixel[2]);
+            *output_pixel = u32::from_le_bytes([pixel[2], pixel[1], pixel[0], 0]);
         }
     }
-
-    background
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

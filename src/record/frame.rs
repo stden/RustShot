@@ -91,6 +91,8 @@ fn copy_region_bottom_up(
     let source_x = region.physical_x as usize;
     let source_y = region.physical_y as usize;
     let copy_row_bytes = (region.physical_width as usize) * 4;
+    // Resolved once for the frame, not once per row.
+    let swizzle = crate::capture::PixelSwizzle::detect();
     for row in 0..region.physical_height as usize {
         let source_start = (source_y + row) * source_row_pitch + source_x * 4;
         let source_row = &source[source_start..source_start + copy_row_bytes];
@@ -100,16 +102,7 @@ fn copy_region_bottom_up(
 
         match source_order {
             SourcePixelOrder::Bgra => destination.copy_from_slice(source_row),
-            SourcePixelOrder::Rgba => {
-                for (rgba, bgra) in source_row
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .zip(destination.as_chunks_mut::<4>().0.iter_mut())
-                {
-                    *bgra = [rgba[2], rgba[1], rgba[0], rgba[3]];
-                }
-            }
+            SourcePixelOrder::Rgba => swizzle.convert(source_row, destination),
         }
     }
 
@@ -192,9 +185,14 @@ pub(super) fn half_to_f32(bits: u16) -> f32 {
     f32::from_bits(float_bits)
 }
 
-fn linear_to_srgb8(value: f32) -> u8 {
+/// The shared linear-to-sRGB lookup table.
+///
+/// Fetched once per frame rather than once per channel: the `OnceLock` check is
+/// an atomic load, and a 4K HDR frame converts 8.3 million pixels, so paying it
+/// three times per pixel put ~25 million atomic loads in the tone-mapping loop.
+fn srgb_lut() -> &'static [u8; 4097] {
     static LUT: OnceLock<Box<[u8; 4097]>> = OnceLock::new();
-    let lut = LUT.get_or_init(|| {
+    LUT.get_or_init(|| {
         let mut values = Box::new([0; 4097]);
         for (index, output) in values.iter_mut().enumerate() {
             let linear = index as f32 / 4096.0;
@@ -206,7 +204,11 @@ fn linear_to_srgb8(value: f32) -> u8 {
             *output = (srgb * 255.0).round() as u8;
         }
         values
-    });
+    })
+}
+
+#[inline]
+fn linear_to_srgb8_with(lut: &[u8; 4097], value: f32) -> u8 {
     let index = (value.clamp(0.0, 1.0) * 4096.0).round() as usize;
     lut[index]
 }
@@ -216,7 +218,23 @@ fn linear_to_srgb8(value: f32) -> u8 {
 /// scRGB uses 80 nits for diffuse white and permits values above 1.0. The
 /// shoulder leaves headroom for those highlights and scales all channels by
 /// one factor, preserving hue instead of clamping channels independently.
+/// The recording loop uses [`tone_map_scrgb_pixel_with`] so it can hoist the
+/// table out of its per-pixel loop; this single-pixel form is what the tests
+/// pin the tone curve against.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn tone_map_scrgb_pixel(
+    red: f32,
+    green: f32,
+    blue: f32,
+    peak_luminance_nits: f32,
+) -> [u8; 3] {
+    tone_map_scrgb_pixel_with(srgb_lut(), red, green, blue, peak_luminance_nits)
+}
+
+/// [`tone_map_scrgb_pixel`] against a table the caller already fetched, for
+/// per-frame loops that must not re-resolve the `OnceLock` per pixel.
+fn tone_map_scrgb_pixel_with(
+    lut: &[u8; 4097],
     red: f32,
     green: f32,
     blue: f32,
@@ -244,9 +262,9 @@ pub(super) fn tone_map_scrgb_pixel(
     let scale = mapped_level / level;
 
     [
-        linear_to_srgb8(red * scale),
-        linear_to_srgb8(green * scale),
-        linear_to_srgb8(blue * scale),
+        linear_to_srgb8_with(lut, red * scale),
+        linear_to_srgb8_with(lut, green * scale),
+        linear_to_srgb8_with(lut, blue * scale),
     ]
 }
 
@@ -306,6 +324,8 @@ pub(super) fn copy_scrgb_region_bottom_up(
     let source_x = region.physical_x as usize;
     let source_y = region.physical_y as usize;
     let copy_row_bytes = region.physical_width as usize * 8;
+    // Resolved once for the whole frame, not once per channel per pixel.
+    let lut = srgb_lut();
     for row in 0..region.physical_height as usize {
         let source_start = (source_y + row) * source_row_pitch + source_x * 8;
         let source_row = &source[source_start..source_start + copy_row_bytes];
@@ -323,7 +343,8 @@ pub(super) fn copy_scrgb_region_bottom_up(
             let red = half_to_f32(u16::from_le_bytes([scrgb[0], scrgb[1]]));
             let green = half_to_f32(u16::from_le_bytes([scrgb[2], scrgb[3]]));
             let blue = half_to_f32(u16::from_le_bytes([scrgb[4], scrgb[5]]));
-            let [red, green, blue] = tone_map_scrgb_pixel(red, green, blue, peak_luminance_nits);
+            let [red, green, blue] =
+                tone_map_scrgb_pixel_with(lut, red, green, blue, peak_luminance_nits);
             *bgra = [blue, green, red, u8::MAX];
         }
     }

@@ -60,6 +60,67 @@ fn performance_gate(c: &mut Criterion) {
         });
     });
 
+    // The screenshot conversion path: every captured monitor frame is turned
+    // from the capture backend's bottom-up BGRA into top-down RGBA through here,
+    // so its cost is part of how long a PrintScreen takes. Measured with both
+    // buffers preallocated, because the caller reuses them and an allocation
+    // inside the timing loop would hide the conversion itself.
+    let captured_frame = patterned_bytes(WIDTH_1080P as usize * HEIGHT_1080P as usize * 4);
+    let mut converted_frame = vec![0u8; captured_frame.len()];
+    group.throughput(Throughput::Bytes(captured_frame.len() as u64));
+    group.bench_function("screenshot_bgra_to_rgba_1080p", |b| {
+        b.iter(|| {
+            record::rgba_to_bgra_bottom_up_into(
+                black_box(&captured_frame),
+                black_box(&mut converted_frame),
+                WIDTH_1080P,
+                HEIGHT_1080P,
+            )
+            .unwrap();
+        });
+    });
+
+    // 4K matters more than 1080p here: this conversion is per-pixel work on the
+    // critical path of a single keypress, so it grows with monitor size.
+    let captured_4k = patterned_bytes(WIDTH_4K as usize * HEIGHT_4K as usize * 4);
+    let mut converted_4k = vec![0u8; captured_4k.len()];
+    group.throughput(Throughput::Bytes(captured_4k.len() as u64));
+    group.bench_function("screenshot_bgra_to_rgba_4k", |b| {
+        b.iter(|| {
+            record::rgba_to_bgra_bottom_up_into(
+                black_box(&captured_4k),
+                black_box(&mut converted_4k),
+                WIDTH_4K,
+                HEIGHT_4K,
+            )
+            .unwrap();
+        });
+    });
+
+    // Overlay startup: converting the frozen screenshot into softbuffer pixels
+    // is what the user waits through before the selection overlay appears. The
+    // cold case allocates; the warm case is what each subsequent resize costs.
+    let overlay_screenshot = patterned_bytes(WIDTH_1080P as usize * HEIGHT_1080P as usize * 4);
+    group.throughput(Throughput::Bytes(overlay_screenshot.len() as u64));
+    group.bench_function("selection_overlay_background_1080p", |b| {
+        b.iter(|| {
+            black_box(selection::benchmark_build_overlay_background(
+                black_box(&overlay_screenshot),
+                (WIDTH_1080P, HEIGHT_1080P),
+                (WIDTH_1080P, HEIGHT_1080P),
+            ));
+        });
+    });
+
+    let mut overlay_background = selection::OverlayBackgroundBenchmark::new(
+        overlay_screenshot,
+        (WIDTH_1080P, HEIGHT_1080P),
+        (WIDTH_1080P, HEIGHT_1080P),
+    );
+    group.bench_function("selection_overlay_background_rebuild_1080p", |b| {
+        b.iter(|| black_box(overlay_background.rebuild()));
+    });
+
     // Appended last on purpose: inserting a benchmark ahead of the three above
     // changes the cache state they start from, which shows up as a phantom
     // regression against their recorded baselines.

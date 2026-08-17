@@ -270,6 +270,66 @@ where
     })
 }
 
+/// Build the overlay background into a fresh cache, as the first open does.
+///
+/// This is the screenshot-bytes-to-softbuffer-pixels conversion that runs when
+/// the overlay opens and again on every resize, so it sits inside the delay
+/// between the PrintScreen keypress and the overlay appearing. Returns the pixel
+/// count so the work cannot be optimised away.
+#[allow(dead_code)]
+#[doc(hidden)]
+pub fn benchmark_build_overlay_background(
+    screenshot: &[u8],
+    image_size: (u32, u32),
+    overlay_size: (u32, u32),
+) -> usize {
+    let mut cache = overlay::OverlayPixelMapCache::default();
+    cache.update_frame(overlay_size, image_size, screenshot);
+    cache.background.len()
+}
+
+/// Repeated background rebuilds against one reused buffer.
+///
+/// This is what an overlay resize costs once the overlay is already open, which
+/// is the common case: the log shows several resizes per launch. Separate from
+/// the cold fixture above because the whole point of reusing the buffer is that
+/// the second rebuild does not pay for a fresh allocation.
+#[doc(hidden)]
+pub struct OverlayBackgroundBenchmark {
+    background: Vec<u32>,
+    screenshot: Vec<u8>,
+    x_map: Vec<u32>,
+    y_map: Vec<u32>,
+    image_width: u32,
+}
+
+impl OverlayBackgroundBenchmark {
+    #[doc(hidden)]
+    pub fn new(screenshot: Vec<u8>, image_size: (u32, u32), overlay_size: (u32, u32)) -> Self {
+        let mut cache = overlay::OverlayPixelMapCache::default();
+        cache.update_frame(overlay_size, image_size, &screenshot);
+        Self {
+            background: cache.background,
+            screenshot,
+            x_map: cache.x,
+            y_map: cache.y,
+            image_width: image_size.0,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn rebuild(&mut self) -> usize {
+        overlay::build_overlay_background_into(
+            &mut self.background,
+            &self.screenshot,
+            self.image_width,
+            &self.x_map,
+            &self.y_map,
+        );
+        self.background.len()
+    }
+}
+
 /// Stateful selection-overlay redraw fixture used by Criterion.
 ///
 /// Mirrors `SelectionApp::draw`: [`Self::compose_full_frame`] is the first-frame

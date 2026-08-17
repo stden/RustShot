@@ -34,6 +34,26 @@ $Budgets = @(
         Benchmark = "performance_gate/recording_frame_copy_1080p"
         MaximumNanoseconds = 2000000.0
     }
+    # The screenshot conversion path. Both budgets are sized so that losing the
+    # vectorised swizzle and falling back to a per-byte loop fails the gate.
+    [pscustomobject]@{
+        Benchmark = "performance_gate/screenshot_bgra_to_rgba_1080p"
+        MaximumNanoseconds = 1500000.0
+    }
+    [pscustomobject]@{
+        Benchmark = "performance_gate/screenshot_bgra_to_rgba_4k"
+        MaximumNanoseconds = 8000000.0
+    }
+    # Overlay startup latency: the cold build allocates, the rebuild reuses the
+    # buffer, and the gap between the two budgets is that reuse.
+    [pscustomobject]@{
+        Benchmark = "performance_gate/selection_overlay_background_1080p"
+        MaximumNanoseconds = 6000000.0
+    }
+    [pscustomobject]@{
+        Benchmark = "performance_gate/selection_overlay_background_rebuild_1080p"
+        MaximumNanoseconds = 4000000.0
+    }
 )
 
 function Get-JsonNumber {

@@ -417,18 +417,7 @@ pub fn capture_active_window_image() -> Result<image::RgbaImage, String> {
 /// ```
 #[allow(dead_code)]
 pub fn bgra_to_rgba(pixels: &mut [u8]) {
-    let complete_len = pixels.len() / 4 * 4;
-    let complete_pixels = &mut pixels[..complete_len];
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // SAFETY: AVX2 support was checked at runtime. The helper uses
-        // unaligned accesses and stays within the complete-pixel prefix.
-        unsafe { bgra_to_rgba_avx2(complete_pixels) };
-        return;
-    }
-
-    bgra_to_rgba_scalar(complete_pixels);
+    PixelSwizzle::detect().convert_in_place(pixels);
 }
 
 #[inline]
@@ -438,22 +427,26 @@ fn bgra_to_rgba_scalar(pixels: &mut [u8]) {
     }
 }
 
+/// AVX2 byte-shuffle control that swaps red and blue inside each 4-byte pixel,
+/// duplicated across both 128-bit lanes. Shared by the in-place and copying
+/// converters so the two cannot drift apart.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const RED_BLUE_SHUFFLE: [i8; 32] = [
+    2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15, 2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14,
+    13, 12, 15,
+];
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 unsafe fn bgra_to_rgba_avx2(pixels: &mut [u8]) {
     #[cfg(target_arch = "x86")]
-    use std::arch::x86::{
-        _mm256_loadu_si256, _mm256_setr_epi8, _mm256_shuffle_epi8, _mm256_storeu_si256,
-    };
+    use std::arch::x86::{_mm256_loadu_si256, _mm256_shuffle_epi8, _mm256_storeu_si256};
     #[cfg(target_arch = "x86_64")]
-    use std::arch::x86_64::{
-        _mm256_loadu_si256, _mm256_setr_epi8, _mm256_shuffle_epi8, _mm256_storeu_si256,
-    };
+    use std::arch::x86_64::{_mm256_loadu_si256, _mm256_shuffle_epi8, _mm256_storeu_si256};
 
-    let shuffle = _mm256_setr_epi8(
-        2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15, 2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11,
-        14, 13, 12, 15,
-    );
+    // SAFETY: the control array is 32 bytes and the intrinsic permits unaligned
+    // loads.
+    let shuffle = unsafe { _mm256_loadu_si256(RED_BLUE_SHUFFLE.as_ptr().cast()) };
     let vectorized_len = pixels.len() / 32 * 32;
     let mut offset = 0;
     while offset < vectorized_len {
@@ -467,6 +460,111 @@ unsafe fn bgra_to_rgba_avx2(pixels: &mut [u8]) {
     }
 
     bgra_to_rgba_scalar(&mut pixels[vectorized_len..]);
+}
+
+/// Which red/blue swizzle implementation this CPU should use.
+///
+/// BGRA and RGBA differ only by swapping red and blue, so every conversion in
+/// either direction goes through this one enum. It exists as a value rather than
+/// a check inside the conversion because callers convert a frame *row at a
+/// time*: resolving the choice once per frame and carrying it into the row loop
+/// keeps the CPU-feature probe out of a loop that runs thousands of times, and
+/// the answer cannot change while the process lives.
+///
+/// The AVX2 variant is unrepresentable off x86, so no caller can ask for a path
+/// the target does not have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PixelSwizzle {
+    /// 32-byte `pshufb` blocks with a portable tail.
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    Avx2,
+    /// Four bytes at a time, everywhere.
+    Portable,
+}
+
+impl PixelSwizzle {
+    /// Pick the fastest implementation the running CPU supports.
+    pub(crate) fn detect() -> Self {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if std::arch::is_x86_feature_detected!("avx2") {
+            return Self::Avx2;
+        }
+        Self::Portable
+    }
+
+    /// Copy `source` into `destination`, swapping each pixel's red and blue.
+    ///
+    /// Converts only whole pixels within the shorter of the two slices; a
+    /// trailing partial pixel is left untouched, matching [`bgra_to_rgba`].
+    pub(crate) fn convert(self, source: &[u8], destination: &mut [u8]) {
+        let len = source.len().min(destination.len()) / 4 * 4;
+        let source = &source[..len];
+        let destination = &mut destination[..len];
+
+        match self {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            // SAFETY: `detect` yields `Avx2` only when the CPU reports AVX2.
+            // Both slices were trimmed to one shared whole-pixel length.
+            Self::Avx2 => unsafe { swap_red_blue_into_avx2(source, destination) },
+            Self::Portable => swap_red_blue_into_portable(source, destination),
+        }
+    }
+
+    /// Swap red and blue within `pixels`, in place.
+    pub(crate) fn convert_in_place(self, pixels: &mut [u8]) {
+        let complete_len = pixels.len() / 4 * 4;
+        let pixels = &mut pixels[..complete_len];
+
+        match self {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            // SAFETY: as above; the helper stays inside the whole-pixel prefix.
+            Self::Avx2 => unsafe { bgra_to_rgba_avx2(pixels) },
+            Self::Portable => bgra_to_rgba_scalar(pixels),
+        }
+    }
+}
+
+#[inline]
+fn swap_red_blue_into_portable(source: &[u8], destination: &mut [u8]) {
+    for (source, destination) in source
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(destination.as_chunks_mut::<4>().0.iter_mut())
+    {
+        *destination = [source[2], source[1], source[0], source[3]];
+    }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn swap_red_blue_into_avx2(source: &[u8], destination: &mut [u8]) {
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::{_mm256_loadu_si256, _mm256_shuffle_epi8, _mm256_storeu_si256};
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::{_mm256_loadu_si256, _mm256_shuffle_epi8, _mm256_storeu_si256};
+
+    // SAFETY: the control array is 32 bytes and the intrinsic permits unaligned
+    // loads.
+    let shuffle = unsafe { _mm256_loadu_si256(RED_BLUE_SHUFFLE.as_ptr().cast()) };
+    let vectorized_len = source.len() / 32 * 32;
+    let mut offset = 0;
+    while offset < vectorized_len {
+        // SAFETY: offset is below the vectorized length, so at least 32 bytes
+        // remain in both slices, which share a length. The load/store
+        // intrinsics explicitly permit unaligned data.
+        let source_pointer = unsafe { source.as_ptr().add(offset).cast() };
+        let destination_pointer = unsafe { destination.as_mut_ptr().add(offset).cast() };
+        let value = unsafe { _mm256_loadu_si256(source_pointer) };
+        let value = _mm256_shuffle_epi8(value, shuffle);
+        unsafe { _mm256_storeu_si256(destination_pointer, value) };
+        offset += 32;
+    }
+
+    swap_red_blue_into_portable(
+        &source[vectorized_len..],
+        &mut destination[vectorized_len..],
+    );
 }
 
 /// List all available screens as human-readable strings (e.g. `"Screen 0: 1920x1080"`).
