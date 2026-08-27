@@ -1,0 +1,207 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI always provides a display (xvfb-run on Linux, a real session on the
+  # Windows/macOS runners), so "no display" is never an excuse here: a
+  # live-capture failure is a genuine regression, not a headless environment to
+  # tolerate. One failure is not about the display at all and is waived even
+  # under this flag - Windows Graphics Capture hands over a frame only when the
+  # desktop changes, and an unattended runner's desktop does not change. That
+  # single timeout is classified in tests/bench_functions/live_capture.rs
+  # (IDLE_DESKTOP_TIMEOUT); everything else still fails the build.
+  RUSTSHOT_LIVE_CAPTURE_STRICT: "1"
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  rust-lints:
+    name: Rust lints
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo lint
+
+      - name: Rustdoc warnings
+        run: cargo doc --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  dependency-lints:
+    name: Dependency lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-machete
+      # No --locked: Cargo.lock is not tracked (see .gitignore), so there is no
+      # lockfile to honour and the flag would abort with "the lock file needs to
+      # be updated". The audit therefore covers the versions a fresh resolve
+      # picks, which is exactly what every other job here builds.
+      - name: Security, license, duplicate, and source policy
+        run: cargo deny check -A unmaintained
+      - name: Unused dependencies
+        run: cargo machete --with-metadata .
+
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  test-macos:
+    name: Test + E2E (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  test-linux:
+    name: Test + E2E (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # libayatana-appindicator3-dev is what makes the tray test runnable here, not
+      # a build dependency: tray-icon reaches the Linux tray through
+      # libappindicator-sys, which dlopens ayatana-appindicator3 (or
+      # appindicator3) and panics outright when neither is present -- so
+      # create_tray_builds_the_icon_and_menu compiled fine and then failed at
+      # runtime with "Failed to load ayatana-appindicator3 or appindicator3
+      # dynamic library", taking the whole Linux job down over one test. Installed
+      # rather than skipped, because the tray is a first-class feature and this is
+      # the only job that can exercise its Linux path.
+      - name: Install X11 and GTK dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libatk1.0-dev \
+            libgdk-pixbuf2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libayatana-appindicator3-dev \
+            xvfb
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # xvfb-run provides a virtual X display: the live screen-capture tests
+      # exercise a real capture path instead of skipping (they self-skip when
+      # no display is available at all). Use desktop-like 24-bit color and keep
+      # Xvfb from resetting between the capture library's short-lived clients.
+      - run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -noreset" cargo test
+
+      - name: Install tarpaulin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin
+
+      # --engine llvm: the default ptrace engine builds with -C link-dead-code,
+      # which force-instantiates a generic cast path in `pulp` (via screenshots
+      # -> image 0.24 -> exr) whose size assert fails on every toolchain. The
+      # LLVM engine uses -C instrument-coverage, which does not codegen dead
+      # generics, so `pulp` compiles.
+      - name: Generate coverage
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24 -noreset" cargo tarpaulin --engine llvm --out xml --skip-clean --fail-under 40
+
+  benchmark:
+    name: Performance benchmarks
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure benchmark target
+        shell: pwsh
+        run: Add-Content -LiteralPath $env:GITHUB_ENV -Value "CARGO_TARGET_DIR=$env:RUNNER_TEMP\rustshot-benchmark-target"
+
+      - name: Test benchmark guard
+        run: pwsh -NoProfile -File scripts/benchmark_guard.ps1 -SelfTest
+
+      - name: Benchmark base branch
+        shell: pwsh
+        run: |
+          $baseWorktree = Join-Path $env:RUNNER_TEMP "rustshot-benchmark-base"
+          git worktree add --detach $baseWorktree "${{ github.event.pull_request.base.sha }}"
+          if (Test-Path (Join-Path $baseWorktree "benches\performance_gate.rs")) {
+            Push-Location $baseWorktree
+            try {
+              cargo bench --bench performance_gate -- --save-baseline base
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            } finally {
+              Pop-Location
+            }
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value "BENCHMARK_BASELINE_AVAILABLE=true"
+          } else {
+            Write-Host "The base branch has no performance gate yet; absolute budgets will apply."
+          }
+
+      # Also no --locked, for the same reason as the dependency audit. Base and
+      # head resolve dependencies independently, but both runs happen minutes
+      # apart on one runner against a shared ~/.cargo/registry, so they land on
+      # the same versions and the comparison stays about RustShot's own code.
+      - name: Benchmark pull request
+        shell: pwsh
+        run: |
+          # --baseline-lenient, not --baseline: criterion maps the strict form to
+          # Baseline::CompareStrict, which PANICS for any benchmark id that has no
+          # saved base ("Baseline 'base' must exist before comparison is allowed").
+          # The base worktree runs the base branch's bench file, so every newly
+          # added benchmark is missing there by definition and aborts the whole
+          # head run with exit 101 before the guard step ever executes -- which is
+          # exactly how this job failed on run 32020179991. The lenient form
+          # compares the ids that do have a base and skips the ones that do not,
+          # so a new benchmark is held to its absolute budget for one run and
+          # gains a relative baseline from then on. That is what
+          # docs/github-pipeline.md already documents; the workflow just did not
+          # implement it. Do not "restore" strict mode: it enforces nothing extra
+          # and blocks every future benchmark addition.
+          if ($env:BENCHMARK_BASELINE_AVAILABLE -eq "true") {
+            cargo bench --bench performance_gate -- --baseline-lenient base
+          } else {
+            cargo bench --bench performance_gate
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Enforce performance budgets
+        run: pwsh -NoProfile -File scripts/benchmark_guard.ps1 -CriterionRoot "$env:CARGO_TARGET_DIR\criterion" -RegressionThreshold 0.10
+
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-benchmark-report
+          path: ${{ runner.temp }}\rustshot-benchmark-target\criterion\performance_gate
+          if-no-files-found: warn
+          retention-days: 14

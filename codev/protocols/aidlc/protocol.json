@@ -1,0 +1,205 @@
+{
+  "$schema": "../../protocol-schema.json",
+  "name": "aidlc",
+  "alias": "ai-dlc",
+  "version": "1.0.0",
+  "description": "AIDLC: AI Development Life Cycle — Inception → Construction (design, build) → Operations, in bolts",
+  "input": {
+    "type": "spec",
+    "required": false,
+    "default_for": ["--project", "-p"]
+  },
+  "phases": [
+    {
+      "id": "inception",
+      "name": "Inception",
+      "description": "Mob Elaboration: AI turns business intent into requirements and units of work, the team validates",
+      "type": "build_verify",
+      "build": {
+        "prompt": "inception.md",
+        "artifact": "codev/specs/${PROJECT_TITLE}.md"
+      },
+      "verify": {
+        "type": "spec",
+        "models": ["gemini", "codex", "claude"],
+        "parallel": true
+      },
+      "max_iterations": 1,
+      "on_complete": {
+        "commit": true,
+        "push": true
+      },
+      "checks": {
+        "intent_exists": "test -f codev/specs/${PROJECT_TITLE}.md",
+        "has_units_of_work": {
+          "command": "grep -q '^## Units of Work' codev/specs/${PROJECT_TITLE}.md",
+          "description": "Inception must decompose intent into a '## Units of Work' section — a bolt is scoped from one unit"
+        },
+        "has_open_questions": {
+          "command": "grep -q '^## Clarifications' codev/specs/${PROJECT_TITLE}.md",
+          "description": "AI must record the questions it asked the team, and their answers, under '## Clarifications'"
+        }
+      },
+      "gate": {
+        "name": "intent-approval",
+        "description": "Mob Elaboration sign-off: the team confirms the requirements and units of work match the business intent",
+        "requires": ["intent_exists", "has_units_of_work", "has_open_questions"],
+        "next": "design"
+      },
+      "next": "design"
+    },
+    {
+      "id": "design",
+      "name": "Construction: Logical Design",
+      "description": "AI proposes logical architecture and domain model, one plan phase per unit of work",
+      "type": "build_verify",
+      "build": {
+        "prompt": "design.md",
+        "artifact": "codev/plans/${PROJECT_TITLE}.md"
+      },
+      "verify": {
+        "type": "plan",
+        "models": ["gemini", "codex", "claude"],
+        "parallel": true
+      },
+      "max_iterations": 1,
+      "on_complete": {
+        "commit": true,
+        "push": true
+      },
+      "checks": {
+        "design_exists": "test -f codev/plans/${PROJECT_TITLE}.md",
+        "has_phases_json": "grep -q '\"phases\":' codev/plans/${PROJECT_TITLE}.md",
+        "one_bolt_per_unit": "grep -o '\"id\": *\"[^\"]*\"' codev/plans/${PROJECT_TITLE}.md | wc -l | awk '$1 >= 1 {exit 0} {exit 1}'",
+        "has_domain_model": {
+          "command": "grep -q '^## Domain Model' codev/plans/${PROJECT_TITLE}.md",
+          "description": "Logical design must name the types and invariants it introduces under '## Domain Model'"
+        }
+      },
+      "gate": {
+        "name": "design-approval",
+        "description": "The team validates the logical architecture before any code is written",
+        "requires": ["design_exists", "has_phases_json", "one_bolt_per_unit"],
+        "next": "construction"
+      },
+      "next": "construction"
+    },
+    {
+      "id": "construction",
+      "name": "Construction: Mob Construction",
+      "description": "One bolt per unit of work: AI writes code and tests, the team clarifies in real time",
+      "type": "per_plan_phase",
+      "build": {
+        "prompt": "construction.md",
+        "artifact": "src/**/*.rs"
+      },
+      "verify": {
+        "type": "impl",
+        "models": ["gemini", "codex", "claude"],
+        "parallel": true
+      },
+      "max_iterations": 1,
+      "on_complete": {
+        "commit": true,
+        "push": true
+      },
+      "checks": {
+        "build": {
+          "command": "cargo check --all-targets",
+          "description": "Compilation must succeed before the bolt is verified",
+          "on_fail": "retry",
+          "max_retries": 2
+        },
+        "tests": {
+          "command": "cargo test",
+          "description": "Full test suite — this project has no separate e2e stage",
+          "on_fail": "retry",
+          "max_retries": 2
+        },
+        "fmt": {
+          "command": "cargo fmt --check",
+          "description": "Formatting is mechanical; fix it in the bolt rather than deferring",
+          "on_fail": "retry",
+          "max_retries": 1
+        },
+        "clippy": {
+          "command": "cargo clippy --all-targets -- -D warnings",
+          "description": "Lint clean, matching the CI gate"
+        }
+      },
+      "transition": {
+        "on_complete": "construction",
+        "on_all_phases_complete": "operations"
+      }
+    },
+    {
+      "id": "operations",
+      "name": "Operations",
+      "description": "Release readiness and retrospective: AI proposes the build/release path, the team oversees",
+      "type": "build_verify",
+      "build": {
+        "prompt": "operations.md",
+        "artifact": "codev/reviews/${PROJECT_TITLE}.md"
+      },
+      "verify": {
+        "type": "pr",
+        "models": ["gemini", "codex", "claude"],
+        "parallel": true
+      },
+      "max_iterations": 1,
+      "on_complete": {
+        "commit": true,
+        "push": true
+      },
+      "checks": {
+        "release_build": {
+          "command": "cargo build --release",
+          "description": "The artifact users actually run must build"
+        },
+        "review_has_context_updates": {
+          "command": "grep -q '^## Context Updates' codev/reviews/${PROJECT_TITLE}.md",
+          "description": "Operations must record what the next bolt inherits (rustdoc, features, settings), or why nothing changed"
+        },
+        "review_has_bolt_retrospective": {
+          "command": "grep -q '^## Bolt Retrospective' codev/reviews/${PROJECT_TITLE}.md",
+          "description": "Record where AI proposals needed human correction, so the next bolt starts better informed"
+        }
+      },
+      "gate": {
+        "name": "operations-approval",
+        "description": "Human oversight of the release: the team approves shipping the bolt",
+        "requires": ["release_build", "review_has_context_updates", "review_has_bolt_retrospective"],
+        "next": null
+      },
+      "next": null
+    }
+  ],
+  "signals": {
+    "PHASE_COMPLETE": {
+      "description": "Signal the current bolt's build step is complete",
+      "transitions_to": "verify"
+    },
+    "CLARIFICATION_NEEDED": {
+      "description": "AI has a question only the team can answer; the bolt pauses rather than guessing",
+      "requires": "question"
+    },
+    "BLOCKED": {
+      "description": "Signal the bolt is blocked",
+      "requires": "reason"
+    }
+  },
+  "phase_completion": {
+    "build_succeeds": "cargo check --all-targets 2>&1",
+    "tests_pass": "cargo test 2>&1",
+    "lint_clean": "cargo clippy --all-targets -- -D warnings 2>&1",
+    "commit_has_code": "git log -1 --name-only --pretty=format: | grep -qE '\\.rs$'"
+  },
+  "defaults": {
+    "mode": "strict",
+    "max_iterations": 1,
+    "verify": {
+      "models": ["gemini", "codex", "claude"],
+      "parallel": true
+    }
+  }
+}

@@ -1,0 +1,14 @@
+# Clippy configuration. The lint selection itself lives in Cargo.toml's `[lints]`
+# table, not here — this file only holds values lints read at runtime.
+
+# Keeps suggestions inside what the pinned toolchain guarantees. Several enabled
+# lints (manual_clamp, from_iter_instead_of_collect, iter_on_empty_collections)
+# suggest APIs gated on a minimum version, and without an msrv clippy assumes the
+# latest stable and can propose something that will not compile on the floor this
+# project actually builds against.
+#
+# Tracks the `channel` in rust-toolchain.toml. There is deliberately no
+# `rust-version` in Cargo.toml: the pin exists to work around a const-assert
+# failure in a transitive dependency, not to advertise a support floor to
+# consumers, and the two would then have to be kept in step for no gain.
+msrv = "1.93"

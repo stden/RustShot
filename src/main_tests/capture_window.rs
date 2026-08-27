@@ -1,0 +1,132 @@
+//! `run_cli_with_capture` window-capture and window-listing tests.
+
+use super::*;
+
+#[test]
+fn run_cli_list_windows_returns_window_listing() {
+    let args = Args {
+        list_windows: true,
+        ..base_args()
+    };
+
+    let output =
+        run_cli_with_capture_test(args, |_, _, _| unreachable!("capture fn should not run"))
+            .unwrap();
+    // Empty on a headless CI host, populated on a desktop; both are valid.
+    assert!(
+        output == "No open windows found." || output.starts_with("Open windows:"),
+        "unexpected window listing: {output:?}"
+    );
+}
+
+#[test]
+fn run_cli_window_id_unknown_returns_error() {
+    let args = Args {
+        // A handle value that is never a live window: capture must fail
+        // cleanly rather than blit garbage.
+        window_id: Some(u64::MAX),
+        ..base_args()
+    };
+
+    let result =
+        run_cli_with_capture_test(args, |_, _, _| unreachable!("capture fn should not run"));
+    assert!(result.is_err(), "expected an error, got {result:?}");
+}
+
+#[test]
+fn run_cli_with_capture_no_window_flag_calls_capture_fn() {
+    let args = Args {
+        cli: true,
+        window: false,
+        ..base_args()
+    };
+    let capture_called = Cell::new(false);
+    let window_called = Cell::new(false);
+    let result = run_cli_with_capture(
+        args,
+        |_, _, _| {
+            capture_called.set(true);
+            Ok(PathBuf::from("screen.png"))
+        },
+        |_, _| {
+            window_called.set(true);
+            Ok(PathBuf::from("window.png"))
+        },
+    )
+    .unwrap();
+    assert!(capture_called.get(), "capture fn should be called");
+    assert!(!window_called.get(), "window fn should not be called");
+    assert!(result.contains("screen.png"));
+}
+
+#[test]
+fn run_cli_with_capture_window_error_propagates() {
+    let args = Args {
+        window: true,
+        ..base_args()
+    };
+    let result = run_cli_with_capture(
+        args,
+        |_, _, _| Ok(PathBuf::from("x.png")),
+        |_, _| Err("window not found".to_string()),
+    );
+    assert_eq!(result.unwrap_err(), "window not found");
+}
+
+#[test]
+fn run_cli_with_capture_window_output_path_forwarded() {
+    let args = Args {
+        output: Some(PathBuf::from("custom_window.png")),
+        format: CliFormat::Jpg,
+        window: true,
+        ..base_args()
+    };
+    let result = run_cli_with_capture(
+        args,
+        |_, _, _| unreachable!("should not call capture"),
+        |output, format| {
+            assert_eq!(output, Some(PathBuf::from("custom_window.png")));
+            assert!(matches!(format, capture::Format::Jpg));
+            Ok(PathBuf::from("custom_window.png"))
+        },
+    )
+    .unwrap();
+    assert!(result.contains("custom_window.png"));
+}
+
+#[test]
+fn run_cli_with_capture_window_none_output() {
+    let args = Args {
+        output: None,
+        window: true,
+        ..base_args()
+    };
+    let result = run_cli_with_capture(
+        args,
+        |_, _, _| unreachable!("should not call capture"),
+        |output, _format| {
+            assert!(output.is_none());
+            Ok(PathBuf::from("auto_window.png"))
+        },
+    )
+    .unwrap();
+    assert!(result.contains("auto_window.png"));
+}
+
+// --- run_cli_with_capture: list takes priority over window ---
+
+#[test]
+fn run_cli_with_capture_list_takes_priority_over_window() {
+    let args = Args {
+        list: true,
+        window: true,
+        ..base_args()
+    };
+    let result = run_cli_with_capture(
+        args,
+        |_, _, _| unreachable!("should not call capture"),
+        |_, _| unreachable!("should not call window capture"),
+    )
+    .unwrap();
+    assert!(result.starts_with("Available screens:"));
+}

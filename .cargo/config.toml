@@ -1,0 +1,17 @@
+# No `jobs` cap. This used to be pinned to 2 to bound compiler fan-out on
+# machines with small page files, but the cap applied everywhere and cost more
+# than it protected: a clean dev build measured 127 s at `jobs = 2` versus 56 s
+# using all cores on a 16-core/32 GB machine. Cargo's default is one job per
+# logical CPU. A machine that genuinely needs the old behaviour can set
+# `CARGO_BUILD_JOBS=2` in its environment instead of imposing it on everyone.
+#
+# The linker is deliberately left at the platform default. `lld-link` was
+# measured against it here and lost: 2.50 s versus 1.97 s for an incremental
+# relink, because this binary is small enough that link.exe's startup advantage
+# is not amortised.
+
+[alias]
+lint = "clippy --all-targets --all-features -- -D warnings"
+
+[env]
+RUST_TEST_THREADS = { value = "1", force = false }

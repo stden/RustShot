@@ -1,0 +1,47 @@
+# CI base image for RustShot. Preinstalls system dependencies (X11/GTK),
+# Rust components, and cargo-tarpaulin to eliminate per-job setup overhead.
+FROM rust:1.95.0-slim-trixie
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CARGO_TERM_COLOR=always \
+    CARGO_INCREMENTAL=0 \
+    CARGO_NET_RETRY=10
+
+# System dev libraries required by screenshot/capture/GTK crates.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        pkg-config \
+        libxcb1-dev \
+        libxcb-render0-dev \
+        libxcb-shape0-dev \
+        libxcb-xfixes0-dev \
+        libglib2.0-dev \
+        libgtk-3-dev \
+        libxdo-dev \
+        libatk1.0-dev \
+        libgdk-pixbuf-2.0-dev \
+        libcairo2-dev \
+        libpango1.0-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# rustfmt and clippy are typically in the official rust image; ensure presence.
+RUN rustup component add rustfmt clippy
+
+# cargo-binstall downloads prebuilt binaries for Rust tools (no compilation).
+RUN curl -fsSL https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz \
+    | tar -xz -C /usr/local/cargo/bin/ \
+ && chmod +x /usr/local/cargo/bin/cargo-binstall
+
+# Preinstall cargo-tarpaulin via binstall to avoid 3-5 min compilation in every coverage run.
+RUN cargo binstall -y cargo-tarpaulin
+
+# sccache caches rustc outputs between pipelines/branches. The .gitlab-ci.yml
+# points SCCACHE_DIR at /cache/sccache (runner bind-mount from
+# /srv/gitlab-runner-cache), so the cache survives beyond a single job.
+RUN cargo binstall -y sccache
+
+LABEL org.opencontainers.image.source="https://gitlab.com/stden/RustShot"
+LABEL org.opencontainers.image.description="RustShot CI base image (Rust + GTK/X11 deps + tarpaulin + sccache)"
+LABEL org.opencontainers.image.licenses="MIT"

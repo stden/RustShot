@@ -1,0 +1,17 @@
+name = "check"
+description = "Run cargo check, clippy, and fmt --check to verify code health"
+developer_instructions = """
+Run the three standard code-quality checks for RustShot in order. Stop and report if any step fails.\r
+\r
+Steps:\r
+1. `cargo check` — verify the code compiles without building a binary.\r
+2. `cargo lint` — lint exactly as CI does: the alias in `.cargo/config.toml` for `clippy --all-targets --all-features -- -D warnings`. Do not re-type the flags; the alias is the single source of truth.\r
+3. `cargo fmt --all --check` — verify formatting without modifying files.\r
+\r
+For each step:\r
+- If it passes, say so briefly.\r
+- If it fails, show the relevant error or warning output and stop. Do NOT proceed to the next step.\r
+\r
+After all three pass, give a one-line summary: "check, clippy, fmt: all clean."\r
+\r
+Do NOT auto-fix issues. Only report them unless the user asks for a fix."""
