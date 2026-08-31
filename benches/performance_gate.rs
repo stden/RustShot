@@ -254,6 +254,43 @@ fn performance_gate(c: &mut Criterion) {
         });
     });
 
+    // Appended after every recorded baseline so these monitor-sized fixtures do
+    // not change the cache state of established benchmarks. This is the common
+    // selected-region recording path the exact-fit copy above cannot exercise:
+    // a 1080p rectangle starts midway through a pitched 4K desktop frame.
+    let source_row_pitch_4k = WIDTH_4K as usize * 4 + 256;
+    let pitched_bgra_4k = patterned_bytes(source_row_pitch_4k * HEIGHT_4K as usize);
+    let mut cropped_bgra_1080p = vec![0u8; WIDTH_1080P as usize * HEIGHT_1080P as usize * 4];
+    group.throughput(Throughput::Bytes(cropped_bgra_1080p.len() as u64));
+    group.bench_function("recording_region_copy_1080p_from_4k", |b| {
+        b.iter(|| {
+            record::benchmark_copy_bgra_region(
+                black_box(&pitched_bgra_4k),
+                source_row_pitch_4k,
+                (WIDTH_4K, HEIGHT_4K),
+                (960, 540, WIDTH_1080P, HEIGHT_1080P),
+                (WIDTH_1080P, HEIGHT_1080P),
+                black_box(&mut cropped_bgra_1080p),
+            )
+            .unwrap();
+        });
+    });
+
+    // A 4K monitor makes overlay startup process four times the 1080p pixels.
+    // Keep this separate from the warm rebuild benchmark: this cold path must
+    // continue accounting for the allocation the first overlay open performs.
+    let overlay_screenshot_4k = patterned_bytes(WIDTH_4K as usize * HEIGHT_4K as usize * 4);
+    group.throughput(Throughput::Bytes(overlay_screenshot_4k.len() as u64));
+    group.bench_function("selection_overlay_background_4k", |b| {
+        b.iter(|| {
+            black_box(selection::benchmark_build_overlay_background(
+                black_box(&overlay_screenshot_4k),
+                (WIDTH_4K, HEIGHT_4K),
+                (WIDTH_4K, HEIGHT_4K),
+            ));
+        });
+    });
+
     group.finish();
 }
 

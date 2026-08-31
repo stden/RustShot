@@ -684,6 +684,39 @@ pub fn benchmark_copy_bgra_frame_exact_fit(
     )
 }
 
+/// Expose the production pitched BGRA region copy for benchmarks.
+///
+/// The exact-fit adapter above cannot measure the recorder's common selection
+/// path: a smaller rectangle is cropped from a monitor-sized source whose row
+/// pitch may exceed its visible byte width. Keeping this adapter on
+/// `copy_bgra_region_bottom_up` prevents the benchmark from drifting into a
+/// lookalike implementation that skips the production validation and row flip.
+#[doc(hidden)]
+pub fn benchmark_copy_bgra_region(
+    source: &[u8],
+    source_row_pitch: usize,
+    source_size: (u32, u32),
+    region: (i32, i32, u32, u32),
+    output_size: (u32, u32),
+    output: &mut [u8],
+) -> Result<(), String> {
+    frame::copy_bgra_region_bottom_up(
+        source,
+        source_row_pitch,
+        source_size.0,
+        source_size.1,
+        Region {
+            physical_x: region.0,
+            physical_y: region.1,
+            physical_width: region.2,
+            physical_height: region.3,
+        },
+        output_size.0,
+        output_size.1,
+        output,
+    )
+}
+
 #[cfg(windows)]
 fn record_loop(
     output_path: PathBuf,

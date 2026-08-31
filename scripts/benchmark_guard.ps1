@@ -94,6 +94,19 @@ $Budgets = @(
         Benchmark = "performance_gate/selection_overlay_background_rebuild_1080p"
         MaximumNanoseconds = 4000000.0
     }
+    # Three Criterion runs on 2026-08-31 on a Windows development machine with
+    # an Intel Core i7-12850HX put the median upper confidence bounds at
+    # 0.370-0.421 ms for the pitched crop and 9.21-10.18 ms for the 4K cold
+    # overlay build. These ceilings are 3.6x and 3.4x the slowest observed upper
+    # bounds: consistent with the established gate while leaving CI headroom.
+    [pscustomobject]@{
+        Benchmark = "performance_gate/recording_region_copy_1080p_from_4k"
+        MaximumNanoseconds = 1500000.0
+    }
+    [pscustomobject]@{
+        Benchmark = "performance_gate/selection_overlay_background_4k"
+        MaximumNanoseconds = 35000000.0
+    }
 )
 
 function Get-JsonNumber {

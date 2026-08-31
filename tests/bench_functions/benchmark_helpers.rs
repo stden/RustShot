@@ -120,6 +120,19 @@ fn guard_budget_ids() -> Vec<&'static str> {
         .collect()
 }
 
+/// Source belonging to one named Criterion benchmark, up to the next benchmark.
+fn gate_benchmark_section(id: &str) -> &'static str {
+    let marker = format!("group.bench_function(\"{id}\"");
+    let (_, section) = PERFORMANCE_GATE
+        .split_once(marker.as_str())
+        .unwrap_or_else(|| panic!("performance gate does not declare benchmark {id:?}"));
+    let end = section
+        .find("group.bench_function(\"")
+        .or_else(|| section.find("group.finish()"))
+        .unwrap_or(section.len());
+    &section[..end]
+}
+
 #[test]
 fn performance_gate_benchmark_ids_parse() {
     let gate = gate_benchmark_ids();
@@ -224,5 +237,29 @@ fn performance_gate_measures_the_hdr_tone_map() {
         "benches/performance_gate.rs must call the FP16 scRGB tone map: it is the \
          heaviest per-pixel path in the recorder and the only one already over its \
          frame interval, and the guard reads no Criterion target but this one"
+    );
+}
+
+#[test]
+fn performance_gate_measures_the_pitched_recording_region_copy() {
+    let section = gate_benchmark_section("recording_region_copy_1080p_from_4k");
+    assert!(
+        section.contains("record::benchmark_copy_bgra_region("),
+        "the selected-region gate must call the production pitched BGRA crop adapter; \
+         an exact-fit copy would omit both source pitch and crop-offset costs"
+    );
+}
+
+#[test]
+fn performance_gate_measures_the_4k_overlay_cold_build() {
+    let section = gate_benchmark_section("selection_overlay_background_4k");
+    assert!(
+        section.contains("selection::benchmark_build_overlay_background("),
+        "the 4K overlay gate must call the production cold-build adapter"
+    );
+    assert!(
+        section.contains("black_box(&overlay_screenshot_4k)"),
+        "the 4K overlay gate must process its monitor-sized source instead of a \
+         smaller fixture"
     );
 }

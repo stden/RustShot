@@ -87,3 +87,51 @@ fn benchmark_copy_bgra_frame_exact_fit_rejects_an_oversized_row() {
             .expect_err("a row pitch that overflows must be reported");
     assert_eq!(error, "Captured frame row is too large");
 }
+
+#[test]
+fn benchmark_copy_bgra_region_crops_pitched_source_and_flips_rows() {
+    // Two 3-pixel rows with one padding pixel after each row. Selecting the
+    // rightmost two pixels must ignore that pitch padding and emit bottom-up
+    // rows, proving the benchmark adapter reaches the recorder's crop path.
+    let source = [
+        1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 201, 202, 203, 204, 13, 14, 15, 16, 17, 18, 19,
+        20, 21, 22, 23, 24, 205, 206, 207, 208,
+    ];
+    let mut output = [0u8; 16];
+
+    rustshot::record::benchmark_copy_bgra_region(
+        &source,
+        16,
+        (3, 2),
+        (1, 0, 2, 2),
+        (2, 2),
+        &mut output,
+    )
+    .expect("a valid pitched region must copy");
+
+    assert_eq!(
+        output,
+        [17, 18, 19, 20, 21, 22, 23, 24, 5, 6, 7, 8, 9, 10, 11, 12]
+    );
+}
+
+#[test]
+fn benchmark_copy_bgra_region_preserves_source_pitch_validation() {
+    let source = [0u8; 24];
+    let mut output = [0u8; 4];
+
+    let error = rustshot::record::benchmark_copy_bgra_region(
+        &source,
+        8,
+        (3, 1),
+        (0, 0, 1, 1),
+        (1, 1),
+        &mut output,
+    )
+    .expect_err("a pitch shorter than the captured source row must be rejected");
+
+    assert_eq!(
+        error,
+        "Captured row pitch 8 is smaller than the 12-byte row"
+    );
+}
