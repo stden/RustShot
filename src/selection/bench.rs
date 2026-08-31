@@ -274,18 +274,19 @@ where
 ///
 /// This is the screenshot-bytes-to-softbuffer-pixels conversion that runs when
 /// the overlay opens and again on every resize, so it sits inside the delay
-/// between the PrintScreen keypress and the overlay appearing. Returns the pixel
-/// count so the work cannot be optimised away.
+/// between the PrintScreen keypress and the overlay appearing. Returns the
+/// converted pixels so Criterion's `black_box` makes every write observable;
+/// returning only the length lets an optimised build discard the conversion.
 #[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_build_overlay_background(
     screenshot: &[u8],
     image_size: (u32, u32),
     overlay_size: (u32, u32),
-) -> usize {
+) -> Vec<u32> {
     let mut cache = overlay::OverlayPixelMapCache::default();
     cache.update_frame(overlay_size, image_size, screenshot);
-    cache.background.len()
+    cache.background
 }
 
 /// Repeated background rebuilds against one reused buffer.
@@ -318,7 +319,7 @@ impl OverlayBackgroundBenchmark {
     }
 
     #[doc(hidden)]
-    pub fn rebuild(&mut self) -> usize {
+    pub fn rebuild(&mut self) -> &[u32] {
         overlay::build_overlay_background_into(
             &mut self.background,
             &self.screenshot,
@@ -326,7 +327,7 @@ impl OverlayBackgroundBenchmark {
             &self.x_map,
             &self.y_map,
         );
-        self.background.len()
+        &self.background
     }
 }
 

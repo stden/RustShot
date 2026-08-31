@@ -171,7 +171,9 @@ fn performance_gate(c: &mut Criterion) {
         (WIDTH_1080P, HEIGHT_1080P),
     );
     group.bench_function("selection_overlay_background_rebuild_1080p", |b| {
-        b.iter(|| black_box(overlay_background.rebuild()));
+        b.iter(|| {
+            let _ = black_box(overlay_background.rebuild());
+        });
     });
 
     // Appended last on purpose: inserting a benchmark ahead of the three above

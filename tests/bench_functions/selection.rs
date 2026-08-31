@@ -276,24 +276,42 @@ fn rgba_fixture(width: u32, height: u32) -> Vec<u8> {
 }
 
 #[test]
-fn benchmark_build_overlay_background_returns_the_overlay_pixel_count() {
-    let screenshot = rgba_fixture(4, 4);
+fn benchmark_build_overlay_background_exposes_the_converted_pixels() {
+    let screenshot = [10u8, 20, 30, 255];
     assert_eq!(
-        rustshot::selection::benchmark_build_overlay_background(&screenshot, (4, 4), (2, 2)),
-        4
+        rustshot::selection::benchmark_build_overlay_background(&screenshot, (1, 1), (1, 1)),
+        vec![u32::from_le_bytes([30, 20, 10, 0])]
     );
 }
 
 #[test]
-fn overlay_background_benchmark_rebuilds_into_the_same_sized_buffer() {
+fn benchmark_build_overlay_background_uses_the_overlay_dimensions() {
     let screenshot = rgba_fixture(4, 4);
-    let mut fixture =
-        rustshot::selection::OverlayBackgroundBenchmark::new(screenshot, (4, 4), (2, 2));
+    let pixels =
+        rustshot::selection::benchmark_build_overlay_background(&screenshot, (4, 4), (2, 2));
+    assert_eq!(pixels.len(), 4);
+}
 
-    // The point of the fixture is that a rebuild reuses the buffer, so every
-    // call must report the same length rather than growing it.
-    assert_eq!(fixture.rebuild(), 4);
-    assert_eq!(fixture.rebuild(), 4);
+#[test]
+fn overlay_background_benchmark_exposes_pixels_after_every_rebuild() {
+    let screenshot = vec![10u8, 20, 30, 255];
+    let mut fixture =
+        rustshot::selection::OverlayBackgroundBenchmark::new(screenshot, (1, 1), (1, 1));
+    let expected = [u32::from_le_bytes([30, 20, 10, 0])];
+
+    // Returning the converted slice makes the writes observable to Criterion;
+    // returning only its length lets an optimized build discard the pixel work.
+    let first = fixture.rebuild();
+    assert_eq!(first, expected);
+    let allocation = first.as_ptr();
+
+    let second = fixture.rebuild();
+    assert_eq!(second, expected);
+    assert_eq!(
+        second.as_ptr(),
+        allocation,
+        "the warm benchmark must reuse its background allocation"
+    );
 }
 
 #[test]
