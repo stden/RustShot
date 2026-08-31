@@ -42,6 +42,7 @@ struct RustShotWorld {
     has_screen: bool,
     format_explicit: bool,
     app_mode: Option<cli::AppMode>,
+    executable_process: Option<std::process::Output>,
 
     // --- format resolution ---
     format_from_ext: Option<Option<capture::Format>>,

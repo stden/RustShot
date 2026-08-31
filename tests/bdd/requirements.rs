@@ -8,5 +8,7 @@ mod recording;
 mod selection;
 #[path = "requirements/settings.rs"]
 mod settings;
+#[path = "requirements/startup.rs"]
+mod startup;
 #[path = "requirements/tray.rs"]
 mod tray;
