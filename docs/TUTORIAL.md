@@ -126,6 +126,18 @@ synchronises this registry value with the setting:
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\RustShot = "<path of the exe you launched>"
 ```
 
+```mermaid
+flowchart TD
+    Installer["Windows installer"] -->|initial registration| Write["Write the installed exe path to HKCU Run"]
+    Dialog["Settings dialog: Save"] -->|writes| Config["settings.json"]
+    Startup["Tray-mode startup"] --> Read["Read auto_start<br/>default: true"]
+    Config --> Read
+    Read --> Enabled{"auto_start enabled?"}
+    Enabled -->|Yes| Write
+    Enabled -->|No| Delete["Delete RustShot from HKCU Run"]
+    Write --> Login["Windows launches RustShot at next sign-in"]
+```
+
 Four consequences:
 
 - It's `HKCU`, never `HKLM` — deliberately, so RustShot never needs admin rights.
@@ -156,6 +168,15 @@ puts RustShot into one-shot CLI mode. `--cli`, `--list`, `--window`, `--output`,
 alone; `--mcp` beats all of them; only a bare command line reaches tray mode. So
 `RustShot --format jpg` takes one screenshot and exits — it does *not* start the
 tray with JPEG as the default.
+
+```mermaid
+flowchart TD
+    Start["RustShot starts"] --> Mcp{"--mcp present?"}
+    Mcp -->|Yes| Server["MCP server over stdio"]
+    Mcp -->|No| Capture{"Any capture-related flag?"}
+    Capture -->|Yes| Cli["One-shot CLI mode"]
+    Capture -->|No| Tray["Tray mode"]
+```
 
 List your monitors (0-based):
 
@@ -217,6 +238,21 @@ The second lists exactly four tools:
 The capture tools return a `Saved to <path>` text block followed by a base64
 `image` block, so the assistant can look at the screenshot rather than just be
 told where it is.
+
+```mermaid
+sequenceDiagram
+    participant Client as MCP client
+    participant Server as RustShot --mcp
+    participant Capture as Capture backend
+    Client->>Server: initialize
+    Server-->>Client: server info and capabilities
+    Client->>Server: tools/list
+    Server-->>Client: four RustShot tools
+    Client->>Server: tools/call capture_screen
+    Server->>Capture: capture requested screen
+    Capture-->>Server: image bytes
+    Server-->>Client: saved path and inline image
+```
 
 Client config:
 
