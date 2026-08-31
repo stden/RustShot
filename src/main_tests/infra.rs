@@ -224,6 +224,22 @@ fn child_process_is_running_covers_every_try_wait_outcome() {
 }
 
 #[test]
+fn recording_stop_writes_the_exact_marker_to_the_requested_path() {
+    let path = Path::new("recording.stop");
+    let mut writes = 0;
+
+    let result = request_recording_stop_with(path, |actual_path, contents| {
+        writes += 1;
+        assert_eq!(actual_path, path);
+        assert_eq!(contents, b"stop");
+        Ok(())
+    });
+
+    assert_eq!(result, Ok(()));
+    assert_eq!(writes, 1, "one toggle must emit exactly one stop request");
+}
+
+#[test]
 fn recording_stop_reports_signal_write_failure() {
     let path = std::path::Path::new("blocked.stop");
     let error = request_recording_stop_with(path, |_, _| {
@@ -259,6 +275,20 @@ fn stop_flag_path_pins_the_exact_ipc_filename_pattern() {
     assert_eq!(
         stop_flag_path(1234),
         std::env::temp_dir().join("rustshot_stop_1234.flag")
+    );
+}
+
+#[test]
+fn stop_flag_path_preserves_the_full_pid_range() {
+    // PIDs are opaque identifiers. Truncating one while formatting the flag
+    // path could make two recording children share a stop request.
+    assert_eq!(
+        stop_flag_path(0),
+        std::env::temp_dir().join("rustshot_stop_0.flag")
+    );
+    assert_eq!(
+        stop_flag_path(u32::MAX),
+        std::env::temp_dir().join("rustshot_stop_4294967295.flag")
     );
 }
 
