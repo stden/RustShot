@@ -119,30 +119,45 @@ it — that's the quickest way to make it exist.
 
 ## 🔑 Step 8 — auto-start, and where settings live
 
-On Windows, **auto-start is on by default**. Every time tray mode starts it
-synchronises this registry value with the setting:
+On Windows, **auto-start is on by default**. Before the first tray starts,
+RustShot copies itself to a stable per-user location and registers that copy:
 
 ```text
-HKCU\Software\Microsoft\Windows\CurrentVersion\Run\RustShot = "<path of the exe you launched>"
+%LOCALAPPDATA%\Programs\RustShot\RustShot.exe
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run\RustShot = "%LOCALAPPDATA%\Programs\RustShot\RustShot.exe"
 ```
 
 ```mermaid
 flowchart TD
-    Installer["Windows installer"] -->|initial registration| Write["Write the installed exe path to HKCU Run"]
+    Installer["Windows installer"] --> Installed["Stable per-user executable"]
     Dialog["Settings dialog: Save"] -->|writes| Config["settings.json"]
     Startup["Tray-mode startup"] --> Read["Read auto_start<br/>default: true"]
     Config --> Read
     Read --> Enabled{"auto_start enabled?"}
-    Enabled -->|Yes| Write
+    Enabled -->|Yes| AtTarget{"Already the stable copy?"}
     Enabled -->|No| Delete["Delete RustShot from HKCU Run"]
-    Write --> Login["Windows launches RustShot at next sign-in"]
+    Delete --> Tray
+    AtTarget -->|No| Exists{"Stable copy already exists?"}
+    Exists -->|No| Install["Create directory and atomically copy executable"]
+    Exists -->|Yes| Write
+    Install --> Write["Write stable path to HKCU Run"]
+    Write --> Relaunch["Launch installed copy; source exits"]
+    Relaunch --> Refresh
+    AtTarget -->|Yes| Refresh["Refresh stable path in HKCU Run"]
+    Installed --> Refresh
+    Refresh --> Tray["Start tray and hotkeys"]
 ```
 
-Four consequences:
+Consequences:
 
 - It's `HKCU`, never `HKLM` — deliberately, so RustShot never needs admin rights.
-- The value is **the exe you launched last**. Run it from `target\release\` and
-  that build directory becomes your login entry.
+- A downloaded executable or `target\release\RustShot.exe` is only the source;
+  Windows sign-in launches the stable copy under `%LOCALAPPDATA%`.
+- Later launches from a build or download folder hand off to the existing stable
+  copy without overwriting it. To upgrade a self-installed copy, exit the tray,
+  remove or replace that stable executable, then launch the new release.
+- CLI, MCP, selection, and recording-helper processes do not install or touch
+  auto-start; only a bare launch enters tray mode.
 - Deleting the value by hand does **not** stick: the next tray start writes it
   back.
 - The sync is two-way, so there is a real off switch.
@@ -155,8 +170,8 @@ Off Windows the setting exists but does nothing — the sync is Windows-only.
 
 > The Windows installer writes the same `HKCU\...\Run\RustShot` value at install
 > time (see [INNO_SETUP_PIPELINE.md](INNO_SETUP_PIPELINE.md)), so both the
-> installer and the running app touch that key. The app is the one that keeps
-> rewriting it.
+> installer and the running app touch that key. Its default per-user destination
+> is the same stable directory used by self-installation.
 
 ---
 

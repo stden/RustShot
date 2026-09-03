@@ -249,8 +249,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path target\release | Out-Null
           Copy-Item target\x86_64-pc-windows-msvc\release\rustshot.exe target\release\rustshot.exe
 
-      # Build the installer (Inno Setup is preinstalled on windows-latest)
-      - run: iscc installer.iss
+      # Resolve the template version, then build the installer
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content Cargo.toml | Select-String '^version = "(.*)"').Matches.Groups[1].Value
+          (Get-Content installer.iss).Replace('{{VERSION}}', $version) | Set-Content installer.iss
+          iscc installer.iss
 
       # Upload artifacts
       - uses: actions/upload-artifact@v4

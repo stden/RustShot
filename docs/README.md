@@ -30,7 +30,7 @@ The hard-won, non-obvious constraints are documented at the code they constrain:
 | `capture/platform.rs::capture_active_window_platform` | Why `GetDC(None)` is deliberate (null HWND ≠ `Some(HWND::default())`). |
 | `record.rs` (recording hot loop) | Why the BGRA buffer is preallocated and capture is region-scoped (per-frame allocation was the lag source). |
 | `app/runtime.rs::stop_flag_path` | The `%TEMP%/rustshot_stop_<pid>.flag` IPC contract; one helper so the parent and child paths cannot drift. |
-| `app/autorun.rs::sync_autorun` | Two-way autostart sync; `HKCU` only (keeps RustShot elevation-free); Tray mode only. |
+| `app/autorun.rs::sync_autorun` | Per-user self-install and two-way autostart sync; stable `%LOCALAPPDATA%` executable; `HKCU` and Tray mode only. |
 | `tray.rs` (menu IDs) | Why recording is one toggle entry, not Start + Stop. |
 
 ## 2. Behaviour → executable specifications
@@ -46,8 +46,8 @@ cargo test --test bdd
 Covers app-mode routing, CLI arguments, format resolution and output paths,
 settings normalization and persistence, multi-monitor layout and overlay
 targeting, drag→region, recording validation/timing, active-window and live
-capture, pixel conversion, the tray, and the MCP JSON-RPC contract — 20 feature
-files. A spec that drifts from the code fails CI.
+capture, first-run startup installation, pixel conversion, the tray, and the MCP
+JSON-RPC contract. A spec that drifts from the code fails CI.
 
 Two further test targets guard structure rather than behaviour:
 `tests/lint_policy.rs` (the curated `[lints]` table in `Cargo.toml` and `msrv` in
@@ -72,7 +72,7 @@ has. Pick a protocol per project, not per commit — see
 
 | File | Topic |
 |------|-------|
-| [`TUTORIAL.md`](TUTORIAL.md) | **Tutorial, part 2.** Part 1 is in [`README.md`](../README.md) (clone → build → visible tray icon → first capture); this continues with recording, the settings dialog, the `HKCU\...\Run` auto-start entry and how to switch it off, the MCP server, per-platform limits, and troubleshooting keyed on RustShot's literal error strings. |
+| [`TUTORIAL.md`](TUTORIAL.md) | **Tutorial, part 2.** Part 1 is in [`README.md`](../README.md) (clone → build → visible tray icon → first capture); this continues with recording, the settings dialog, stable per-user self-installation and its `HKCU\...\Run` entry, the MCP server, per-platform limits, and troubleshooting keyed on RustShot's literal error strings. |
 | [`INSTALLERS.md`](INSTALLERS.md) | Installer overview. |
 | [`INNO_SETUP_PIPELINE.md`](INNO_SETUP_PIPELINE.md) | Inno Setup packaging pipeline. |
 | [`github-pipeline.md`](github-pipeline.md) | CI pipeline notes. |

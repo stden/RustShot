@@ -20,6 +20,10 @@ pub(crate) mod runtime;
 pub(crate) mod tray_app;
 
 pub(crate) use autorun::*;
+#[doc(hidden)]
+pub use autorun::{
+    benchmark_sync_autorun_at_with_handlers, benchmark_sync_current_exe_autorun_at_with_handlers,
+};
 pub(crate) use cli_mode::*;
 pub(crate) use runtime::*;
 pub(crate) use tray_app::*;
@@ -58,10 +62,20 @@ pub fn run() {
         crate::cli::AppMode::Cli => run_cli(args),
         crate::cli::AppMode::Tray => {
             #[cfg(windows)]
-            sync_autorun(crate::settings::load_settings().auto_start);
+            match sync_autorun(crate::settings::load_settings().auto_start) {
+                Ok(StartupAction::Continue) => {}
+                Ok(StartupAction::Exit) => {
+                    info!("Installed RustShot for Windows startup; exiting source process");
+                    return;
+                }
+                Err(error) => error!("Windows startup installation failed: {error}"),
+            }
 
-            let event_loop = EventLoop::new().expect("Failed to create event loop");
+            let event_loop = EventLoop::<RustShotEvent>::with_user_event()
+                .build()
+                .expect("Failed to create event loop");
             event_loop.set_control_flow(ControlFlow::Wait);
+            install_event_handlers(event_loop.create_proxy());
 
             let mut app = match RustShotApp::new() {
                 Ok(app) => app,

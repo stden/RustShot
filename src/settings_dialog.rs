@@ -8,13 +8,16 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::core::{w, Error, PCWSTR};
+use windows::Win32::Foundation::{
+    ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, WIN32_ERROR, WPARAM,
+};
 use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HBRUSH};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, SIGDN_FILESYSPATH};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -52,6 +55,18 @@ impl Drop for DialogGuard {
     }
 }
 
+/// Balances a successful `CoInitializeEx` on the dialog thread.
+struct ComGuard;
+
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        // SAFETY: `ComGuard` is constructed only after `CoInitializeEx`
+        // succeeds and never leaves that thread, so this is the matching
+        // uninitialisation on the same apartment.
+        unsafe { CoUninitialize() };
+    }
+}
+
 /// Show the native settings dialog.  Re-entry safe; spawns a dedicated thread.
 pub(crate) fn show_settings_dialog() {
     claim_dialog_slot_with(|| {
@@ -63,7 +78,9 @@ pub(crate) fn show_settings_dialog() {
                 // loop. It is called on a dedicated thread (spawned here) with
                 // COM initialised inside the function. The `DialogGuard` RAII
                 // ensures `DIALOG_OPEN` is reset even if a panic occurs.
-                unsafe { run_dialog() };
+                if let Err(error) = unsafe { run_dialog() } {
+                    log::error!("Failed to open the settings dialog: {error}");
+                }
             })
             .map(|_| ())
     });
@@ -102,20 +119,32 @@ where
 ///
 /// Must be called on a dedicated thread with no prior COM initialisation.
 /// All Win32 handles are valid for the lifetime of the message loop.
-unsafe fn run_dialog() {
+unsafe fn run_dialog() -> Result<(), String> {
     // SAFETY: the contract above requires a thread with no prior COM
     // initialisation, so requesting an STA cannot collide with an existing
-    // apartment of a different model — the one failure mode that would make the
-    // `CoUninitialize` below unbalanced (a failed init does not take a
-    // reference on the apartment).
-    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    // apartment of a different model — a failed initialisation does not take a
+    // reference on the apartment and therefore must not construct `ComGuard`.
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+        .ok()
+        .map_err(|error| format!("Failed to initialise COM: {error}"))?;
+    let _com_guard = ComGuard;
+
+    // SAFETY: a null module name asks for the file used to create this process;
+    // it does not dereference a caller-provided pointer.
+    // Application-local window classes are owned and looked up by module
+    // instance. Supplying the real executable module makes the registration
+    // and creation pair unambiguous instead of relying on Win32's treatment of
+    // a null instance handle.
+    let module = unsafe { GetModuleHandleW(None) }
+        .map_err(|error| format!("Failed to get the executable module: {error}"))?;
+    let instance = HINSTANCE(module.0);
 
     let class_name = w!("RustShotSettingsWnd");
 
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         lpfnWndProc: Some(wnd_proc),
-        hInstance: HINSTANCE(std::ptr::null_mut()),
+        hInstance: instance,
         lpszClassName: class_name,
         // SAFETY: `IDC_ARROW` is one of the predefined cursor atoms, which is
         // exactly what `LoadCursorW` expects when no module handle is supplied.
@@ -128,37 +157,64 @@ unsafe fn run_dialog() {
     // own size, which is how the API decides what it may read. Both `w!`
     // pointers it holds (`lpszClassName`) are static literals, so the class
     // name outlives the registration, and `wnd_proc` has the WNDPROC signature.
-    unsafe { RegisterClassExW(&wc) };
+    let class_atom = unsafe { RegisterClassExW(&wc) };
+    if class_atom == 0 {
+        let error = Error::from_thread();
+        if WIN32_ERROR::from_error(&error) != Some(ERROR_CLASS_ALREADY_EXISTS) {
+            return Err(format!("Failed to register the window class: {error}"));
+        }
+    }
 
     // SAFETY: `class_name` was just registered above, so the class exists and
     // its `wnd_proc` will receive this window's messages on this thread. The
-    // title is a static `w!` literal. `None` for parent/menu/instance/param is
-    // the documented way to create an unowned top-level window; the returned
-    // handle can be dropped because the window is reached again only through
-    // `wnd_proc`, which destroys it and ends the loop below via WM_DESTROY.
-    let _ = unsafe {
+    // title is a static `w!` literal. `None` for parent/menu/param is the
+    // documented way to create an unowned top-level window, while `instance`
+    // is the same executable module that owns the class. The returned handle
+    // remains live through the message loop and is destroyed by `wnd_proc`.
+    let hwnd = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             class_name,
             w!("RustShot Settings"),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             460,
             300,
             None,
             None,
-            None,
+            Some(instance),
             None,
         )
-    };
+    }
+    .map_err(|error| format!("Failed to create the window: {error}"))?;
+
+    // SAFETY: `hwnd` was just created on this thread and remains live through
+    // the message loop below. `ShowWindow` reports the previous visibility
+    // state rather than success, so its return value is intentionally unused.
+    // Foreground activation can
+    // legitimately be denied by Windows focus-stealing rules; the window is
+    // still visible and available from the taskbar in that case.
+    let _ = unsafe { ShowWindow(hwnd, SW_SHOWNORMAL) };
+    let _ = unsafe { SetForegroundWindow(hwnd) };
 
     let mut msg = MSG::default();
     // SAFETY: `msg` is a live local that outlives every iteration, so the OS may
     // write the next message into it. A `None` window filter drains this
     // thread's own queue, and the loop ends on WM_QUIT, which `wnd_proc` posts
     // from WM_DESTROY.
-    while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
+    loop {
+        let status = unsafe { GetMessageW(&mut msg, None, 0, 0) }.0;
+        if status == -1 {
+            let error = Error::from_thread();
+            // SAFETY: `hwnd` is still owned by this thread because WM_QUIT has
+            // not ended the loop; destroy it before abandoning the thread.
+            let _ = unsafe { DestroyWindow(hwnd) };
+            return Err(format!("Failed to read a window message: {error}"));
+        }
+        if status == 0 {
+            break;
+        }
         // SAFETY: `msg` was just filled in by `GetMessageW` and is only read
         // here, so the shared reference is sound; translation adds any character
         // message to this thread's own queue, ahead of the dispatch below.
@@ -169,13 +225,7 @@ unsafe fn run_dialog() {
         unsafe { DispatchMessageW(&msg) };
     }
 
-    // SAFETY: balances the `CoInitializeEx` above on the same thread. It runs only
-    // after the message loop has ended, and everything the dialog allocates through
-    // COM is confined to `browse_folder`: the `IFileOpenDialog` from
-    // `CoCreateInstance`, the `IShellItem` from `GetResult`, and the
-    // `CoTaskMemAlloc`ed path string. All three are locals released or freed before
-    // that function returns, so no interface pointer outlives the apartment.
-    unsafe { CoUninitialize() };
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -277,11 +327,23 @@ unsafe fn handle_command(hwnd: HWND, id: i32) {
                         // the success path — so it can own the message box.
                         unsafe { show_error(hwnd, &format!("Failed to save: {e}")) };
                     } else {
-                        crate::app::sync_autorun(settings.auto_start);
-                        // SAFETY: `hwnd` is the live window created on this
-                        // thread, the only thread allowed to destroy it, and
-                        // nothing uses the handle afterwards.
-                        let _ = unsafe { DestroyWindow(hwnd) };
+                        match crate::app::sync_current_exe_autorun(settings.auto_start) {
+                            Ok(()) => {
+                                // SAFETY: `hwnd` is the live window created on this
+                                // thread, the only thread allowed to destroy it, and
+                                // nothing uses the handle afterwards.
+                                let _ = unsafe { DestroyWindow(hwnd) };
+                            }
+                            // SAFETY: the settings were saved but the dialog is
+                            // still alive, so it can report the separate registry
+                            // failure and let the user retry.
+                            Err(error) => unsafe {
+                                show_error(
+                                    hwnd,
+                                    &format!("Failed to update Windows startup: {error}"),
+                                )
+                            },
+                        }
                     }
                 }
                 // SAFETY: validation failed before anything was written, so the

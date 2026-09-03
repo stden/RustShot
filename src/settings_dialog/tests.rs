@@ -219,3 +219,73 @@ fn dialog_slot_admits_only_one_holder() {
 
     DIALOG_OPEN.store(false, Ordering::SeqCst);
 }
+
+fn wait_for_settings_window() -> Option<HWND> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        // SAFETY: both names are static, NUL-terminated UTF-16 literals. A
+        // successful lookup returns a live top-level window handle.
+        if let Ok(hwnd) = unsafe { FindWindowW(w!("RustShotSettingsWnd"), w!("RustShot Settings")) }
+        {
+            let mut process_id = 0;
+            // SAFETY: `hwnd` came from `FindWindowW`, and `process_id` remains
+            // writable for the duration of this synchronous query.
+            unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
+            // SAFETY: `hwnd` is the live handle returned above; this query does
+            // not retain it or mutate the window.
+            let visible = unsafe { IsWindowVisible(hwnd) }.as_bool();
+            // `FindWindowW` can observe the handle in the narrow interval
+            // between `CreateWindowExW` and `ShowWindow`, so wait for both the
+            // right process and the user-visible state.
+            if process_id == std::process::id() && visible {
+                return Some(hwnd);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    None
+}
+
+fn close_settings_window(hwnd: HWND) -> bool {
+    // Posting rather than calling `DestroyWindow` is required because the
+    // dialog belongs to its worker thread, not this test thread.
+    // SAFETY: `hwnd` is the live handle returned by `wait_for_settings_window`;
+    // WM_CLOSE carries no pointer arguments.
+    if unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }.is_err() {
+        return false;
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        if !DIALOG_OPEN.load(Ordering::SeqCst) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    false
+}
+
+#[test]
+fn settings_dialog_opens_visible_controls_and_can_reopen() {
+    let _serial = lock_dialog_flag();
+    DIALOG_OPEN.store(false, Ordering::SeqCst);
+
+    for attempt in 1..=2 {
+        show_settings_dialog();
+        let hwnd = wait_for_settings_window()
+            .unwrap_or_else(|| panic!("attempt {attempt}: settings window did not appear"));
+
+        // SAFETY: the window is live until WM_CLOSE is posted below. A missing
+        // Save control is reported as `Err`, not as an invalid usable handle.
+        let visible = unsafe { IsWindowVisible(hwnd) }.as_bool();
+        let has_save_button = unsafe { GetDlgItem(Some(hwnd), IDC_SAVE_BTN) }.is_ok();
+        let closed = close_settings_window(hwnd);
+
+        assert!(visible, "attempt {attempt}: settings window was hidden");
+        assert!(
+            has_save_button,
+            "attempt {attempt}: WM_CREATE did not build the dialog controls"
+        );
+        assert!(closed, "attempt {attempt}: settings dialog did not close");
+    }
+}

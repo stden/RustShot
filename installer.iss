@@ -4,7 +4,10 @@ AppVersion={{VERSION}}
 AppPublisher=RustShot Contributors
 AppPublisherURL=https://github.com/stden/RustShot
 AppSupportURL=https://github.com/stden/RustShot/issues
-DefaultDirName={autopf}\RustShot
+DefaultDirName={localappdata}\Programs\RustShot
+; Self-install and the setup package deliberately share one stable path
+DisableDirPage=yes
+UsePreviousAppDir=no
 DefaultGroupName=RustShot
 OutputDir=Output
 OutputBaseFilename=RustShotSetup

@@ -6,7 +6,7 @@
 
 use cucumber::gherkin::Step;
 use cucumber::{given, then, when, World};
-use rustshot::{capture, cli, mcp, record, selection, settings, tray};
+use rustshot::{app, capture, cli, mcp, record, selection, settings, tray};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -43,6 +43,15 @@ struct RustShotWorld {
     format_explicit: bool,
     app_mode: Option<cli::AppMode>,
     executable_process: Option<std::process::Output>,
+
+    // --- first-run startup installation ---
+    startup_current_exe: Option<PathBuf>,
+    startup_local_app_data: Option<PathBuf>,
+    startup_installed_exe: Option<PathBuf>,
+    startup_installed_exists: bool,
+    startup_events: Vec<String>,
+    startup_should_exit: Option<Result<bool, String>>,
+    startup_settings_result: Option<Result<(), String>>,
 
     // --- format resolution ---
     format_from_ext: Option<Option<capture::Format>>,

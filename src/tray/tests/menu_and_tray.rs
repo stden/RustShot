@@ -86,9 +86,9 @@ fn menu_action_from_id_unknown_or_empty_is_none() {
 
 #[test]
 fn menu_receiver_is_the_process_wide_singleton() {
-    // `about_to_wait` drains this receiver every wake-up. If each call handed
-    // back a fresh channel, menu clicks would be split across receivers and
-    // silently lost, so the singleton identity is load-bearing.
+    // Receiver-based callers must always observe the same process-wide channel.
+    // If each call handed back a fresh channel, menu clicks would be split
+    // across receivers and silently lost.
     let first = menu_receiver();
     let second = menu_receiver();
     assert!(std::ptr::eq(first, second));

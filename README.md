@@ -79,6 +79,12 @@ target\release\RustShot.exe          # 🪟 (drop the .exe on 🐧🍎)
 > startup, and the reason is the last line of
 > `%APPDATA%\RustShot\rustshot.log`.
 
+> On its first bare Windows launch, RustShot installs itself at
+> `%LOCALAPPDATA%\Programs\RustShot\RustShot.exe`, registers that stable copy to
+> start at sign-in, relaunches it, and exits the original process. This happens
+> only when **Start with Windows** is enabled (the default); CLI, MCP, and helper
+> processes never self-install.
+
 **4️⃣ Press `PrintScreen` and drag a box.** The region goes straight to your 📋
 clipboard — paste it anywhere. `Esc` or right-click cancels, and drags of 5 px or
 less are discarded, so a plain click looks like nothing happened.
@@ -226,10 +232,12 @@ editable in the tray's Settings dialog — see
 | CLI captures **with** `--output <path>` | exactly that path — a bare filename lands in the **current directory** | You asked for it |
 | Recordings | `Pictures\RustShot\recordings\` | Movie night 🍿 |
 
-> 💡 **Tip:** on 🪟 Windows, tray mode registers RustShot under
-> `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on **every** start, so it's
-> always one hotkey away. It's on by default and user-scoped (`HKCU` only, so no
-> admin rights). To switch it off — and where `settings.json` lives — see
+> 💡 **Tip:** on 🪟 Windows, the first bare tray launch installs
+> `%LOCALAPPDATA%\Programs\RustShot\RustShot.exe`; later external launches hand
+> off to that existing copy without replacing it. RustShot registers the stable
+> path under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. It's on by
+> default and user-scoped (`HKCU` only, so no admin rights). To switch it off —
+> and where `settings.json` lives — see
 > [docs/TUTORIAL.md](docs/TUTORIAL.md#-step-8--auto-start-and-where-settings-live).
 
 ---
@@ -423,7 +431,7 @@ Head over to [**Releases**](https://github.com/stden/RustShot/releases) and grab
 
 | File | What is it | For whom |
 |------|-----------|----------|
-| `rustshot.exe` | 📦 Portable executable | "I don't like installers" |
+| `rustshot.exe` | 📦 Single executable; a bare tray launch self-installs when auto-start is enabled | "I don't like setup wizards" |
 | `RustShotSetup.exe` | 🔧 Windows installer | "Set it up properly" |
 
 ---

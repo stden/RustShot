@@ -38,8 +38,10 @@ In this repository, that logic lives in [installer.iss](../installer.iss).
 This is the installer header and global behavior:
 
 - `AppName=RustShot`
-- `AppVersion=0.1.0`
-- `DefaultDirName={autopf}\RustShot`
+- `AppVersion={{VERSION}}` (the release workflow injects the Cargo version)
+- `DefaultDirName={localappdata}\Programs\RustShot`
+- `DisableDirPage=yes`
+- `UsePreviousAppDir=no`
 - `OutputDir=Output`
 - `OutputBaseFilename=RustShotSetup`
 - `PrivilegesRequired=lowest`
@@ -53,6 +55,10 @@ That means:
 - the app can register `HKCU` autorun cleanly
 
 For `RustShot`, this matches the tray-style per-user startup model.
+`DisableDirPage=yes` and `UsePreviousAppDir=no` keep the setup package and
+first-run self-installation on the same stable
+`%LOCALAPPDATA%\Programs\RustShot` path instead of remembering a directory
+chosen for an older setup.
 
 ### `[Languages]`
 
@@ -110,14 +116,25 @@ rustup target add x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
 New-Item -ItemType Directory -Force -Path target\release | Out-Null
 Copy-Item target\x86_64-pc-windows-msvc\release\rustshot.exe target\release\rustshot.exe
-iscc installer.iss
+$rustShotVersion = (Get-Content Cargo.toml | Select-String '^version = "(.*)"').Matches.Groups[1].Value
+$versionedInstallerScript = 'installer.versioned.iss'
+(Get-Content installer.iss).Replace('{{VERSION}}', $rustShotVersion) | Set-Content $versionedInstallerScript
+try {
+    iscc $versionedInstallerScript
+    if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+} finally {
+    Remove-Item $versionedInstallerScript -ErrorAction SilentlyContinue
+}
 ```
 
 Important detail:
 
-`installer.iss` expects `target\release\rustshot.exe`, while the Rust build step produces `target\x86_64-pc-windows-msvc\release\rustshot.exe`.
+`installer.iss` is a template: pass only a generated copy with `{{VERSION}}`
+replaced to Inno Setup. It expects `target\release\rustshot.exe`, while the
+Rust build step produces
+`target\x86_64-pc-windows-msvc\release\rustshot.exe`.
 
-That path normalization is deliberate and is mirrored in CI.
+Both the version substitution and path normalization are mirrored in CI.
 
 ## 5. Reading the release pipeline
 
@@ -135,10 +152,11 @@ The main steps are:
 3. restore Cargo cache
 4. build the release binary
 5. copy the binary into `target\release`
-6. run `iscc installer.iss`
-7. upload the portable `.exe` artifact
-8. upload the installer artifact
-9. if running from a tag, publish both files to GitHub Releases
+6. substitute the `Cargo.toml` version into `installer.iss` in the CI checkout
+7. invoke ISCC only after that in-place substitution
+8. upload the portable `.exe` artifact
+9. upload the installer artifact
+10. if running from a tag, publish both files to GitHub Releases
 
 ## 6. Why the pipeline uses the MSVC target
 
@@ -161,10 +179,12 @@ If local development uses a different target, you need to be careful not to pack
 The data flow is:
 
 ```text
+Cargo.toml version + installer.iss template
+  -> version-substituted installer script
 Cargo build
   -> target\x86_64-pc-windows-msvc\release\rustshot.exe
   -> copied to target\release\rustshot.exe
-  -> consumed by installer.iss
+  -> consumed by the version-substituted script
   -> Output\RustShotSetup.exe
   -> both files uploaded to GitHub Actions artifacts
   -> both files attached to GitHub Release
@@ -183,9 +203,10 @@ If `installer.iss` points at the wrong path, `iscc` fails even though Rust compi
 
 ### Version drift
 
-`Cargo.toml` and `installer.iss` can disagree about version numbers.
-
-Right now that is a real maintenance risk in this repo because `AppVersion` is hardcoded.
+The release workflow reads the version from `Cargo.toml` and replaces the
+`{{VERSION}}` placeholder before compiling the installer. A local build that
+skips that substitution fails instead of silently packaging a different
+version.
 
 ### Broken release but successful artifact build
 
@@ -205,7 +226,8 @@ When the installer is broken, isolate the stage:
 
 1. Check whether Cargo built the binary.
 2. Check whether the binary was copied to `target\release`.
-3. Check whether `iscc installer.iss` succeeds locally.
+3. Generate the versioned script and check whether
+   `iscc installer.versioned.iss` succeeds locally.
 4. Check whether the generated installer contains the expected files and shortcuts.
 5. Check whether GitHub Release attached both artifacts.
 
@@ -215,7 +237,7 @@ That order matters because it separates Rust build failures from packaging failu
 
 Reasonable next steps for `RustShot`:
 
-- inject `AppVersion` from `Cargo.toml` or from the tag
+- share the existing version-substitution step between local builds and CI
 - add code signing for both `rustshot.exe` and `RustShotSetup.exe`
 - add installer smoke tests on CI
 - verify registry autorun behavior after install

@@ -4,8 +4,8 @@
 //! with items for Capture, Open Folder, Toggle Recording, and Exit.
 //!
 //! The tray runs inside the winit event loop managed by `RustShotApp` in
-//! `main.rs`.  Menu events are received via [`menu_receiver`] and dispatched
-//! in `RustShotApp::about_to_wait`.
+//! `app.rs`. Menu callbacks are forwarded through a `winit::EventLoopProxy`,
+//! which wakes the otherwise sleeping event loop for immediate dispatch.
 
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},

@@ -60,10 +60,18 @@ New-Item -ItemType Directory -Force -Path target\release | Out-Null
 Copy-Item target\x86_64-pc-windows-msvc\release\rustshot.exe target\release\rustshot.exe
 ```
 
-Build the installer:
+Generate a versioned copy of the installer script, then build that copy:
 
 ```powershell
-iscc installer.iss
+$rustShotVersion = (Get-Content Cargo.toml | Select-String '^version = "(.*)"').Matches.Groups[1].Value
+$versionedInstallerScript = 'installer.versioned.iss'
+(Get-Content installer.iss).Replace('{{VERSION}}', $rustShotVersion) | Set-Content $versionedInstallerScript
+try {
+    iscc $versionedInstallerScript
+    if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+} finally {
+    Remove-Item $versionedInstallerScript -ErrorAction SilentlyContinue
+}
 ```
 
 Output:
@@ -80,10 +88,14 @@ Defines product metadata and installer behavior:
 - `AppName`
 - `AppVersion`
 - `DefaultDirName`
+- `DisableDirPage`
+- `UsePreviousAppDir`
 - `OutputBaseFilename`
 - `PrivilegesRequired`
 
-In `RustShot`, `PrivilegesRequired=lowest` is important because the app writes autorun under `HKCU`, not machine-wide `HKLM`.
+In `RustShot`, `PrivilegesRequired=lowest` is important because the app writes
+autorun under `HKCU`, not machine-wide `HKLM`. The directory page is disabled so
+the installer uses the same fixed per-user path as first-run self-installation.
 
 ### `[Files]`
 
@@ -192,8 +204,9 @@ The release workflow in [release.yml](../.github/workflows/release.yml):
 2. installs the MSVC target
 3. builds the Rust binary
 4. copies it into `target\release`
-5. runs `iscc installer.iss`
-6. uploads both the portable `.exe` and `RustShotSetup.exe`
+5. substitutes the `Cargo.toml` version into `installer.iss` in the CI checkout
+6. invokes ISCC only after that in-place substitution
+7. uploads both the portable `.exe` and `RustShotSetup.exe`
 
 That split is useful because many users want both:
 
@@ -227,11 +240,14 @@ For `RustShot`, also verify:
 - Using admin install privileges when the app is designed for per-user startup.
 - Forgetting to test uninstall.
 - Assuming `cargo build --release` alone creates an installer.
-- Hardcoding version strings in several places and letting them drift.
+- Passing the unresolved `{{VERSION}}` template to Inno Setup.
 
-## 11. Suggested improvement for RustShot
+## 11. Version injection in RustShot
 
-Right now, `AppVersion=0.1.0` is hardcoded in [installer.iss](../installer.iss). A practical next step would be to generate that value from `Cargo.toml` or inject it from CI, so the Rust crate version and installer version cannot drift apart.
+[`installer.iss`](../installer.iss) contains `AppVersion={{VERSION}}`. The
+release workflow replaces that placeholder with the version from `Cargo.toml`
+before invoking Inno Setup, so the package and executable stay aligned. A local
+installer build must perform the same substitution on a temporary copy.
 
 ## 12. Next lesson
 

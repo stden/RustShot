@@ -2,11 +2,12 @@
 //! event-loop handler.
 
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
-use log::{error, info};
+use log::{debug, error, info};
 use std::path::Path;
+use tray_icon::menu::MenuEvent;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::window::WindowId;
 
 use super::cli_mode::settings_capture_format;
@@ -14,6 +15,29 @@ use super::runtime::stop_flag_path;
 #[cfg(windows)]
 use crate::settings_dialog;
 use crate::{capture, cli, settings, tray};
+
+/// External tray-mode events forwarded into winit so `ControlFlow::Wait`
+/// wakes as soon as a menu item or global hotkey is activated.
+pub(crate) enum RustShotEvent {
+    HotKey(GlobalHotKeyEvent),
+    Menu(MenuEvent),
+}
+
+/// Route process-wide menu and hotkey callbacks into the winit event loop.
+pub(crate) fn install_event_handlers(proxy: EventLoopProxy<RustShotEvent>) {
+    let hotkey_proxy = proxy.clone();
+    GlobalHotKeyEvent::set_event_handler(Some(move |event| {
+        if let Err(error) = hotkey_proxy.send_event(RustShotEvent::HotKey(event)) {
+            debug!("Hotkey arrived after the event loop closed: {error}");
+        }
+    }));
+
+    MenuEvent::set_event_handler(Some(move |event| {
+        if let Err(error) = proxy.send_event(RustShotEvent::Menu(event)) {
+            debug!("Tray menu action arrived after the event loop closed: {error}");
+        }
+    }));
+}
 
 /// Main application state for the tray/event-loop mode.
 ///
@@ -97,7 +121,7 @@ impl RustShotApp {
     /// Deliberately not done inline. `capture_active_window_in_dir` waits on the
     /// Windows Graphics Capture worker and then on a GDI fallback, each with a
     /// multi-second timeout, and then encodes a PNG. Running that inside
-    /// `about_to_wait` froze the tray icon, its menu, and hotkey dispatch for as
+    /// `user_event` froze the tray icon, its menu, and hotkey dispatch for as
     /// long as it took — the rest of this type already avoids that, spawning a
     /// child process for selection and a thread to reap the recorder.
     fn handle_window_capture(&mut self) {
@@ -238,7 +262,7 @@ pub(crate) fn open_screenshots_folder_at_with_handlers<CreateDir, OpenDir>(
     open_dir(dir);
 }
 
-impl ApplicationHandler for RustShotApp {
+impl ApplicationHandler<RustShotEvent> for RustShotApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         // Create tray icon when the event loop is ready
         if self._tray.is_none() {
@@ -254,40 +278,38 @@ impl ApplicationHandler for RustShotApp {
 
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, _event: WindowEvent) {}
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // Handle hotkey events
-        while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-            if event.id == self.hotkey_id && event.state == HotKeyState::Pressed {
-                self.handle_capture();
-            }
-            if event.id == self.window_hotkey_id && event.state == HotKeyState::Pressed {
-                self.handle_window_capture();
-            }
-            if event.id == self.record_hotkey_id && event.state == HotKeyState::Pressed {
-                self.handle_recording_toggle();
-            }
-        }
-
-        // Handle menu events. Dispatch on the `MenuAction` enum rather than raw
-        // id strings: the match is exhaustive, so a new menu entry fails to
-        // compile until it is handled here. Unknown ids resolve to `None` and
-        // are ignored.
-        while let Ok(event) = tray::menu_receiver().try_recv() {
-            let Some(action) = tray::MenuAction::from_id(event.id.0.as_str()) else {
-                continue;
-            };
-            match action {
-                tray::MenuAction::Capture => self.handle_capture(),
-                tray::MenuAction::CaptureWindow => self.handle_window_capture(),
-                tray::MenuAction::OpenFolder => self.open_screenshots_folder(),
-                tray::MenuAction::ToggleRecord => self.handle_recording_toggle(),
-                tray::MenuAction::Settings => {
-                    #[cfg(windows)]
-                    settings_dialog::show_settings_dialog();
-                    #[cfg(not(windows))]
-                    settings::open_settings_dialog();
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: RustShotEvent) {
+        match event {
+            RustShotEvent::HotKey(event) => {
+                if event.id == self.hotkey_id && event.state == HotKeyState::Pressed {
+                    self.handle_capture();
                 }
-                tray::MenuAction::Exit => event_loop.exit(),
+                if event.id == self.window_hotkey_id && event.state == HotKeyState::Pressed {
+                    self.handle_window_capture();
+                }
+                if event.id == self.record_hotkey_id && event.state == HotKeyState::Pressed {
+                    self.handle_recording_toggle();
+                }
+            }
+            RustShotEvent::Menu(event) => {
+                // Dispatch on `MenuAction` rather than raw id strings: this is
+                // exhaustive, so a new menu entry must be handled here.
+                let Some(action) = tray::MenuAction::from_id(event.id.0.as_str()) else {
+                    return;
+                };
+                match action {
+                    tray::MenuAction::Capture => self.handle_capture(),
+                    tray::MenuAction::CaptureWindow => self.handle_window_capture(),
+                    tray::MenuAction::OpenFolder => self.open_screenshots_folder(),
+                    tray::MenuAction::ToggleRecord => self.handle_recording_toggle(),
+                    tray::MenuAction::Settings => {
+                        #[cfg(windows)]
+                        settings_dialog::show_settings_dialog();
+                        #[cfg(not(windows))]
+                        settings::open_settings_dialog();
+                    }
+                    tray::MenuAction::Exit => event_loop.exit(),
+                }
             }
         }
     }
