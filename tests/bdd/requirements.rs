@@ -1,5 +1,7 @@
 //! Step definitions translated from requirement-tagged tests and API contracts.
 
+#[path = "requirements/active_window.rs"]
+mod active_window;
 #[path = "requirements/autorun.rs"]
 mod autorun;
 #[path = "requirements/capture.rs"]

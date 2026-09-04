@@ -53,7 +53,7 @@ fn same_windows_path(left: &Path, right: &Path) -> bool {
 
 /// Wrap an exe path in quotes for the Windows Run registry value.
 #[cfg(windows)]
-pub(crate) fn quoted_autorun_command(path: &std::path::Path) -> String {
+pub(crate) fn quoted_autorun_command(path: &Path) -> String {
     format!("\"{}\"", path.to_string_lossy())
 }
 

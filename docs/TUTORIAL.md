@@ -29,9 +29,13 @@ message quoted here is the literal string RustShot produces.
 Focus a window and press **`Alt+PrintScreen`**, or right-click the tray icon →
 *Capture Active Window (Alt+PrintScreen)*.
 
-Unlike Windows' own `Alt+PrintScreen`, RustShot writes a **file** and never
-touches the clipboard. It goes to the screenshots folder in the format selected
-in Settings — PNG unless you changed it.
+Both routes copy the captured window to the clipboard **and** save a file in the
+screenshots folder. Settings chooses the saved file's format — PNG unless you
+changed it; the clipboard image is independent of that setting.
+
+For a one-shot active-window capture from the command line, use
+`RustShot.exe --window`. CLI window captures are file-only and do not copy the
+image to the clipboard.
 
 To pick a window that isn't focused, list them first:
 
@@ -93,7 +97,7 @@ exactly six controls:
 |---|---|
 | **Screenshots folder** | Read-only text — use **Browse** to pick a folder. Empty is rejected: `Screenshots folder cannot be empty.` |
 | **Recordings folder** | Same, with its own message. |
-| **Default format** | `png` / `jpg` / `bmp`. Used by `Alt+PrintScreen` and by CLI captures with no explicit `--format`. |
+| **Default format** | `png` / `jpg` / `bmp`. Controls the saved file from `Alt+PrintScreen` or tray active-window capture, and CLI captures with no explicit `--format`; it does not affect clipboard data. |
 | **Recording FPS** | 1–240. Out of range is rejected before saving. |
 | **Start with Windows** | The auto-start switch — see [step 8](#-step-8--auto-start-and-where-settings-live). |
 | **Save** / **Cancel** | Only **Save** writes anything. |
@@ -312,6 +316,7 @@ under the cursor and freezes that monitor's screenshot while you drag.
 | 🪟 No tray icon after launch | Windows 11 put it in the hidden-icons flyout. Click `^`, drag the blue camera icon onto the taskbar. Promotion is stored per exe path. |
 | Nothing behind the `^` chevron either | RustShot exited during startup. Read the last line of `%APPDATA%\RustShot\rustshot.log`. |
 | Log says ``Failed to register PrintScreen hotkey: ...`` | Another app — often a second RustShot started by the auto-start entry — owns `PrintScreen`, `Alt+PrintScreen` or `Ctrl+Shift+R`. Registration is all-or-nothing, so one conflict stops startup. Close the other instance. |
+| A yellow outline surrounds the whole screen during `PrintScreen` region selection | This is Windows Graphics Capture's system capture indicator, not part of the captured image. Borderless capture would require Windows consent and a package capability; RustShot does not currently request them. |
 | 🪟 A CLI command prints nothing | GUI-subsystem binary, no console. Pipe it or use `cmd.exe` — see [step 9](#-step-9--drive-it-from-the-command-line). |
 | Clicking in the overlay does nothing | Drags of 5 px or less are discarded so click jitter can't produce accidental captures. Drag further. The overlay stays open for another try. |
 | `Esc` produced no file and no error | `Selection cancelled` is deliberately silent. |

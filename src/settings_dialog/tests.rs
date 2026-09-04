@@ -10,6 +10,34 @@ fn fos_pickfolders_value_is_0x20() {
     assert_eq!(FOS_PICKFOLDERS, 0x20);
 }
 
+#[test]
+fn settings_dialog_fields_are_wider_than_the_previous_compact_layout() {
+    let layout = settings_dialog_layout();
+
+    assert_eq!(layout.dialog_width, 610);
+    assert!(layout.path_edit_width >= 340);
+    assert!(layout.format_field_width >= 150);
+    assert!(layout.fps_field_width >= 100);
+    assert_eq!(
+        layout.field_x + layout.path_edit_width + 10,
+        layout.browse_x
+    );
+    assert!(
+        layout.dialog_width - (layout.browse_x + layout.browse_width) >= 30,
+        "the outer width must leave room for the non-client frame and a right margin"
+    );
+}
+
+#[test]
+fn settings_dialog_uses_a_larger_font_with_room_for_its_text() {
+    let layout = settings_dialog_layout();
+
+    assert_eq!(layout.font_point_size, 11);
+    assert_eq!(font_pixel_height(layout.font_point_size), -15);
+    assert!(layout.field_height >= 27);
+    assert!(layout.button_height >= 30);
+}
+
 // --- validate_fps_input ---
 
 #[test]
@@ -265,6 +293,23 @@ fn close_settings_window(hwnd: HWND) -> bool {
     false
 }
 
+fn control_width(hwnd: HWND, id: i32) -> Option<i32> {
+    // SAFETY: callers keep `hwnd` alive for this synchronous lookup. Both APIs
+    // fail cleanly if the requested child was not created.
+    let control = unsafe { GetDlgItem(Some(hwnd), id) }.ok()?;
+    let mut rect = windows::Win32::Foundation::RECT::default();
+    unsafe { GetWindowRect(control, &mut rect) }.ok()?;
+    Some(rect.right - rect.left)
+}
+
+fn control_font(hwnd: HWND, id: i32) -> Option<usize> {
+    // SAFETY: callers keep the dialog alive, `GetDlgItem` establishes a live
+    // child, and WM_GETFONT returns a handle value without crossing pointers.
+    let control = unsafe { GetDlgItem(Some(hwnd), id) }.ok()?;
+    let font = unsafe { SendMessageW(control, WM_GETFONT, None, None) }.0 as usize;
+    (font != 0).then_some(font)
+}
+
 #[test]
 fn settings_dialog_opens_visible_controls_and_can_reopen() {
     let _serial = lock_dialog_flag();
@@ -279,12 +324,39 @@ fn settings_dialog_opens_visible_controls_and_can_reopen() {
         // Save control is reported as `Err`, not as an invalid usable handle.
         let visible = unsafe { IsWindowVisible(hwnd) }.as_bool();
         let has_save_button = unsafe { GetDlgItem(Some(hwnd), IDC_SAVE_BTN) }.is_ok();
+        let folder_width = control_width(hwnd, IDC_SCREENSHOTS_EDIT);
+        let format_width = control_width(hwnd, IDC_FORMAT_COMBO);
+        let fps_width = control_width(hwnd, IDC_FPS_EDIT);
+        let fonts = [
+            IDC_SCREENSHOTS_EDIT,
+            IDC_SCREENSHOTS_BROWSE,
+            IDC_RECORDINGS_EDIT,
+            IDC_RECORDINGS_BROWSE,
+            IDC_FORMAT_COMBO,
+            IDC_FPS_EDIT,
+            IDC_AUTOSTART_CHECK,
+            IDC_SAVE_BTN,
+            IDC_CANCEL_BTN,
+        ]
+        .map(|id| control_font(hwnd, id));
         let closed = close_settings_window(hwnd);
 
         assert!(visible, "attempt {attempt}: settings window was hidden");
         assert!(
             has_save_button,
             "attempt {attempt}: WM_CREATE did not build the dialog controls"
+        );
+        let layout = settings_dialog_layout();
+        assert_eq!(folder_width, Some(layout.path_edit_width));
+        assert_eq!(format_width, Some(layout.format_field_width));
+        assert_eq!(fps_width, Some(layout.fps_field_width));
+        assert!(
+            fonts.iter().all(Option::is_some),
+            "attempt {attempt}: at least one control did not receive the dialog font"
+        );
+        assert!(
+            fonts.windows(2).all(|pair| pair[0] == pair[1]),
+            "attempt {attempt}: controls did not share one consistent dialog font"
         );
         assert!(closed, "attempt {attempt}: settings dialog did not close");
     }

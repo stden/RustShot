@@ -26,6 +26,8 @@ pub use autorun::{
 };
 pub(crate) use cli_mode::*;
 pub(crate) use runtime::*;
+#[doc(hidden)]
+pub use tray_app::benchmark_capture_active_window_outputs_with_handlers;
 pub(crate) use tray_app::*;
 
 /// Start RustShot and route the parsed command line to the selected app mode.

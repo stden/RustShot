@@ -138,6 +138,11 @@ struct RustShotWorld {
     // --- active window capture boundary ---
     active_window_dir: Option<PathBuf>,
     active_window_result: Option<Result<PathBuf, String>>,
+    active_window_output_result: Option<Result<PathBuf, String>>,
+    active_window_capture_calls: usize,
+    active_window_expected_pixels: Vec<u8>,
+    active_window_clipboard_images: Vec<Vec<u8>>,
+    active_window_saved_images: Vec<Vec<u8>>,
 
     // --- overlay monitor targeting ---
     connected_monitors: Vec<Monitor>,

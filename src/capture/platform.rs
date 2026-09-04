@@ -3,6 +3,161 @@
 #[cfg(windows)]
 mod wgc;
 
+use std::sync::Arc;
+
+/// Stable identity and generation lease for one top-level window.
+///
+/// Win32 may recycle an `HWND` after its window closes, including for another
+/// window on the same GUI thread. PID/TID checks alone cannot distinguish that
+/// case. The property marker belongs to the exact window object and disappears
+/// with it; every asynchronous worker must find both the IDs and marker intact.
+/// Clones share one lease so the final worker to finish removes the property.
+#[derive(Clone, Debug)]
+pub(crate) struct WindowTarget(Arc<WindowTargetInner>);
+
+#[derive(Debug)]
+struct WindowTargetInner {
+    raw: isize,
+    process_id: u32,
+    thread_id: u32,
+    marker: WindowGenerationMarker,
+    native_marker_registered: bool,
+    #[cfg(test)]
+    cleanup_probe: Option<Arc<std::sync::atomic::AtomicUsize>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct WindowGenerationMarker {
+    name: Box<[u16]>,
+    value: isize,
+}
+
+impl PartialEq for WindowTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.raw == other.0.raw
+            && self.0.process_id == other.0.process_id
+            && self.0.thread_id == other.0.thread_id
+            && self.0.marker == other.0.marker
+    }
+}
+
+impl Eq for WindowTarget {}
+
+impl WindowTarget {
+    /// Construct an inert identity for platform-independent routing tests.
+    /// Real capture targets are created only after their native marker exists.
+    #[cfg(test)]
+    pub(crate) fn new(raw: isize, process_id: u32, thread_id: u32) -> Self {
+        Self(Arc::new(WindowTargetInner {
+            raw,
+            process_id,
+            thread_id,
+            marker: WindowGenerationMarker {
+                name: vec![0].into_boxed_slice(),
+                value: 1,
+            },
+            native_marker_registered: false,
+            #[cfg(test)]
+            cleanup_probe: None,
+        }))
+    }
+
+    fn from_registered(
+        raw: isize,
+        process_id: u32,
+        thread_id: u32,
+        marker: WindowGenerationMarker,
+    ) -> Self {
+        Self(Arc::new(WindowTargetInner {
+            raw,
+            process_id,
+            thread_id,
+            marker,
+            native_marker_registered: true,
+            #[cfg(test)]
+            cleanup_probe: None,
+        }))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        raw: isize,
+        process_id: u32,
+        thread_id: u32,
+        marker_value: isize,
+        cleanup_probe: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    ) -> Self {
+        Self(Arc::new(WindowTargetInner {
+            raw,
+            process_id,
+            thread_id,
+            marker: WindowGenerationMarker {
+                name: vec![b'R' as u16, 0].into_boxed_slice(),
+                value: marker_value,
+            },
+            native_marker_registered: false,
+            cleanup_probe,
+        }))
+    }
+
+    #[cfg(windows)]
+    fn hwnd(&self) -> windows::Win32::Foundation::HWND {
+        windows::Win32::Foundation::HWND(self.0.raw as *mut core::ffi::c_void)
+    }
+
+    fn marker_value(&self) -> isize {
+        self.0.marker.value
+    }
+}
+
+impl Drop for WindowTargetInner {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if self.native_marker_registered {
+            remove_window_marker_if_owned(self.raw, &self.marker);
+        }
+
+        #[cfg(test)]
+        if let Some(probe) = &self.cleanup_probe {
+            use std::sync::atomic::Ordering;
+            probe.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Reject a closed window, recycled `HWND`, or different window generation.
+pub(crate) fn validate_window_target_identity(
+    target: &WindowTarget,
+    process_id: u32,
+    thread_id: u32,
+    observed_marker: isize,
+) -> Result<(), String> {
+    if process_id == 0
+        || thread_id == 0
+        || process_id != target.0.process_id
+        || thread_id != target.0.thread_id
+    {
+        return Err(format!(
+            "Target window closed or its HWND was reused before capture (HWND {:#x}: expected PID {} / TID {}, found PID {process_id} / TID {thread_id})",
+            target.0.raw, target.0.process_id, target.0.thread_id
+        ));
+    }
+
+    if observed_marker == 0 || observed_marker != target.marker_value() {
+        let state = if observed_marker == 0 {
+            "is missing"
+        } else {
+            "was replaced"
+        };
+        return Err(format!(
+            "Target window closed or its HWND was reused before capture (HWND {:#x}: generation marker {state})",
+            target.0.raw
+        ));
+    }
+
+    Ok(())
+}
+
 /// Pin the process-wide COM multithreaded apartment for the lifetime of the
 /// process.
 ///
@@ -33,32 +188,6 @@ pub(crate) fn pin_process_mta() {
         // cookie as a bare `#[repr(transparent)]` handle with no `Drop` impl.
         let _ = unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() };
     });
-}
-
-/// A window handle detached from windows-rs's raw-pointer wrapper so it can
-/// cross threads.
-///
-/// `HWND` wraps `*mut c_void` in windows 0.62 and is therefore not `Send`,
-/// but the underlying value is a process-global identifier with no thread
-/// affinity. Storing it as `isize` makes the carrier `Send` by construction -
-/// no `unsafe impl` needed - and the only way back out is [`Self::hwnd`],
-/// which re-wraps it for the destination thread.
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-pub(super) struct SendableHwnd(isize);
-
-#[cfg(windows)]
-impl From<windows::Win32::Foundation::HWND> for SendableHwnd {
-    fn from(hwnd: windows::Win32::Foundation::HWND) -> Self {
-        Self(hwnd.0 as isize)
-    }
-}
-
-#[cfg(windows)]
-impl SendableHwnd {
-    pub(super) fn hwnd(self) -> windows::Win32::Foundation::HWND {
-        windows::Win32::Foundation::HWND(self.0 as *mut core::ffi::c_void)
-    }
 }
 
 /// Physical screen-space bounds used by the Windows capture backends.
@@ -349,17 +478,163 @@ impl Drop for SelectedObject {
 }
 
 #[cfg(windows)]
-pub(super) fn capture_active_window_platform() -> Result<image::RgbaImage, String> {
+fn window_identity(hwnd: windows::Win32::Foundation::HWND) -> (u32, u32) {
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+    let mut process_id = 0;
+    // SAFETY: `hwnd` is used only as an opaque value, and `process_id` remains
+    // writable for this synchronous query. A closed or invalid handle produces
+    // zero IDs, which the caller treats as an identity mismatch.
+    let thread_id = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
+    (process_id, thread_id)
+}
+
+#[cfg(windows)]
+fn prepare_window_generation_marker() -> Result<WindowGenerationMarker, String> {
+    use windows::Win32::System::Com::CoCreateGuid;
+
+    // A fresh GUID keeps the property name unique across concurrent captures,
+    // process restarts, and stale properties left on foreign windows after an
+    // abnormal RustShot exit.
+    // SAFETY: `CoCreateGuid` has no pointer arguments in windows-rs; it returns
+    // the generated GUID by value and is documented as apartment-independent.
+    let guid = unsafe { CoCreateGuid() }
+        .map_err(|error| format!("Failed to create a window identity marker: {error}"))?;
+    let marker_name = format!("RustShot.WindowTarget.{}.{guid:?}", std::process::id());
+    let name = marker_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+
+    // Window properties store an opaque pointer-sized value. The GUID-backed
+    // name is the actual generation key; folding the same GUID gives validation
+    // a non-null value too, so a missing property is unambiguous.
+    let guid_bits = guid.to_u128();
+    let folded = (guid_bits as usize) ^ ((guid_bits >> 64) as usize);
+    let value = match folded {
+        0 | usize::MAX => 1,
+        value => value,
+    } as isize;
+
+    Ok(WindowGenerationMarker { name, value })
+}
+
+#[cfg(windows)]
+fn window_marker_value(
+    hwnd: windows::Win32::Foundation::HWND,
+    marker: &WindowGenerationMarker,
+) -> isize {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::GetPropW;
+
+    // SAFETY: `marker.name` is NUL-terminated and remains owned by the target
+    // lease for this call. `GetPropW` treats `hwnd` as an opaque identifier and
+    // returns null when the window or property no longer exists.
+    unsafe { GetPropW(hwnd, PCWSTR(marker.name.as_ptr())) }.0 as isize
+}
+
+#[cfg(windows)]
+fn remove_window_marker_if_owned(raw: isize, marker: &WindowGenerationMarker) {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::RemovePropW;
+
+    let hwnd = HWND(raw as *mut core::ffi::c_void);
+    // A destroyed/recycled window normally has no marker. Only remove the
+    // property if it is still ours, so cleanup cannot disturb a later owner.
+    if window_marker_value(hwnd, marker) != marker.value {
+        return;
+    }
+
+    // SAFETY: the same live, NUL-terminated name used by `SetPropW` remains
+    // borrowed for this synchronous call. A window destroyed after the check
+    // simply makes removal fail; there is no memory dereference through `hwnd`.
+    if let Err(error) = unsafe { RemovePropW(hwnd, PCWSTR(marker.name.as_ptr())) } {
+        log::debug!("Window identity marker disappeared before cleanup: {error}");
+    }
+}
+
+#[cfg(windows)]
+fn snapshot_window_target_with_marker(
+    hwnd: windows::Win32::Foundation::HWND,
+    marker: WindowGenerationMarker,
+    require_same_foreground: bool,
+) -> Result<WindowTarget, String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetPropW};
+
+    // This is deliberately the first native query after receiving `hwnd`.
+    // SetPropW is UIPI-limited, so failure is terminal: continuing with only a
+    // raw handle plus PID/TID could capture a replacement on the same GUI thread.
+    // SAFETY: `marker.name` is NUL-terminated and live for the synchronous call;
+    // `marker.value` is opaque non-null property data, never dereferenced.
+    unsafe {
+        SetPropW(
+            hwnd,
+            PCWSTR(marker.name.as_ptr()),
+            Some(HANDLE(marker.value as *mut core::ffi::c_void)),
+        )
+    }
+    .map_err(|error| {
+        format!(
+            "Failed to install a safe identity marker on the target window; Windows may deny this for a higher-integrity window, so capture was cancelled: {error}"
+        )
+    })?;
+
+    let (process_id, thread_id) = window_identity(hwnd);
+    let target = WindowTarget::from_registered(hwnd.0 as isize, process_id, thread_id, marker);
+
+    if require_same_foreground {
+        // SAFETY: `GetForegroundWindow` has no preconditions. This immediate
+        // recheck detects a focus/handle change in the tiny GetForegroundWindow
+        // -> SetPropW interval instead of silently choosing a different target.
+        let current = unsafe { GetForegroundWindow() };
+        if current != hwnd {
+            return Err(
+                "Foreground window changed while its capture identity was being marked".to_string(),
+            );
+        }
+    }
+
+    validate_window_target(&target)?;
+    Ok(target)
+}
+
+#[cfg(windows)]
+fn snapshot_window_target(hwnd: windows::Win32::Foundation::HWND) -> Result<WindowTarget, String> {
+    let marker = prepare_window_generation_marker()?;
+    snapshot_window_target_with_marker(hwnd, marker, false)
+}
+
+#[cfg(windows)]
+fn validate_window_target(target: &WindowTarget) -> Result<(), String> {
+    let (process_id, thread_id) = window_identity(target.hwnd());
+    let observed_marker = window_marker_value(target.hwnd(), &target.0.marker);
+    validate_window_target_identity(target, process_id, thread_id, observed_marker)
+}
+
+#[cfg(windows)]
+pub(super) fn foreground_window_target_platform() -> Result<WindowTarget, String> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
+    // Prepare the unique property before reading the foreground HWND so the
+    // first operation after that snapshot is the generation marker install.
+    let marker = prepare_window_generation_marker()?;
     // SAFETY: `GetForegroundWindow` has no preconditions and returns a handle we
     // null-check before use.
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd == HWND::default() {
         return Err("No foreground window found".to_string());
     }
-    capture_hwnd(hwnd)
+    snapshot_window_target_with_marker(hwnd, marker, true)
+}
+
+#[cfg(windows)]
+pub(super) fn capture_active_window_platform() -> Result<image::RgbaImage, String> {
+    capture_window_target_platform(foreground_window_target_platform()?)
 }
 
 #[cfg(windows)]
@@ -381,7 +656,7 @@ fn get_window_bounds(hwnd: windows::Win32::Foundation::HWND) -> Result<WindowBou
                     hwnd,
                     DWMWA_EXTENDED_FRAME_BOUNDS,
                     std::ptr::from_mut(&mut rect).cast(),
-                    std::mem::size_of::<RECT>() as u32,
+                    size_of::<RECT>() as u32,
                 )
             }
             .map_err(|error| format!("Failed to get DWM window bounds: {error}"))?;
@@ -423,6 +698,19 @@ fn get_window_bounds(hwnd: windows::Win32::Foundation::HWND) -> Result<WindowBou
 pub(crate) fn capture_hwnd(
     hwnd: windows::Win32::Foundation::HWND,
 ) -> Result<image::RgbaImage, String> {
+    capture_window_target_platform(snapshot_window_target(hwnd)?)
+}
+
+/// Capture the window whose handle and owning process/thread were snapshotted
+/// together.
+///
+/// The identity checks live in the workers, immediately beside the native
+/// calls. Checking only on the caller would leave a scheduling gap in which a
+/// closed window's `HWND` could be recycled before either backend starts.
+#[cfg(windows)]
+pub(super) fn capture_window_target_platform(
+    target: WindowTarget,
+) -> Result<image::RgbaImage, String> {
     // Generous, because the worker enforces its own 3-second deadline on the
     // frame itself: this bound exists for the calls around that deadline —
     // creating the capture item, the D3D11 device, starting the session, and
@@ -431,12 +719,20 @@ pub(crate) fn capture_hwnd(
     // here left a wedged GPU driver able to hang the caller forever.
     const WGC_CAPTURE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
-    let sendable = SendableHwnd::from(hwnd);
     let (sender, receiver) = std::sync::mpsc::channel();
+    // The worker can outlive the timeout and caller. Its clone keeps the marker
+    // installed until that detached native call really returns.
+    let worker_target = target.clone();
     let worker = std::thread::Builder::new()
         .name("rustshot-window-capture".to_string())
         .spawn(move || {
-            let _ = sender.send(wgc::capture_hwnd(sendable.hwnd()));
+            let result = validate_window_target(&worker_target).and_then(|()| {
+                match wgc::capture_hwnd(worker_target.hwnd()) {
+                    Ok(image) => validate_window_target(&worker_target).map(|()| Ok(image)),
+                    Err(error) => Ok(Err(error)),
+                }
+            });
+            let _ = sender.send(result);
         })
         .map_err(|error| format!("Failed to start the window capture worker: {error}"))?;
 
@@ -451,14 +747,17 @@ pub(crate) fn capture_hwnd(
     );
 
     match outcome {
-        Ok(Ok(image)) => Ok(image),
-        Ok(Err(wgc::WgcCaptureError::Unsupported(reason))) => {
+        Ok(Ok(Ok(image))) => Ok(image),
+        // An identity failure is terminal: falling back with the same recycled
+        // raw handle would capture an unrelated window.
+        Ok(Err(error)) => Err(error),
+        Ok(Ok(Err(wgc::WgcCaptureError::Unsupported(reason)))) => {
             log::debug!("Windows Graphics Capture unavailable ({reason}); using GDI fallback");
-            capture_hwnd_gdi_with_timeout(hwnd)
+            capture_hwnd_gdi_with_timeout(target)
         }
-        Ok(Err(wgc::WgcCaptureError::Failed(error))) => {
+        Ok(Ok(Err(wgc::WgcCaptureError::Failed(error)))) => {
             log::warn!("Windows Graphics Capture failed ({error}); using GDI fallback");
-            capture_hwnd_gdi_with_timeout(hwnd).map_err(|gdi_error| {
+            capture_hwnd_gdi_with_timeout(target).map_err(|gdi_error| {
                 format!(
                     "Windows Graphics Capture failed ({error}); GDI fallback also failed: {gdi_error}"
                 )
@@ -466,24 +765,32 @@ pub(crate) fn capture_hwnd(
         }
         Err(error) => {
             log::warn!("{error}; using GDI fallback");
-            capture_hwnd_gdi_with_timeout(hwnd)
+            capture_hwnd_gdi_with_timeout(target)
                 .map_err(|gdi_error| format!("{error}; GDI fallback also failed: {gdi_error}"))
         }
     }
 }
 
 #[cfg(windows)]
-fn capture_hwnd_gdi_with_timeout(
-    hwnd: windows::Win32::Foundation::HWND,
-) -> Result<image::RgbaImage, String> {
+fn capture_hwnd_gdi_with_timeout(target: WindowTarget) -> Result<image::RgbaImage, String> {
     const GDI_CAPTURE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
-    let sendable = SendableHwnd::from(hwnd);
+    // WGC may take several seconds to fail or time out. Re-read the identity
+    // before even scheduling a fallback so a stale target never enters it.
+    validate_window_target(&target)?;
     let (sender, receiver) = std::sync::mpsc::channel();
+    // As on the WGC path, a timed-out worker owns the target so its marker cannot
+    // be removed while PrintWindow is still using the raw HWND.
+    let worker_target = target;
     let worker = std::thread::Builder::new()
         .name("rustshot-gdi-window-capture".to_string())
         .spawn(move || {
-            let result = capture_hwnd_gdi(sendable.hwnd());
+            // Validate again after this worker is scheduled, closing the race
+            // between the caller-side check and the first GDI operation. The
+            // post-capture check rejects a handle recycled during PrintWindow.
+            let result = validate_window_target(&worker_target)
+                .and_then(|()| capture_hwnd_gdi(worker_target.hwnd()))
+                .and_then(|image| validate_window_target(&worker_target).map(|()| image));
             let _ = sender.send(result);
         })
         .map_err(|error| format!("Failed to start the GDI capture worker: {error}"))?;
@@ -686,5 +993,17 @@ fn get_window_rect_bounds(hwnd: windows::Win32::Foundation::HWND) -> Result<Wind
 
 #[cfg(not(windows))]
 pub(super) fn capture_active_window_platform() -> Result<image::RgbaImage, String> {
+    Err("Active window capture is only supported on Windows".to_string())
+}
+
+#[cfg(not(windows))]
+pub(super) fn foreground_window_target_platform() -> Result<WindowTarget, String> {
+    Err("Active window capture is only supported on Windows".to_string())
+}
+
+#[cfg(not(windows))]
+pub(super) fn capture_window_target_platform(
+    _target: WindowTarget,
+) -> Result<image::RgbaImage, String> {
     Err("Active window capture is only supported on Windows".to_string())
 }

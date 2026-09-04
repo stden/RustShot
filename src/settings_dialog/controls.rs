@@ -4,16 +4,20 @@ use std::path::PathBuf;
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::Graphics::Gdi::{GetStockObject, DEFAULT_GUI_FONT};
+use windows::Win32::Graphics::Gdi::{
+    CreateFontW, DeleteObject, GetStockObject, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
+    DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_PITCH, FF_DONTCARE, FW_NORMAL, HGDIOBJ,
+    OUT_DEFAULT_PRECIS,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::capture::Format;
 use crate::settings::{wide, Fps, Settings};
 
 use super::{
-    get_control_text, set_control_text, IDC_AUTOSTART_CHECK, IDC_CANCEL_BTN, IDC_FORMAT_COMBO,
-    IDC_FPS_EDIT, IDC_RECORDINGS_BROWSE, IDC_RECORDINGS_EDIT, IDC_SAVE_BTN, IDC_SCREENSHOTS_BROWSE,
-    IDC_SCREENSHOTS_EDIT,
+    font_pixel_height, get_control_text, set_control_text, settings_dialog_layout,
+    IDC_AUTOSTART_CHECK, IDC_CANCEL_BTN, IDC_FORMAT_COMBO, IDC_FPS_EDIT, IDC_RECORDINGS_BROWSE,
+    IDC_RECORDINGS_EDIT, IDC_SAVE_BTN, IDC_SCREENSHOTS_BROWSE, IDC_SCREENSHOTS_EDIT,
 };
 
 // Win32 control-specific style constants.
@@ -31,6 +35,69 @@ const BM_SETCHECK: u32 = 0x00F1;
 const BM_GETCHECK: u32 = 0x00F0;
 const BST_CHECKED: usize = 1;
 
+/// Create the dialog's larger font, falling back to the stock GUI font if GDI
+/// cannot allocate it. Only a custom font is stored on the parent for cleanup;
+/// stock objects remain system-owned.
+///
+/// # Safety
+///
+/// `hwnd` must be a valid settings-dialog window whose `GWLP_USERDATA` slot is
+/// not used for another value.
+unsafe fn create_dialog_font(hwnd: HWND, point_size: i32) -> HGDIOBJ {
+    // SAFETY: every scalar is a documented font attribute and the face name is
+    // a static NUL-terminated UTF-16 literal. The returned font is owned by this
+    // dialog until `release_dialog_font` handles WM_NCDESTROY.
+    let custom_font = unsafe {
+        CreateFontW(
+            font_pixel_height(point_size),
+            0,
+            0,
+            0,
+            FW_NORMAL.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY,
+            u32::from(DEFAULT_PITCH.0 | FF_DONTCARE.0),
+            w!("Segoe UI"),
+        )
+    };
+
+    if custom_font.is_invalid() {
+        // SAFETY: `DEFAULT_GUI_FONT` is a predefined stock-object index. The
+        // returned object remains system-owned and therefore is not recorded in
+        // `GWLP_USERDATA` for deletion.
+        unsafe { GetStockObject(DEFAULT_GUI_FONT) }
+    } else {
+        // SAFETY: `hwnd` is live by contract and this module exclusively owns
+        // its user-data slot. Storing the raw handle keeps the HFONT reachable
+        // until the window's final destruction message.
+        unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, custom_font.0 as isize) };
+        custom_font.into()
+    }
+}
+
+/// Delete the custom dialog font, if one was allocated.
+///
+/// # Safety
+///
+/// `hwnd` must be the settings-dialog window passed to [`create_dialog_font`],
+/// and this function must run only once its child controls are being destroyed.
+pub(super) unsafe fn release_dialog_font(hwnd: HWND) {
+    // SAFETY: `hwnd` is live for WM_NCDESTROY and this atomically clears the
+    // module-owned slot while retrieving the font handle stored there.
+    let raw_font = unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) };
+    if raw_font != 0 {
+        // SAFETY: a non-zero slot value came only from `CreateFontW` above and
+        // is deleted exactly once after clearing the slot. Stock objects are
+        // never stored there and so cannot reach this branch.
+        let _ = unsafe { DeleteObject(HGDIOBJ(raw_font as *mut core::ffi::c_void)) };
+    }
+}
+
 /// Create all child controls (labels, edits, combo, checkbox, buttons).
 ///
 /// # Safety
@@ -45,12 +112,10 @@ const BST_CHECKED: usize = 1;
 /// read this as "the handles are validated"; an earlier version of this doc said
 /// so and was wrong.
 pub(super) unsafe fn create_controls(hwnd: HWND) {
-    // SAFETY: `DEFAULT_GUI_FONT` is one of the predefined stock-object indices,
-    // the only argument this call accepts. The handle it returns is owned by the
-    // system and shared process-wide, so it stays valid for as long as the dialog
-    // lives and must not be deleted — this module only hands it to WM_SETFONT,
-    // which does not take ownership.
-    let font = unsafe { GetStockObject(DEFAULT_GUI_FONT) };
+    let layout = settings_dialog_layout();
+    // SAFETY: `hwnd` is the live, newly created parent from this function's
+    // contract, and its user-data slot has not been assigned yet.
+    let font = unsafe { create_dialog_font(hwnd, layout.font_point_size) };
 
     let make =
         |class: PCWSTR, text: &str, style: u32, x: i32, y: i32, w: i32, h: i32, id: i32| -> HWND {
@@ -100,61 +165,61 @@ pub(super) unsafe fn create_controls(hwnd: HWND) {
         };
 
     // Row 1 — Screenshots folder
-    make(w!("STATIC"), "Screenshots folder:", 0, 15, 18, 120, 20, 0);
+    make(w!("STATIC"), "Screenshots folder:", 0, 15, 18, 130, 22, 0);
     make(
         w!("EDIT"),
         "",
         ES_READONLY | WS_BORDER.0,
-        140,
-        15,
-        245,
-        23,
+        layout.field_x,
+        14,
+        layout.path_edit_width,
+        layout.field_height,
         IDC_SCREENSHOTS_EDIT,
     );
     make(
         w!("BUTTON"),
         "Browse",
         0,
-        390,
-        15,
-        55,
-        23,
+        layout.browse_x,
+        14,
+        layout.browse_width,
+        layout.field_height,
         IDC_SCREENSHOTS_BROWSE,
     );
 
     // Row 2 — Recordings folder
-    make(w!("STATIC"), "Recordings folder:", 0, 15, 53, 120, 20, 0);
+    make(w!("STATIC"), "Recordings folder:", 0, 15, 56, 130, 22, 0);
     make(
         w!("EDIT"),
         "",
         ES_READONLY | WS_BORDER.0,
-        140,
-        50,
-        245,
-        23,
+        layout.field_x,
+        52,
+        layout.path_edit_width,
+        layout.field_height,
         IDC_RECORDINGS_EDIT,
     );
     make(
         w!("BUTTON"),
         "Browse",
         0,
-        390,
-        50,
-        55,
-        23,
+        layout.browse_x,
+        52,
+        layout.browse_width,
+        layout.field_height,
         IDC_RECORDINGS_BROWSE,
     );
 
     // Row 3 — Default format
-    make(w!("STATIC"), "Default format:", 0, 15, 93, 120, 20, 0);
+    make(w!("STATIC"), "Default format:", 0, 15, 98, 130, 22, 0);
     let combo = make(
         w!("COMBOBOX"),
         "",
         CBS_DROPDOWNLIST | WS_VSCROLL.0,
+        layout.field_x,
+        94,
+        layout.format_field_width,
         140,
-        90,
-        100,
-        120,
         IDC_FORMAT_COMBO,
     );
     // The combo box is populated from the enum, so its row order and
@@ -177,15 +242,15 @@ pub(super) unsafe fn create_controls(hwnd: HWND) {
     }
 
     // Row 4 — Recording FPS
-    make(w!("STATIC"), "Recording FPS:", 0, 15, 128, 120, 20, 0);
+    make(w!("STATIC"), "Recording FPS:", 0, 15, 140, 130, 22, 0);
     make(
         w!("EDIT"),
         "",
         ES_NUMBER | WS_BORDER.0,
-        140,
-        125,
-        60,
-        23,
+        layout.field_x,
+        136,
+        layout.fps_field_width,
+        layout.field_height,
         IDC_FPS_EDIT,
     );
 
@@ -195,15 +260,33 @@ pub(super) unsafe fn create_controls(hwnd: HWND) {
         "Start with Windows",
         BS_AUTOCHECKBOX,
         15,
-        170,
-        200,
-        23,
+        178,
+        220,
+        layout.field_height,
         IDC_AUTOSTART_CHECK,
     );
 
     // Row 6 — Save / Cancel
-    make(w!("BUTTON"), "Save", 0, 280, 220, 75, 28, IDC_SAVE_BTN);
-    make(w!("BUTTON"), "Cancel", 0, 365, 220, 75, 28, IDC_CANCEL_BTN);
+    make(
+        w!("BUTTON"),
+        "Save",
+        0,
+        380,
+        230,
+        90,
+        layout.button_height,
+        IDC_SAVE_BTN,
+    );
+    make(
+        w!("BUTTON"),
+        "Cancel",
+        0,
+        480,
+        230,
+        90,
+        layout.button_height,
+        IDC_CANCEL_BTN,
+    );
 }
 
 /// Fill all controls with the current settings values.

@@ -35,7 +35,7 @@ impl Format {
     /// default used as the fallback for unrecognised input.
     pub const ALL: [Format; 3] = [Format::Png, Format::Jpg, Format::Bmp];
 
-    /// Map this format to the corresponding [`image::ImageFormat`] variant.
+    /// Map this format to the corresponding [`ImageFormat`] variant.
     pub fn to_image_format(self) -> ImageFormat {
         match self {
             Format::Png => ImageFormat::Png,
@@ -424,15 +424,42 @@ pub fn capture_active_window_in_dir(
 ) -> Result<PathBuf, String> {
     log::debug!("capture_active_window: format={:?}", format);
     let rgba_image = capture_active_window_image()?;
+    save_active_window_image_in_dir(&rgba_image, output, format, screenshots_dir)
+}
+
+/// Save an already captured active-window image using the normal naming policy.
+///
+/// Keeping capture and persistence separate lets tray mode deliver the exact
+/// same pixels to both the clipboard and disk. CLI callers still use
+/// [`capture_active_window_in_dir`] and retain their existing file-only flow.
+pub(crate) fn save_active_window_image_in_dir(
+    rgba_image: &image::RgbaImage,
+    output: Option<PathBuf>,
+    format: Format,
+    screenshots_dir: &Path,
+) -> Result<PathBuf, String> {
     let output_path = resolve_output_path_in_dir(output, format, screenshots_dir);
     ensure_parent_directory(&output_path)?;
-    save_image_optimized(&rgba_image, &output_path, format)?;
+    save_image_optimized(rgba_image, &output_path, format)?;
     Ok(output_path)
 }
 
 /// Capture the active window as an RgbaImage (for clipboard use).
 pub fn capture_active_window_image() -> Result<image::RgbaImage, String> {
     capture_active_window_platform()
+}
+
+/// Snapshot the foreground window's reusable handle identity.
+///
+/// Keeping the PID/TID beside the raw `HWND` prevents delayed hotkey work from
+/// capturing an unrelated window if Windows recycles the handle meanwhile.
+pub(crate) fn foreground_window_target() -> Result<WindowTarget, String> {
+    platform::foreground_window_target_platform()
+}
+
+/// Capture exactly the window represented by an earlier identity snapshot.
+pub(crate) fn capture_window_target(target: WindowTarget) -> Result<image::RgbaImage, String> {
+    platform::capture_window_target_platform(target)
 }
 
 /// Convert BGRA pixel data to RGBA in place.
@@ -685,6 +712,7 @@ use platform::capture_active_window_platform;
 pub(crate) use platform::capture_hwnd;
 #[cfg(windows)]
 pub(crate) use platform::pin_process_mta;
+pub(crate) use platform::WindowTarget;
 
 #[cfg(test)]
 mod tests;

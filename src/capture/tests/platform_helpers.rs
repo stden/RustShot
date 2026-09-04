@@ -2,10 +2,14 @@
 
 use crate::capture::platform::{
     frame_crop_within_window, gdi_bgrx_to_rgba, receive_capture_result, resolve_window_bounds,
-    rgba_from_bgra_rows, validate_gdi_scan_lines, WindowBounds,
+    rgba_from_bgra_rows, validate_gdi_scan_lines, validate_window_target_identity, WindowBounds,
+    WindowTarget,
 };
 use std::cell::Cell;
-use std::sync::mpsc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    mpsc, Arc,
+};
 use std::time::Duration;
 
 // --- frame_crop_within_window: PrintWindow output -> extended-frame crop ---
@@ -186,22 +190,41 @@ fn capture_worker_disconnect_is_reported() {
     assert!(error.contains("stopped without returning a result"));
 }
 
-/// `SendableHwnd` is what lets a window handle cross into the capture worker
-/// thread without an `unsafe impl Send`, so the value must survive the trip to
-/// `isize` and back unchanged — including the high-bit patterns a 64-bit handle
-/// can carry.
-#[cfg(windows)]
 #[test]
-fn sendable_hwnd_round_trips_every_handle_pattern() {
-    use crate::capture::platform::SendableHwnd;
-    use windows::Win32::Foundation::HWND;
+fn window_target_identity_rejects_a_closed_or_reused_handle() {
+    let target = WindowTarget::new_for_test(17, 101, 201, 301, None);
 
-    for raw in [0isize, 1, 0x0001_0044, -1, isize::MAX, isize::MIN] {
-        let original = HWND(raw as *mut core::ffi::c_void);
-        let restored = SendableHwnd::from(original).hwnd();
-        assert_eq!(restored.0 as isize, raw);
-        assert_eq!(restored, original);
+    assert!(validate_window_target_identity(&target, 101, 201, 301).is_ok());
+
+    for (process_id, thread_id) in [(0, 0), (102, 201), (101, 202)] {
+        let error =
+            validate_window_target_identity(&target, process_id, thread_id, 301).unwrap_err();
+        assert!(error.contains("closed or its HWND was reused"), "{error}");
     }
+}
+
+#[test]
+fn window_target_identity_rejects_missing_or_replaced_generation_marker() {
+    let target = WindowTarget::new_for_test(17, 101, 201, 301, None);
+
+    for observed_marker in [0, 302] {
+        let error =
+            validate_window_target_identity(&target, 101, 201, observed_marker).unwrap_err();
+        assert!(error.contains("generation marker"), "{error}");
+    }
+}
+
+#[test]
+fn window_target_marker_lease_cleans_up_only_after_the_last_clone() {
+    let cleanup_count = Arc::new(AtomicUsize::new(0));
+    let target = WindowTarget::new_for_test(17, 101, 201, 301, Some(cleanup_count.clone()));
+    let worker_target = target.clone();
+
+    drop(target);
+    assert_eq!(cleanup_count.load(Ordering::SeqCst), 0);
+
+    drop(worker_target);
+    assert_eq!(cleanup_count.load(Ordering::SeqCst), 1);
 }
 
 // --- PixelSwizzle: the shared RGBA/BGRA converter ---

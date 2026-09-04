@@ -317,3 +317,137 @@ fn window_capture_slot_admits_one_capture_at_a_time() {
     // Graphics Capture backend.
     assert!(!window_capture_slot_is_free(Some(false)));
 }
+
+#[test]
+fn active_window_capture_copies_and_saves_the_same_image() {
+    let expected = image::RgbaImage::from_raw(2, 1, vec![1, 2, 3, 255, 4, 5, 6, 255]).unwrap();
+    let clipboard_pixels = std::cell::RefCell::new(Vec::new());
+    let saved_pixels = std::cell::RefCell::new(Vec::new());
+    let expected_path = PathBuf::from("window.png");
+
+    let path = capture_active_window_outputs_with_handlers(
+        || Ok(expected.clone()),
+        |image| {
+            *clipboard_pixels.borrow_mut() = image.as_raw().clone();
+            Ok(())
+        },
+        |image| {
+            *saved_pixels.borrow_mut() = image.as_raw().clone();
+            Ok(expected_path.clone())
+        },
+    )
+    .expect("active-window output delivery should succeed");
+
+    assert_eq!(path, expected_path);
+    assert_eq!(*clipboard_pixels.borrow(), expected.as_raw().as_slice());
+    assert_eq!(*saved_pixels.borrow(), expected.as_raw().as_slice());
+}
+
+#[test]
+fn active_window_capture_attempts_the_file_when_clipboard_write_fails() {
+    let saved = Cell::new(false);
+    let error = capture_active_window_outputs_with_handlers(
+        || Ok(image::RgbaImage::new(1, 1)),
+        |_| Err("clipboard unavailable".to_string()),
+        |_| {
+            saved.set(true);
+            Ok(PathBuf::from("window.png"))
+        },
+    )
+    .expect_err("a clipboard failure should remain observable");
+
+    assert!(saved.get(), "the file output must still be attempted");
+    assert!(error.contains("clipboard unavailable"), "{error}");
+    assert!(error.contains("window.png"), "{error}");
+}
+
+#[test]
+fn pressed_hotkey_event_snapshots_the_foreground_window_immediately() {
+    use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
+
+    let expected = capture::WindowTarget::new(17, 101, 201);
+    let later = capture::WindowTarget::new(23, 102, 202);
+    let foreground = std::cell::RefCell::new(expected.clone());
+    let routed = hotkey_event_with_foreground(
+        GlobalHotKeyEvent {
+            id: 42,
+            state: HotKeyState::Pressed,
+        },
+        || Ok(foreground.borrow().clone()),
+    );
+    *foreground.borrow_mut() = later;
+
+    let snapshotted = match routed {
+        RustShotEvent::HotKey {
+            event,
+            foreground_window,
+        } => {
+            assert_eq!(event.id, 42);
+            foreground_window.expect("pressed hotkey should carry a target")
+        }
+        RustShotEvent::Menu { .. } => panic!("hotkey was routed as a menu event"),
+    };
+
+    let captured = std::cell::RefCell::new(None);
+    capture_window_target_with(snapshotted, |target| {
+        *captured.borrow_mut() = Some(target);
+        Ok(image::RgbaImage::new(1, 1))
+    })
+    .expect("the snapshotted target should be capturable");
+
+    assert_eq!(captured.borrow().as_ref(), Some(&expected));
+}
+
+#[test]
+fn pressed_hotkey_without_a_foreground_window_never_captures_a_later_window() {
+    use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
+
+    let routed = hotkey_event_with_foreground(
+        GlobalHotKeyEvent {
+            id: 42,
+            state: HotKeyState::Pressed,
+        },
+        || Err("No foreground window found when Alt+PrintScreen was pressed".to_string()),
+    );
+    let target = match routed {
+        RustShotEvent::HotKey {
+            foreground_window, ..
+        } => foreground_window.expect("pressed hotkey should carry a target result"),
+        RustShotEvent::Menu { .. } => panic!("hotkey was routed as a menu event"),
+    };
+
+    let capture_calls = Cell::new(0);
+    let error = capture_window_target_with(target, |_| {
+        capture_calls.set(capture_calls.get() + 1);
+        Ok(image::RgbaImage::new(1, 1))
+    })
+    .expect_err("a missing key-press target must stay an error");
+
+    assert_eq!(capture_calls.get(), 0);
+    assert!(
+        error.contains("when Alt+PrintScreen was pressed"),
+        "{error}"
+    );
+}
+
+#[test]
+fn tray_menu_pairs_the_pre_popup_target_once() {
+    let expected = capture::WindowTarget::new(17, 101, 201);
+    let tray_helper = capture::WindowTarget::new(23, 102, 202);
+    let foreground = std::cell::RefCell::new(expected.clone());
+    let pending = std::sync::Mutex::new(None);
+
+    remember_tray_window_target_with(&pending, || Ok(foreground.borrow().clone()));
+    *foreground.borrow_mut() = tray_helper;
+
+    let captured = std::cell::RefCell::new(None);
+    capture_window_target_with(take_tray_window_target(&pending), |target| {
+        *captured.borrow_mut() = Some(target);
+        Ok(image::RgbaImage::new(1, 1))
+    })
+    .expect("the pre-popup tray target should be capturable");
+
+    assert_eq!(captured.borrow().as_ref(), Some(&expected));
+    let error = take_tray_window_target(&pending).unwrap_err();
+    assert!(error.contains("before the tray menu opened"), "{error}");
+}

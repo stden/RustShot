@@ -37,6 +37,48 @@ const IDC_AUTOSTART_CHECK: i32 = 107;
 const IDC_SAVE_BTN: i32 = 108;
 const IDC_CANCEL_BTN: i32 = 109;
 
+/// Geometry shared by top-level window creation and every child-control row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SettingsDialogLayout {
+    dialog_width: i32,
+    dialog_height: i32,
+    field_x: i32,
+    path_edit_width: i32,
+    format_field_width: i32,
+    fps_field_width: i32,
+    field_height: i32,
+    browse_x: i32,
+    browse_width: i32,
+    button_height: i32,
+    font_point_size: i32,
+}
+
+/// Return the dialog dimensions in Win32 logical pixels at the process DPI.
+///
+/// A function, rather than scattered constants, keeps the wider fields and
+/// their surrounding controls on one production-used layout contract.
+fn settings_dialog_layout() -> SettingsDialogLayout {
+    SettingsDialogLayout {
+        dialog_width: 610,
+        dialog_height: 320,
+        field_x: 150,
+        path_edit_width: 350,
+        format_field_width: 160,
+        fps_field_width: 110,
+        field_height: 27,
+        browse_x: 510,
+        browse_width: 70,
+        button_height: 30,
+        font_point_size: 11,
+    }
+}
+
+/// Convert point size to the negative character height expected by
+/// `CreateFontW`, rounded to the nearest pixel at the baseline 96 DPI.
+fn font_pixel_height(point_size: i32) -> i32 {
+    -((point_size * 96 + 36) / 72)
+}
+
 // Win32 file dialog option: pick folders instead of files.
 const FOS_PICKFOLDERS: u32 = 0x20;
 
@@ -171,6 +213,7 @@ unsafe fn run_dialog() -> Result<(), String> {
     // documented way to create an unowned top-level window, while `instance`
     // is the same executable module that owns the class. The returned handle
     // remains live through the message loop and is destroyed by `wnd_proc`.
+    let layout = settings_dialog_layout();
     let hwnd = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
@@ -179,8 +222,8 @@ unsafe fn run_dialog() -> Result<(), String> {
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            460,
-            300,
+            layout.dialog_width,
+            layout.dialog_height,
             None,
             None,
             Some(instance),
@@ -276,6 +319,15 @@ unsafe extern "system" fn wnd_proc(
             // for this thread, which is the thread running `run_dialog`'s loop.
             unsafe { PostQuitMessage(0) };
             LRESULT(0)
+        }
+        WM_NCDESTROY => {
+            // SAFETY: this is the final destruction message for the dialog;
+            // `create_controls` stored only its owned custom HFONT, and the
+            // child controls that used it no longer outlive this cleanup.
+            unsafe { release_dialog_font(hwnd) };
+            // SAFETY: the font bookkeeping above consumes no message data, so
+            // the OS still receives its original final-destruction arguments.
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         // SAFETY: forwarding the OS's own arguments unchanged to the default
         // handler, which is what a window procedure must do for messages it does

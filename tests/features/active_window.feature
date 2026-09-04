@@ -8,3 +8,9 @@ Feature: Active window capture boundary
   Scenario: Capturing the active window yields a file or a readable error
     When the active window is captured into a temporary directory
     Then the capture yields a saved image file or a human-readable error
+
+  Scenario: Active-window output delivery reuses one capture for clipboard and file
+    When active-window output delivery runs with simulated handlers
+    Then it captures the active window once
+    And it copies that same image to the clipboard once
+    And it saves that same image once

@@ -9,22 +9,22 @@
 
 > **One binary. Zero hassle. Screenshots and recordings done right.**
 
-RustShot is a lightning-fast ⚡ screenshot and screen recording utility,
-written in Rust 🦀 because life's too short for slow tools.
+RustShot is a lightning-fast ⚡ screenshot and screen recording utility, written in Rust 🦀 because life's too short for
+slow tools.
 
 ---
 
 ## 🌟 Why RustShot?
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| 📷 **Screenshots** | ✅ Ready | Capture full screen or select any region |
-| 🎬 **Screen Recording** | ✅ Ready | Record to MP4 (H.264) — **(Windows only)** |
-| 🖱️ **Region Selection** | ✅ Ready | Click and drag — it's that easy |
-| 💾 **Multiple Formats** | ✅ Ready | PNG, JPG, BMP — take your pick! |
-| 🖥️ **Multi-Monitor** | ✅ Ready | Got 3 monitors? We got you covered 😎 |
-| ⚡ **Tray Mode** | ✅ Ready | Sits quietly in your system tray like a good tool should |
-| 🪟 **Active Window** | ✅ Ready | Grab just the focused window (Windows) |
+| Feature                 | Status   | Description                                              |
+|-------------------------|----------|----------------------------------------------------------|
+| 📷 **Screenshots**      | ✅ Ready | Capture full screen or select any region                 |
+| 🎬 **Screen Recording** | ✅ Ready | Record to MP4 (H.264) — **(Windows only)**               |
+| 🖱️ **Region Selection** | ✅ Ready | Click and drag — it's that easy                          |
+| 💾 **Multiple Formats** | ✅ Ready | PNG, JPG, BMP — take your pick!                          |
+| 🖥️ **Multi-Monitor**    | ✅ Ready | Got 3 monitors? We got you covered 😎                    |
+| ⚡ **Tray Mode**        | ✅ Ready | Sits quietly in your system tray like a good tool should |
+| 🪟 **Active Window**    | ✅ Ready | Grab just the focused window (Windows)                   |
 
 ---
 
@@ -33,9 +33,8 @@ written in Rust 🦀 because life's too short for slow tools.
 Start here. Four steps, no detours. (🐧 Linux: install the packages under
 [Prerequisites](#-prerequisites) first, then come back.)
 
-**1️⃣ Get Rust and the sources.** `rust-toolchain.toml` pins the toolchain to
-**1.93** and `rustup` fetches it for you. On 🪟 Windows you also need the Visual
-Studio C++ build tools, because the build targets `x86_64-pc-windows-msvc`.
+**1️⃣ Get Rust and the sources.** `rust-toolchain.toml` pins the toolchain to **1.93** and `rustup` fetches it for you.
+On 🪟 Windows you also need the Visual Studio C++ build tools, because the build targets `x86_64-pc-windows-msvc`.
 
 ```bash
 git clone https://github.com/stden/RustShot.git
@@ -53,8 +52,7 @@ target/release/RustShot --cli        # 🐧🍎
 target\release\RustShot.exe --cli    # 🪟
 ```
 
-📸 The PNG lands in your Pictures folder under `RustShot\`, with a timestamped
-name.
+📸 The PNG lands in your Pictures folder under `RustShot\`, with a timestamped name.
 
 > 🪟 One catch: RustShot is built as a Windows GUI app, so it has no console. In
 > **PowerShell** the command returns instantly and prints nothing. Pipe it
@@ -85,9 +83,14 @@ target\release\RustShot.exe          # 🪟 (drop the .exe on 🐧🍎)
 > only when **Start with Windows** is enabled (the default); CLI, MCP, and helper
 > processes never self-install.
 
-**4️⃣ Press `PrintScreen` and drag a box.** The region goes straight to your 📋
-clipboard — paste it anywhere. `Esc` or right-click cancels, and drags of 5 px or
-less are discarded, so a plain click looks like nothing happened.
+**4️⃣ Press `PrintScreen` and drag a box.** The region goes straight to your 📋 clipboard — paste it anywhere. `Esc` or
+right-click cancels, and drags of 5 px or less are discarded, so a plain click looks like nothing happened.
+
+> 🟨 On Windows, the temporary yellow outline around the whole screen is Windows
+> Graphics Capture's system capture indicator while RustShot prepares the region
+> selector. It is not part of the captured image. Hiding it would require Windows'
+> borderless-capture consent and package capability, which RustShot does not
+> currently use.
 
 🎉 That's the whole loop: build, tray, capture.
 
@@ -101,21 +104,19 @@ less are discarded, so a plain click looks like nothing happened.
 
 ## 🌍 Platform support
 
-| Platform | Screenshots | Tray + menu | Hotkeys | Recording | Vibe |
-|----------|:-----------:|:-----------:|:-------:|:---------:|------|
-| 🪟 Windows | ✅ | ✅ | ✅ | ✅ | Full power 💪 |
-| 🐧 Linux | ✅ | ✅ ¹ | ❔ ² | ❌ | Screenshots + tray |
-| 🍎 macOS | ✅ | ✅ | ⚠️ ³ | ❌ | Screenshots + tray |
+| Platform   | Screenshots | Tray + menu | Hotkeys | Recording | Vibe               |
+|------------|:-----------:|:-----------:|:-------:|:---------:|--------------------|
+| 🪟 Windows |     ✅      |     ✅      |   ✅    |    ✅     | Full power 💪      |
+| 🐧 Linux   |     ✅      |    ✅ ¹     |  ❔ ²   |    ❌     | Screenshots + tray |
+| 🍎 macOS   |     ✅      |     ✅      |  ⚠️ ³   |    ❌     | Screenshots + tray |
 
 ¹ Needs `libayatana-appindicator3` **at runtime** — see
-[Prerequisites](#-prerequisites). Without it the tray panics on startup.
-² Not verified by us; tracked in `IDEAS.md`.
-³ The hotkeys are `PrintScreen` / `Alt+PrintScreen` — keys Apple keyboards don't
-have — and they can't be rebound.
+[Prerequisites](#-prerequisites). Without it the tray panics on startup. ² Not verified by us; tracked in `IDEAS.md`. ³
+The hotkeys are `PrintScreen` / `Alt+PrintScreen` — keys Apple keyboards don't have — and they can't be rebound.
 
-Recording is Windows-only by design (H.264 via Media Foundation); elsewhere it
-answers `Recording is only supported on Windows`. Active-window capture
-(`--window`, `--window-id`, `--list-windows`) is Windows-only too. Details in
+Recording is Windows-only by design (H.264 via Media Foundation); elsewhere it answers
+`Recording is only supported on Windows`. Active-window capture (`--window`, `--window-id`, `--list-windows`) is
+Windows-only too. Details in
 [docs/TUTORIAL.md](docs/TUTORIAL.md#-platform-reality-check).
 
 ---
@@ -124,15 +125,13 @@ answers `Recording is only supported on Windows`. Active-window capture
 
 ### 🪟 Windows & 🍎 macOS
 
-Install Rust via [rustup](https://rustup.rs) — `rust-toolchain.toml` pins the
-toolchain to **1.93** and rustup fetches it automatically. On 🪟 Windows you also
-need the Visual Studio C++ build tools, since the build targets
+Install Rust via [rustup](https://rustup.rs) — `rust-toolchain.toml` pins the toolchain to **1.93** and rustup fetches
+it automatically. On 🪟 Windows you also need the Visual Studio C++ build tools, since the build targets
 `x86_64-pc-windows-msvc`. 🍎 macOS needs nothing else. Go grab a ☕.
 
 ### 🐧 Linux
 
-X11 **and** GTK libraries needed — the tray reaches the desktop through
-appindicator, so it's more than just xcb:
+X11 **and** GTK libraries needed — the tray reaches the desktop through appindicator, so it's more than just xcb:
 
 <details>
 <summary>🔽 Ubuntu / Debian</summary>
@@ -146,16 +145,16 @@ sudo apt-get install libglib2.0-dev libgtk-3-dev libxdo-dev libatk1.0-dev \
   libgdk-pixbuf2.0-dev libcairo2-dev libpango1.0-dev libayatana-appindicator3-dev
 ```
 
-`libayatana-appindicator3-dev` is a **runtime** requirement, not just a build
-one: `tray-icon` reaches the Linux tray through `libappindicator-sys`, which
-`dlopen`s `ayatana-appindicator3` (or `appindicator3`) and **panics** when
-neither is there — so the tray-mode process dies rather than logging an error.
-This is the exact set CI installs; the `Install X11 and GTK dependencies` step in
+`libayatana-appindicator3-dev` is a **runtime** requirement, not just a build one: `tray-icon` reaches the Linux tray
+through `libappindicator-sys`, which
+`dlopen`s `ayatana-appindicator3` (or `appindicator3`) and **panics** when neither is there — so the tray-mode process
+dies rather than logging an error. This is the exact set CI installs; the `Install X11 and GTK dependencies` step in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the authoritative list.
 
 ```bash
 # (nothing more to run here — see above)
 ```
+
 </details>
 
 <details>
@@ -167,8 +166,8 @@ sudo dnf install libxcb-devel
 # ayatana-appindicator3 development packages.
 ```
 
-We don't list exact Fedora package names, because we'd be guessing. Match the
-Ubuntu set in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+We don't list exact Fedora package names, because we'd be guessing. Match the Ubuntu set in [
+`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 </details>
 
 <details>
@@ -194,6 +193,7 @@ cargo build --release    # 🚀 Release build (for speed demons)
 ```
 
 Your shiny new binary lands here:
+
 ```text
 target/release/RustShot       # 🐧🍎
 target/release/RustShot.exe   # 🪟
@@ -211,26 +211,24 @@ RustShot
 
 Just launch it — no arguments. On 🪟 Windows 11 the new icon starts out **hidden**
 behind the taskbar's `^` chevron; drag it out once to pin it (see
-[Tutorial, part 1](#-tutorial-part-1--fresh-clone-to-first-screenshot)). Then use
-hotkeys like a pro:
+[Tutorial, part 1](#-tutorial-part-1--fresh-clone-to-first-screenshot)). Then use hotkeys like a pro:
 
-| 🎹 Hotkey | 🎬 What happens | 🤔 When to use |
-|-----------|-----------------|----------------|
-| `PrintScreen` | Select region → screenshot → clipboard 📋 | When you need *just that part* |
-| `Alt+PrintScreen` | Capture active window → a **file** in the screenshots folder, in the format chosen in Settings (PNG by default) 🖼️ — the clipboard is left alone, unlike Windows' own Alt+PrintScreen. Windows only | When the whole window is the star |
-| `Ctrl+Shift+R` | Select a region → start recording 🔴 (Windows only; the region must fit inside a single monitor) | Showtime! |
-| `Ctrl+Shift+R` again | Stop recording → MP4 🎬 | And... cut! |
-| Right-click tray icon | Menu: *Capture Screenshot*, *Capture Active Window*, *Open Screenshots Folder*, *Start or Stop Recording*, *Settings*, *Exit* 📋 | For everything else |
+| 🎹 Hotkey             | 🎬 What happens                                                                                                                                                                                             | 🤔 When to use                    |
+|-----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
+| `PrintScreen`         | Select region → screenshot → clipboard 📋                                                                                                                                                                   | When you need *just that part*    |
+| `Alt+PrintScreen`     | Capture active window → clipboard 📋 **and** a file in the screenshots folder, in the format chosen in Settings (PNG by default) 🖼️. The tray's *Capture Active Window* command does the same. Windows only | When the whole window is the star |
+| `Ctrl+Shift+R`        | Select a region → start recording 🔴 (Windows only; the region must fit inside a single monitor)                                                                                                            | Showtime!                         |
+| `Ctrl+Shift+R` again  | Stop recording → MP4 🎬                                                                                                                                                                                     | And... cut!                       |
+| Right-click tray icon | Menu: *Capture Screenshot*, *Capture Active Window*, *Open Screenshots Folder*, *Start or Stop Recording*, *Settings*, *Exit* 📋                                                                            | For everything else               |
 
-**📂 Where does stuff go?** (these are the built-in defaults; all of them are
-editable in the tray's Settings dialog — see
+**📂 Where does stuff go?** (these are the built-in defaults; all of them are editable in the tray's Settings dialog —
+see
 [docs/TUTORIAL.md](docs/TUTORIAL.md#-step-7--the-settings-dialog))
-| What | Where | Why |
-|------|-------|-----|
-| Region captures | 📋 Clipboard only — never a file | Quick sharing! |
-| Window captures, and CLI captures **without** `--output` | `Pictures\RustShot\` | Auto-organized |
-| CLI captures **with** `--output <path>` | exactly that path — a bare filename lands in the **current directory** | You asked for it |
-| Recordings | `Pictures\RustShot\recordings\` | Movie night 🍿 |
+| What | Where | Why | |------|-------|-----| | Region captures | 📋 Clipboard only — never a file | Quick sharing! | |
+Hotkey/tray active-window captures | 📋 Clipboard **and** `Pictures\RustShot\` | Paste now, keep the file | | CLI
+captures **without** `--output` | `Pictures\RustShot\` (file only) | Auto-organized | | CLI captures **with**
+`--output <path>` | exactly that path — a bare filename lands in the **current directory** | You asked for it | |
+Recordings | `Pictures\RustShot\recordings\` | Movie night 🍿 |
 
 > 💡 **Tip:** on 🪟 Windows, the first bare tray launch installs
 > `%LOCALAPPDATA%\Programs\RustShot\RustShot.exe`; later external launches hand
@@ -247,23 +245,25 @@ editable in the tray's Settings dialog — see
 **The routing rule:** any capture-related flag implies one-shot CLI mode, so
 `--cli` is only needed when you pass nothing else. `--cli`, `--list`, `--window`,
 `--output`, `--screen`, an explicit `--format`, `--list-windows` and
-`--window-id` each select CLI mode on their own; `--mcp` wins over all of them;
-and only a bare command line reaches tray mode. (Yes — `--format jpg` alone
-silently suppresses the tray.)
+`--window-id` each select CLI mode on their own; `--mcp` wins over all of them; and only a bare command line reaches
+tray mode. (Yes — `--format jpg` alone silently suppresses the tray.)
 
 #### 1️⃣ Quick screenshot
+
 ```bash
 RustShot --cli
 # 📸 *click* — saved with an auto-generated name
 ```
 
 #### 2️⃣ Custom filename
+
 ```bash
 RustShot --output epic_screenshot.png
 # 💾 Saved exactly there — a bare filename means the current directory
 ```
 
 #### 3️⃣ Pick your format
+
 ```bash
 RustShot --format jpg --output photo.jpg    # 📷 JPEG — smaller file
 RustShot --format bmp --output retro.bmp    # 🖼️ BMP — for that retro feel
@@ -271,6 +271,7 @@ RustShot --format png --output crisp.png    # 🎨 PNG — pixel perfect (defaul
 ```
 
 #### 4️⃣ Multi-monitor magic
+
 ```bash
 RustShot --list              # 👀 See all your screens
 RustShot --screen 1          # 📺 Capture monitor #2
@@ -278,11 +279,15 @@ RustShot --screen 0          # 📺 Capture monitor #1 (indexing starts at 0!)
 ```
 
 #### 5️⃣ Capture the active window
+
 ```bash
-RustShot --window            # 🪟 Just the focused window (Windows only)
+RustShot --window            # 🪟 Save the focused window to a file (Windows only)
 ```
 
+CLI window captures are file-only; they do not copy the image to the clipboard.
+
 #### 6️⃣ Pick a specific window
+
 ```bash
 RustShot --list-windows      # 🪟 List open windows as "<id>  <title>" (Windows only)
 RustShot --window-id 262788  # 🎯 Capture that exact window by its id (Windows only)
@@ -293,8 +298,7 @@ RustShot --window-id 262788  # 🎯 Capture that exact window by its id (Windows
 ## 🤖 MCP server — *let an AI take the screenshots*
 
 RustShot speaks the [Model Context Protocol](https://modelcontextprotocol.io):
-point an MCP client (an AI assistant, an editor) at it and it can list and
-capture screens and windows for you.
+point an MCP client (an AI assistant, an editor) at it and it can list and capture screens and windows for you.
 
 ```bash
 RustShot --mcp               # 🔌 Serve MCP over stdio (JSON-RPC)
@@ -311,8 +315,8 @@ Example client config:
 ```
 
 Tools exposed: `list_screens`, `list_windows`, `capture_screen`, and
-`capture_window`. The capture tools save a file **and** return the image inline,
-so the assistant can view the screenshot directly.
+`capture_window`. The capture tools save a file **and** return the image inline, so the assistant can view the
+screenshot directly.
 
 ---
 
@@ -365,9 +369,8 @@ cargo bench    # 🏎️ How fast is it?
 
 ### ⚡ Performance benchmarks
 
-The Criterion suite includes the hot paths for capture, selection, recording,
-settings, CLI routing, and tray rendering. To measure the selection overlay's
-1920×1080 cursor redraw path in isolation:
+The Criterion suite includes the hot paths for capture, selection, recording, settings, CLI routing, and tray rendering.
+To measure the selection overlay's 1920×1080 cursor redraw path in isolation:
 
 ```bash
 cargo bench --bench benchmarks -- overlay_redraw/1920x1080_crosshair
@@ -376,46 +379,39 @@ cargo bench --bench benchmarks -- overlay_redraw/1920x1080_crosshair
 cargo bench --bench performance_gate -- selection_overlay_redraw_1080p
 ```
 
-Reach for the `performance_gate` target when judging a change: it pins its
-sampling configuration, its ids own the recorded baselines, and its ceilings live
-in `scripts/benchmark_guard.ps1`. The `benchmarks` target is exploratory and also
-probes live screen capture, which can stall on a headless or busy session.
+Reach for the `performance_gate` target when judging a change: it pins its sampling configuration, its ids own the
+recorded baselines, and its ceilings live in `scripts/benchmark_guard.ps1`. The `benchmarks` target is exploratory and
+also probes live screen capture, which can stall on a headless or busy session.
 
-Caching the immutable screenshot background is what makes this redraw
-*incremental* instead of a full-frame recomposition. Measured on one Windows
-development machine (2026-08-26, single run — read it as an order of magnitude,
+Caching the immutable screenshot background is what makes this redraw *incremental* instead of a full-frame
+recomposition. Measured on one Windows development machine (2026-08-26, single run — read it as an order of magnitude,
 not a spec): `overlay_redraw/1920x1080_crosshair` at **13.5 µs**
-[12.9 µs, 14.2 µs], against **2.19 ms** [2.14 ms, 2.26 ms] to rebuild that
-background from scratch (`performance_gate/selection_overlay_background_1080p`) —
-the cost the uncached path paid on every cursor move. Absolute timings depend on
-the machine, so use Criterion's before/after comparison when evaluating a change;
-the ceiling CI actually enforces is **0.2 ms**.
+[12.9 µs, 14.2 µs], against **2.19 ms** [2.14 ms, 2.26 ms] to rebuild that background from scratch
+(`performance_gate/selection_overlay_background_1080p`) — the cost the uncached path paid on every cursor move. Absolute
+timings depend on the machine, so use Criterion's before/after comparison when evaluating a change; the ceiling CI
+actually enforces is **0.2 ms**.
 
-The cache stores one `u32` pixel buffer for the selection session: about 8 MiB
-at 1920×1080 and 32 MiB at 3840×2160. It is rebuilt only when the overlay or
-captured image dimensions change. Cursor and drag updates restore only the
-rectangles the *previous* crosshair or border covered from the cached background,
-paint the new ones, and hand those rectangles to `present_with_damage` — a
-whole-frame copy happens only on the first frame, or when `softbuffer` can't
+The cache stores one `u32` pixel buffer for the selection session: about 8 MiB at 1920×1080 and 32 MiB at 3840×2160. It
+is rebuilt only when the overlay or captured image dimensions change. Cursor and drag updates restore only the
+rectangles the *previous* crosshair or border covered from the cached background, paint the new ones, and hand those
+rectangles to `present_with_damage` — a whole-frame copy happens only on the first frame, or when `softbuffer` can't
 vouch for the buffer's previous contents.
 
-The 4K BGRA→RGBA channel swap also uses AVX2 when available, with a portable
-scalar fallback for older and non-x86 processors. On the same machine and run,
-`performance_gate/bgra_to_rgba_4k` measured **1.61 ms** [1.54 ms, 1.69 ms]. The
-scalar-versus-AVX2 delta isn't benchmarked — `PixelSwizzle` is crate-private and
-`detect` always takes AVX2 where the CPU offers it — so treat the vectorised path
-as guarded by that benchmark's **4 ms** budget rather than by a quoted speedup.
+The 4K BGRA→RGBA channel swap also uses AVX2 when available, with a portable scalar fallback for older and non-x86
+processors. On the same machine and run,
+`performance_gate/bgra_to_rgba_4k` measured **1.61 ms** [1.54 ms, 1.69 ms]. The scalar-versus-AVX2 delta isn't
+benchmarked — `PixelSwizzle` is crate-private and
+`detect` always takes AVX2 where the CPU offers it — so treat the vectorised path as guarded by that benchmark's **4
+ms** budget rather than by a quoted speedup.
 
-Pull requests run `cargo bench --bench performance_gate` on Windows. Once the
-benchmark target exists on the base branch, CI measures base and head on the
-same runner. `scripts/benchmark_guard.ps1` can then fail a pull request two ways:
-an **absolute** per-benchmark budget is exceeded when the *upper* bound of the
-median's confidence interval crosses its ceiling, and a **relative** regression
-is confirmed when the *lower* bound of the median change exceeds 10%. Absolute
+Pull requests run `cargo bench --bench performance_gate` on Windows. Once the benchmark target exists on the base
+branch, CI measures base and head on the same runner. `scripts/benchmark_guard.ps1` can then fail a pull request two
+ways:
+an **absolute** per-benchmark budget is exceeded when the *upper* bound of the median's confidence interval crosses its
+ceiling, and a **relative** regression is confirmed when the *lower* bound of the median change exceeds 10%. Absolute
 budgets are checked on every run; a newly added benchmark has no base result, so
-`--baseline-lenient` skips its relative check for one run and the budget is all
-that applies. The Criterion HTML and JSON for the `performance_gate` group is
-uploaded as a workflow artifact, kept for 14 days.
+`--baseline-lenient` skips its relative check for one run and the budget is all that applies. The Criterion HTML and
+JSON for the `performance_gate` group is uploaded as a workflow artifact, kept for 14 days.
 
 > **Fun fact:** `cargo test` runs the Gherkin features in `tests/features/` as
 > part of the suite 🧪 — the behavioural spec is executable, not a document
@@ -429,24 +425,24 @@ uploaded as a workflow artifact, kept for 14 days.
 
 Head over to [**Releases**](https://github.com/stden/RustShot/releases) and grab what you need:
 
-| File | What is it | For whom |
-|------|-----------|----------|
-| `rustshot.exe` | 📦 Single executable; a bare tray launch self-installs when auto-start is enabled | "I don't like setup wizards" |
-| `RustShotSetup.exe` | 🔧 Windows installer | "Set it up properly" |
+| File                | What is it                                                                        | For whom                     |
+|---------------------|-----------------------------------------------------------------------------------|------------------------------|
+| `rustshot.exe`      | 📦 Single executable; a bare tray launch self-installs when auto-start is enabled | "I don't like setup wizards" |
+| `RustShotSetup.exe` | 🔧 Windows installer                                                              | "Set it up properly"         |
 
 ---
 
 ## 📚 Reference files
 
-| File | Description |
-|------|------------|
-| 📘 `AGENTS.md` | General rules for AI assistants |
-| 🤖 `CLAUDE.md` | Instructions for Claude |
-| 💎 `GEMINI.md` | Instructions for Gemini |
-| 📦 [INSTALLERS.md](docs/INSTALLERS.md) | 🎓 Tutorial: build Windows installers for Rust apps |
-| 🚀 [INNO_SETUP_PIPELINE.md](docs/INNO_SETUP_PIPELINE.md) | 🎓 Lesson: Inno Setup + GitHub Actions pipeline |
-| 📖 [docs/TUTORIAL.md](docs/TUTORIAL.md) | 🎓 **Tutorial, part 2** — recording, settings, auto-start, MCP, platform notes |
-| 🗺️ [docs/README.md](docs/README.md) | **Documentation map** — architecture (rustdoc, start at `src/lib.rs`), executable specs, process docs |
+| File                                                     | Description                                                                                           |
+|----------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| 📘 `AGENTS.md`                                           | General rules for AI assistants                                                                       |
+| 🤖 `CLAUDE.md`                                           | Instructions for Claude                                                                               |
+| 💎 `GEMINI.md`                                           | Instructions for Gemini                                                                               |
+| 📦 [INSTALLERS.md](docs/INSTALLERS.md)                   | 🎓 Tutorial: build Windows installers for Rust apps                                                   |
+| 🚀 [INNO_SETUP_PIPELINE.md](docs/INNO_SETUP_PIPELINE.md) | 🎓 Lesson: Inno Setup + GitHub Actions pipeline                                                       |
+| 📖 [docs/TUTORIAL.md](docs/TUTORIAL.md)                  | 🎓 **Tutorial, part 2** — recording, settings, auto-start, MCP, platform notes                        |
+| 🗺️ [docs/README.md](docs/README.md)                      | **Documentation map** — architecture (rustdoc, start at `src/lib.rs`), executable specs, process docs |
 
 ---
 

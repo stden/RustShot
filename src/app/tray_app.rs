@@ -4,14 +4,14 @@
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use log::{debug, error, info};
 use std::path::Path;
-use tray_icon::menu::MenuEvent;
+use tray_icon::{menu::MenuEvent, MouseButton, MouseButtonState, TrayIconEvent};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::window::WindowId;
 
 use super::cli_mode::settings_capture_format;
-use super::runtime::stop_flag_path;
+use super::runtime::{copy_image_to_clipboard, stop_flag_path};
 #[cfg(windows)]
 use crate::settings_dialog;
 use crate::{capture, cli, settings, tray};
@@ -19,21 +19,110 @@ use crate::{capture, cli, settings, tray};
 /// External tray-mode events forwarded into winit so `ControlFlow::Wait`
 /// wakes as soon as a menu item or global hotkey is activated.
 pub(crate) enum RustShotEvent {
-    HotKey(GlobalHotKeyEvent),
-    Menu(MenuEvent),
+    HotKey {
+        event: GlobalHotKeyEvent,
+        /// Foreground target sampled in the hotkey callback, before focus can move.
+        foreground_window: Option<Result<capture::WindowTarget, String>>,
+    },
+    Menu {
+        event: MenuEvent,
+        /// Foreground target sampled before tray-icon foregrounds its popup owner.
+        foreground_window: Result<capture::WindowTarget, String>,
+    },
+}
+
+/// Attach the foreground window observed at hotkey-delivery time to the event.
+pub(crate) fn hotkey_event_with_foreground<GetForeground>(
+    event: GlobalHotKeyEvent,
+    get_foreground: GetForeground,
+) -> RustShotEvent
+where
+    GetForeground: FnOnce() -> Result<capture::WindowTarget, String>,
+{
+    let foreground_window = (event.state == HotKeyState::Pressed).then(get_foreground);
+    RustShotEvent::HotKey {
+        event,
+        foreground_window,
+    }
+}
+
+pub(crate) type PendingTrayWindowTarget =
+    std::sync::Mutex<Option<Result<capture::WindowTarget, String>>>;
+
+/// Sample the foreground before tray-icon gives its hidden popup owner focus.
+pub(crate) fn remember_tray_window_target_with<GetForeground>(
+    pending: &PendingTrayWindowTarget,
+    get_foreground: GetForeground,
+) where
+    GetForeground: FnOnce() -> Result<capture::WindowTarget, String>,
+{
+    let target = get_foreground();
+    *pending
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(target);
+}
+
+fn clear_tray_window_target(pending: &PendingTrayWindowTarget) {
+    *pending
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+
+/// Pair one menu selection with the pre-popup foreground target exactly once.
+pub(crate) fn take_tray_window_target(
+    pending: &PendingTrayWindowTarget,
+) -> Result<capture::WindowTarget, String> {
+    pending
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+        .unwrap_or_else(|| {
+            Err("No foreground window was recorded before the tray menu opened".to_string())
+        })
 }
 
 /// Route process-wide menu and hotkey callbacks into the winit event loop.
 pub(crate) fn install_event_handlers(proxy: EventLoopProxy<RustShotEvent>) {
     let hotkey_proxy = proxy.clone();
     GlobalHotKeyEvent::set_event_handler(Some(move |event| {
-        if let Err(error) = hotkey_proxy.send_event(RustShotEvent::HotKey(event)) {
+        let event = hotkey_event_with_foreground(event, capture::foreground_window_target);
+        if let Err(error) = hotkey_proxy.send_event(event) {
             debug!("Hotkey arrived after the event loop closed: {error}");
         }
     }));
 
+    let pending_tray_target = std::sync::Arc::new(PendingTrayWindowTarget::new(None));
+    let click_target = std::sync::Arc::clone(&pending_tray_target);
+    TrayIconEvent::set_event_handler(Some(move |event| {
+        let TrayIconEvent::Click {
+            button,
+            button_state,
+            ..
+        } = event
+        else {
+            return;
+        };
+        if !matches!(button, MouseButton::Left | MouseButton::Right) {
+            return;
+        }
+
+        match button_state {
+            MouseButtonState::Down => clear_tray_window_target(&click_target),
+            // tray-icon 0.24 emits this synchronously before calling
+            // SetForegroundWindow for its hidden TrackPopupMenu owner.
+            MouseButtonState::Up => {
+                remember_tray_window_target_with(&click_target, capture::foreground_window_target)
+            }
+        }
+    }));
+
+    let menu_target = pending_tray_target;
     MenuEvent::set_event_handler(Some(move |event| {
-        if let Err(error) = proxy.send_event(RustShotEvent::Menu(event)) {
+        let foreground_window = take_tray_window_target(&menu_target);
+        if let Err(error) = proxy.send_event(RustShotEvent::Menu {
+            event,
+            foreground_window,
+        }) {
             debug!("Tray menu action arrived after the event loop closed: {error}");
         }
     }));
@@ -68,6 +157,61 @@ where
     let hotkey_id = hotkey.id();
     register(hotkey).map_err(|e| format!("Failed to register {description} hotkey: {e}"))?;
     Ok(hotkey_id)
+}
+
+/// Capture one active-window image and deliver the same pixels to clipboard and disk.
+pub(crate) fn capture_active_window_outputs_with_handlers<Capture, Clipboard, Save>(
+    capture: Capture,
+    copy_to_clipboard: Clipboard,
+    save: Save,
+) -> Result<std::path::PathBuf, String>
+where
+    Capture: FnOnce() -> Result<image::RgbaImage, String>,
+    Clipboard: FnOnce(&image::RgbaImage) -> Result<(), String>,
+    Save: FnOnce(&image::RgbaImage) -> Result<std::path::PathBuf, String>,
+{
+    let image = capture().map_err(|error| format!("Failed to capture active window: {error}"))?;
+    let clipboard_result = copy_to_clipboard(&image);
+    let save_result = save(&image);
+
+    match (clipboard_result, save_result) {
+        (Ok(()), Ok(path)) => Ok(path),
+        (Err(clipboard_error), Ok(path)) => Err(format!(
+            "Window screenshot saved to {}, but clipboard delivery failed: {clipboard_error}",
+            path.display()
+        )),
+        (Ok(()), Err(save_error)) => Err(format!(
+            "Window screenshot copied to clipboard, but file save failed: {save_error}"
+        )),
+        (Err(clipboard_error), Err(save_error)) => Err(format!(
+            "Window screenshot clipboard delivery failed: {clipboard_error}; file save also failed: {save_error}"
+        )),
+    }
+}
+
+/// Exercise active-window output delivery without touching the real desktop.
+#[doc(hidden)]
+pub fn benchmark_capture_active_window_outputs_with_handlers<Capture, Clipboard, Save>(
+    capture: Capture,
+    copy_to_clipboard: Clipboard,
+    save: Save,
+) -> Result<std::path::PathBuf, String>
+where
+    Capture: FnOnce() -> Result<image::RgbaImage, String>,
+    Clipboard: FnOnce(&image::RgbaImage) -> Result<(), String>,
+    Save: FnOnce(&image::RgbaImage) -> Result<std::path::PathBuf, String>,
+{
+    capture_active_window_outputs_with_handlers(capture, copy_to_clipboard, save)
+}
+
+pub(crate) fn capture_window_target_with<Capture>(
+    target: Result<capture::WindowTarget, String>,
+    capture_target: Capture,
+) -> Result<image::RgbaImage, String>
+where
+    Capture: FnOnce(capture::WindowTarget) -> Result<image::RgbaImage, String>,
+{
+    target.and_then(capture_target)
 }
 
 impl RustShotApp {
@@ -124,7 +268,7 @@ impl RustShotApp {
     /// `user_event` froze the tray icon, its menu, and hotkey dispatch for as
     /// long as it took — the rest of this type already avoids that, spawning a
     /// child process for selection and a thread to reap the recorder.
-    fn handle_window_capture(&mut self) {
+    fn handle_window_capture(&mut self, foreground_window: Result<capture::WindowTarget, String>) {
         if !window_capture_slot_is_free(self.window_capture.as_ref().map(|h| h.is_finished())) {
             return;
         }
@@ -135,9 +279,27 @@ impl RustShotApp {
             .name("rustshot-window-capture".to_string())
             .spawn(move || {
                 let format = settings_capture_format(&settings);
-                match capture::capture_active_window_in_dir(None, format, &settings.screenshots_dir)
-                {
-                    Ok(path) => info!("Window screenshot saved to: {}", path.display()),
+                match capture_active_window_outputs_with_handlers(
+                    || {
+                        capture_window_target_with(
+                            foreground_window,
+                            capture::capture_window_target,
+                        )
+                    },
+                    copy_image_to_clipboard,
+                    |image| {
+                        capture::save_active_window_image_in_dir(
+                            image,
+                            None,
+                            format,
+                            &settings.screenshots_dir,
+                        )
+                    },
+                ) {
+                    Ok(path) => info!(
+                        "Window screenshot copied to clipboard and saved to: {}",
+                        path.display()
+                    ),
                     Err(e) => error!("Window capture error: {}", e),
                 }
             });
@@ -280,18 +442,27 @@ impl ApplicationHandler<RustShotEvent> for RustShotApp {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: RustShotEvent) {
         match event {
-            RustShotEvent::HotKey(event) => {
+            RustShotEvent::HotKey {
+                event,
+                foreground_window,
+            } => {
                 if event.id == self.hotkey_id && event.state == HotKeyState::Pressed {
                     self.handle_capture();
                 }
                 if event.id == self.window_hotkey_id && event.state == HotKeyState::Pressed {
-                    self.handle_window_capture();
+                    let target = foreground_window.unwrap_or_else(|| {
+                        Err("No foreground window snapshot accompanied Alt+PrintScreen".to_string())
+                    });
+                    self.handle_window_capture(target);
                 }
                 if event.id == self.record_hotkey_id && event.state == HotKeyState::Pressed {
                     self.handle_recording_toggle();
                 }
             }
-            RustShotEvent::Menu(event) => {
+            RustShotEvent::Menu {
+                event,
+                foreground_window,
+            } => {
                 // Dispatch on `MenuAction` rather than raw id strings: this is
                 // exhaustive, so a new menu entry must be handled here.
                 let Some(action) = tray::MenuAction::from_id(event.id.0.as_str()) else {
@@ -299,7 +470,9 @@ impl ApplicationHandler<RustShotEvent> for RustShotApp {
                 };
                 match action {
                     tray::MenuAction::Capture => self.handle_capture(),
-                    tray::MenuAction::CaptureWindow => self.handle_window_capture(),
+                    tray::MenuAction::CaptureWindow => {
+                        self.handle_window_capture(foreground_window)
+                    }
                     tray::MenuAction::OpenFolder => self.open_screenshots_folder(),
                     tray::MenuAction::ToggleRecord => self.handle_recording_toggle(),
                     tray::MenuAction::Settings => {

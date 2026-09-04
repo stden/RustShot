@@ -87,18 +87,7 @@ pub(crate) fn run_select_record() {
 /// Run the selection overlay sub-process and copy the cropped image to clipboard.
 pub(crate) fn run_selection() {
     match run_selection_with_clipboard(selection::select_region, |cropped| {
-        let mut clipboard =
-            Clipboard::new().map_err(|e| format!("Failed to access clipboard: {}", e))?;
-        let img_data = arboard::ImageData {
-            width: cropped.width() as usize,
-            height: cropped.height() as usize,
-            bytes: std::borrow::Cow::Owned(cropped.into_raw()),
-        };
-
-        clipboard
-            .set_image(img_data)
-            .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
-        Ok(())
+        copy_image_to_clipboard(&cropped)
     }) {
         Ok(()) => {}
         Err(error) => {
@@ -107,6 +96,24 @@ pub(crate) fn run_selection() {
             }
         }
     }
+}
+
+/// Copy one RGBA image to the system clipboard without consuming it.
+///
+/// Active-window capture also saves the same pixels to disk, so borrowing the
+/// image here keeps both destinations on one capture rather than racing two
+/// independent foreground-window lookups.
+pub(crate) fn copy_image_to_clipboard(image: &image::RgbaImage) -> Result<(), String> {
+    let mut clipboard = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+    let image_data = arboard::ImageData {
+        width: image.width() as usize,
+        height: image.height() as usize,
+        bytes: std::borrow::Cow::Borrowed(image.as_raw()),
+    };
+
+    clipboard
+        .set_image(image_data)
+        .map_err(|e| format!("Failed to copy to clipboard: {e}"))
 }
 
 /// Selection + clipboard logic with injected functions (for testing).
