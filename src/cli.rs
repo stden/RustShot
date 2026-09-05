@@ -1,6 +1,6 @@
 //! Pure CLI helper logic shared by the binary, tests, and benchmarks.
 
-use crate::capture;
+use crate::domain::Format;
 use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::path::Path;
@@ -53,11 +53,11 @@ where
 }
 
 pub fn effective_cli_format(
-    cli_format: capture::Format,
+    cli_format: Format,
     format_explicit: bool,
     output: Option<&Path>,
-    settings_format: capture::Format,
-) -> capture::Format {
+    settings_format: Format,
+) -> Format {
     if format_explicit {
         return cli_format;
     }
@@ -75,19 +75,19 @@ pub fn output_extension(output: Option<&Path>) -> Option<&str> {
         .and_then(|ext| ext.to_str())
 }
 
-pub fn format_from_extension(extension: &str) -> Option<capture::Format> {
+pub fn format_from_extension(extension: &str) -> Option<Format> {
     if extension.eq_ignore_ascii_case("png") {
-        Some(capture::Format::Png)
+        Some(Format::Png)
     } else if extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg") {
-        Some(capture::Format::Jpg)
+        Some(Format::Jpg)
     } else if extension.eq_ignore_ascii_case("bmp") {
-        Some(capture::Format::Bmp)
+        Some(Format::Bmp)
     } else {
         None
     }
 }
 
-pub fn format_from_output_extension(output: Option<&Path>) -> Option<capture::Format> {
+pub fn format_from_output_extension(output: Option<&Path>) -> Option<Format> {
     output_extension(output).and_then(format_from_extension)
 }
 
@@ -181,4 +181,5 @@ pub fn decide_app_mode(req: AppModeRequest) -> AppMode {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/cli/mod.rs"]
 mod tests;

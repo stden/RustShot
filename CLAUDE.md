@@ -8,8 +8,7 @@ prose. `AGENTS.md` points other agents here.
 Each has already cost a wasted edit or measurement cycle.
 
 - **Files are CRLF.** A multi-line search/replace or `git apply` patch quoted with
-  LF matches **zero** times, silently — normalise first. `src/tray/tests/menu_and_tray.rs`
-  is *mixed*, where no single convention matches and the edit must be done by hand.
+  LF can match **zero** times — normalise first, then restore CRLF after editing.
 - **Bin target is `RustShot`, lib crate is `rustshot`.** So `target/release/rustshot`
   does not exist and fails outright off Windows. The bin's `doc = false` is
   load-bearing: without it both write to `target/doc/rustshot` on a case-insensitive
@@ -55,8 +54,12 @@ locally, red in CI. `cargo test` includes the Gherkin features via `tests/bdd.rs
      from the codebase faster than it can read a table, and a stale table is worse
      than none. Only what reading src/ does not reveal belongs here. -->
 
-- `src/main.rs` is a 33-line launcher. Routing lives in `src/app.rs` and
-  `src/app/{cli_mode,tray_app,runtime,autorun}.rs`.
+- `src/main.rs` is a thin launcher. Routing lives in `src/app.rs` and
+  `src/app/{cli_mode,tray_app,runtime}.rs`; shared workflows live in
+  `src/application/` and native adapters in `src/platform/`.
+- Unit tests live in `tests/unit/`, mounted as private child modules with
+  `#[cfg(test)]` and `#[path]`. Do not move their bodies back into `src/` or
+  expose internals just to make an integration test reach them.
 - `src/settings_dialog.rs` is the **only** writer of `settings.json`, and the file
   does not exist until the dialog saves — until then `Settings::default()` supplies
   everything, including `auto_start: true`.

@@ -7,9 +7,24 @@ separate architecture document to drift out of date.
 
 ## 1. Architecture & design rationale → the code
 
-Start at [`src/lib.rs`](../src/lib.rs): it carries the data-flow overview and the
-key design decisions (no `serde`, `Result<_, String>` everywhere, `softbuffer`
-for the overlay, child-process isolation for the selection window).
+Start at [`src/lib.rs`](../src/lib.rs): it documents the dependency layers,
+interactive capture sequence, and code/test boundaries with Mermaid diagrams.
+[`src/domain.rs`](../src/domain.rs) describes shared values and geometry;
+[`src/application.rs`](../src/application.rs) describes shared workflows.
+Native adapters live under `src/platform/` and reusable pixel transforms under
+`src/pixels/`. Feature APIs retain compatibility re-exports.
+
+Plain `cargo doc` preserves Mermaid source. To render diagrams in the generated
+library documentation:
+
+```text
+cargo rustdoc --lib --all-features -- --html-in-header docs/rustdoc-mermaid.html
+```
+
+Open `target/doc/rustshot/index.html` after the command finishes. The optional
+renderer loads a pinned Mermaid version from a CDN in the browser; it adds no
+production or build dependency. Every diagram keeps an expandable source block,
+and the full source remains visible if the renderer cannot load while offline.
 
 > `cargo doc --all-features --no-deps --open` renders all of it. This used to
 > produce nothing on Windows: the bin target `RustShot` and the lib crate
@@ -22,15 +37,15 @@ The hard-won, non-obvious constraints are documented at the code they constrain:
 
 | Where | What it explains |
 |---|---|
-| `selection/layout.rs::build_physical_screen_layouts` | Why there is **no global scale factor**; primary anchored at physical (0,0), neighbours inferred iteratively. |
-| `selection/layout.rs::resolve_recording_selection` | Why a recording region must fit inside **one** monitor (no compositing path). |
+| `domain/layout.rs::build_physical_screen_layouts` | Why there is **no global scale factor**; primary anchored at physical (0,0), neighbours inferred iteratively. |
+| `domain/layout.rs::resolve_recording_selection` | Why a recording region must fit inside **one** monitor (no compositing path). |
 | `selection/desktop.rs::capture_screen_at_cursor` | Why the overlay covers only the cursor's monitor, and why the spanning-desktop overlay was abandoned. |
 | `selection/overlay.rs::OverlayPixelMapCache` | Why an immutable converted screenshot is cached for cursor redraws, when the cache is invalidated, and the one-frame memory tradeoff. |
 | `capture.rs` (capture → `from_raw`) | The forced `image` 0.24/0.25 bridge via `screenshots` 0.8, and its per-capture copy cost. |
-| `capture/platform.rs::capture_active_window_platform` | Why `GetDC(None)` is deliberate (null HWND ≠ `Some(HWND::default())`). |
+| `platform/window.rs::capture_active_window_platform` | Why `GetDC(None)` is deliberate (null HWND ≠ `Some(HWND::default())`). |
 | `record.rs` (recording hot loop) | Why the BGRA buffer is preallocated and capture is region-scoped (per-frame allocation was the lag source). |
 | `app/runtime.rs::stop_flag_path` | The `%TEMP%/rustshot_stop_<pid>.flag` IPC contract; one helper so the parent and child paths cannot drift. |
-| `app/autorun.rs::sync_autorun` | Per-user self-install and two-way autostart sync; stable `%LOCALAPPDATA%` executable; `HKCU` and Tray mode only. |
+| `application/autorun.rs::sync_autorun` | Per-user self-install and two-way autostart sync; stable `%LOCALAPPDATA%` executable; `HKCU` and Tray mode only. |
 | `tray.rs` (menu IDs) | Why recording is one toggle entry, not Start + Stop. |
 
 ## 2. Behaviour → executable specifications
@@ -49,7 +64,14 @@ targeting, drag→region, recording validation/timing, active-window and live
 capture, first-run startup installation, pixel conversion, the tray, and the MCP
 JSON-RPC contract. A spec that drifts from the code fails CI.
 
-Two further test targets guard structure rather than behaviour:
+Unit test bodies and shared fixtures live under [`tests/unit/`](../tests/unit/).
+They are compiled as private child modules of the library, not as extra Cargo
+integration targets. Small `cfg(test)` hooks at native/settings boundaries are
+excluded from production builds. `cargo test` discovers the suites as before.
+
+[`tests/architecture.rs`](../tests/architecture.rs) enforces the shared layers'
+dependency direction by parsing Rust imports and keeps test bodies out of `src/`.
+Other test targets guard structure and regressions:
 `tests/lint_policy.rs` (the curated `[lints]` table in `Cargo.toml` and `msrv` in
 `clippy.toml`) and `tests/e2e_regressions.rs`.
 

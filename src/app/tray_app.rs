@@ -12,6 +12,7 @@ use winit::window::WindowId;
 
 use super::cli_mode::settings_capture_format;
 use super::runtime::{copy_image_to_clipboard, stop_flag_path};
+use crate::application::capture::capture_active_window_outputs_with_handlers;
 #[cfg(windows)]
 use crate::settings_dialog;
 use crate::{capture, cli, settings, tray};
@@ -157,51 +158,6 @@ where
     let hotkey_id = hotkey.id();
     register(hotkey).map_err(|e| format!("Failed to register {description} hotkey: {e}"))?;
     Ok(hotkey_id)
-}
-
-/// Capture one active-window image and deliver the same pixels to clipboard and disk.
-pub(crate) fn capture_active_window_outputs_with_handlers<Capture, Clipboard, Save>(
-    capture: Capture,
-    copy_to_clipboard: Clipboard,
-    save: Save,
-) -> Result<std::path::PathBuf, String>
-where
-    Capture: FnOnce() -> Result<image::RgbaImage, String>,
-    Clipboard: FnOnce(&image::RgbaImage) -> Result<(), String>,
-    Save: FnOnce(&image::RgbaImage) -> Result<std::path::PathBuf, String>,
-{
-    let image = capture().map_err(|error| format!("Failed to capture active window: {error}"))?;
-    let clipboard_result = copy_to_clipboard(&image);
-    let save_result = save(&image);
-
-    match (clipboard_result, save_result) {
-        (Ok(()), Ok(path)) => Ok(path),
-        (Err(clipboard_error), Ok(path)) => Err(format!(
-            "Window screenshot saved to {}, but clipboard delivery failed: {clipboard_error}",
-            path.display()
-        )),
-        (Ok(()), Err(save_error)) => Err(format!(
-            "Window screenshot copied to clipboard, but file save failed: {save_error}"
-        )),
-        (Err(clipboard_error), Err(save_error)) => Err(format!(
-            "Window screenshot clipboard delivery failed: {clipboard_error}; file save also failed: {save_error}"
-        )),
-    }
-}
-
-/// Exercise active-window output delivery without touching the real desktop.
-#[doc(hidden)]
-pub fn benchmark_capture_active_window_outputs_with_handlers<Capture, Clipboard, Save>(
-    capture: Capture,
-    copy_to_clipboard: Clipboard,
-    save: Save,
-) -> Result<std::path::PathBuf, String>
-where
-    Capture: FnOnce() -> Result<image::RgbaImage, String>,
-    Clipboard: FnOnce(&image::RgbaImage) -> Result<(), String>,
-    Save: FnOnce(&image::RgbaImage) -> Result<std::path::PathBuf, String>,
-{
-    capture_active_window_outputs_with_handlers(capture, copy_to_clipboard, save)
 }
 
 pub(crate) fn capture_window_target_with<Capture>(

@@ -238,4 +238,5 @@ pub fn menu_receiver() -> &'static tray_icon::menu::MenuEventReceiver {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/tray/mod.rs"]
 mod tests;

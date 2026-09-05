@@ -94,7 +94,7 @@ The installer adds:
 
 That is what causes the tray app to start after login — on a fresh install. From
 then on the running app owns the value: tray mode re-synchronises it on every
-start from the `auto_start` setting (`src/app/autorun.rs::sync_autorun`, `HKCU`
+start from the `auto_start` setting (`src/application/autorun.rs::sync_autorun`, `HKCU`
 only). Turning it off is a Settings-dialog operation, not a registry edit — see
 [`docs/TUTORIAL.md`](TUTORIAL.md#-step-8--auto-start-and-where-settings-live).
 

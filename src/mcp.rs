@@ -282,4 +282,5 @@ fn base64_encode(input: &[u8]) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/mcp/mod.rs"]
 mod tests;

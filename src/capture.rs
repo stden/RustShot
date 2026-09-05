@@ -17,24 +17,9 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Supported output image formats.
-///
-/// This enum is the single source of truth for "which formats exist". Settings
-/// store it directly rather than a `String`, so an unsupported format is not
-/// representable once parsed.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Format {
-    #[default]
-    Png,
-    Jpg,
-    Bmp,
-}
+pub use crate::domain::Format;
 
 impl Format {
-    /// Every supported format, in settings/UI order. The first entry is the
-    /// default used as the fallback for unrecognised input.
-    pub const ALL: [Format; 3] = [Format::Png, Format::Jpg, Format::Bmp];
-
     /// Map this format to the corresponding [`ImageFormat`] variant.
     pub fn to_image_format(self) -> ImageFormat {
         match self {
@@ -42,40 +27,6 @@ impl Format {
             Format::Jpg => ImageFormat::Jpeg,
             Format::Bmp => ImageFormat::Bmp,
         }
-    }
-
-    /// File extension string (without leading dot) for this format. This is
-    /// also exactly how the format is written to `settings.json`.
-    pub fn extension(&self) -> &'static str {
-        match self {
-            Format::Png => "png",
-            Format::Jpg => "jpg",
-            Format::Bmp => "bmp",
-        }
-    }
-
-    /// Parse a format as stored in `settings.json`.
-    ///
-    /// Deliberately **case-sensitive** and forgiving: anything unrecognised
-    /// falls back to PNG rather than failing, because `settings.json` is
-    /// hand-editable and a bad value should not brick the app. Note the
-    /// contrast with [`crate::cli::format_from_extension`], which *is*
-    /// case-insensitive because a user may well type `--output shot.PNG`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rustshot::capture::Format;
-    ///
-    /// assert_eq!(Format::from_settings_str("jpg"), Format::Jpg);
-    /// assert_eq!(Format::from_settings_str("webp"), Format::Png); // unknown → default
-    /// assert_eq!(Format::from_settings_str("JPG"), Format::Png);  // case-sensitive
-    /// ```
-    pub fn from_settings_str(value: &str) -> Format {
-        Format::ALL
-            .into_iter()
-            .find(|fmt| fmt.extension() == value)
-            .unwrap_or(Format::Png)
     }
 }
 
@@ -329,7 +280,7 @@ pub fn capture_screenshot_in_dir(
         Some(requested) => resolve_screen_index(screens.len(), Some(requested))?,
         None => {
             // Prefer the screen under the cursor, fall back to primary
-            let cursor_pos = crate::selection::get_cursor_position().ok().map(Into::into);
+            let cursor_pos = crate::platform::get_cursor_position().ok().map(Into::into);
             let screen_rects: Vec<_> = screens
                 .iter()
                 .map(|s| {
@@ -337,7 +288,7 @@ pub fn capture_screenshot_in_dir(
                     (info.x, info.y, info.width, info.height, info.is_primary)
                 })
                 .collect();
-            crate::selection::preferred_screen_index(screen_rects, cursor_pos)
+            crate::domain::preferred_screen_index(screen_rects, cursor_pos)
                 .ok_or_else(|| "No screens detected".to_string())?
         }
     };
@@ -349,7 +300,7 @@ pub fn capture_screenshot_in_dir(
             #[cfg(windows)]
             {
                 let info = &screens[idx].display_info;
-                crate::record::capture::capture_monitor_image(info.raw_handle.0)
+                crate::platform::monitor::capture_monitor_image(info.raw_handle.0)
             }
 
             #[cfg(not(windows))]
@@ -462,222 +413,9 @@ pub(crate) fn capture_window_target(target: WindowTarget) -> Result<image::RgbaI
     platform::capture_window_target_platform(target)
 }
 
-/// Convert BGRA pixel data to RGBA in place.
-///
-/// Algorithm:
-/// 1. Interpret the byte slice as a sequence of 4-byte pixels.
-/// 2. For each complete pixel, swap byte 0 (blue) with byte 2 (red).
-/// 3. Leave green and alpha unchanged.
-/// 4. Ignore any trailing incomplete chunk to avoid out-of-bounds work.
-///
-/// The operation is in-place and allocation-free, which keeps the hot path
-/// cheap for full-screen captures.
-///
-/// The x86/x86-64 implementation uses AVX2 when the CPU supports it and falls
-/// back to the portable scalar loop everywhere else. The runtime feature check
-/// keeps the binary compatible with older processors.
-///
-/// Possible improvement:
-/// - Validate producer pixel format up front if future capture backends can
-///   return layouts other than BGRA.
-///
-/// # Examples
-///
-/// ```
-/// use rustshot::capture::bgra_to_rgba;
-///
-/// let mut pixels = vec![0u8, 100, 200, 255]; // B=0, G=100, R=200, A=255
-/// bgra_to_rgba(&mut pixels);
-/// assert_eq!(pixels, vec![200, 100, 0, 255]); // R=200, G=100, B=0, A=255
-/// ```
-#[allow(dead_code)]
-pub fn bgra_to_rgba(pixels: &mut [u8]) {
-    PixelSwizzle::detect().convert_in_place(pixels);
-}
-
-#[inline]
-fn bgra_to_rgba_scalar(pixels: &mut [u8]) {
-    for chunk in pixels.as_chunks_mut::<4>().0 {
-        chunk.swap(0, 2); // swap B and R
-    }
-}
-
-/// AVX2 byte-shuffle control that swaps red and blue inside each 4-byte pixel,
-/// duplicated across both 128-bit lanes. Shared by the in-place and copying
-/// converters so the two cannot drift apart.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-const RED_BLUE_SHUFFLE: [i8; 32] = [
-    2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15, 2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14,
-    13, 12, 15,
-];
-
-/// Swap red and blue inside `pixels` in place, 32 bytes per `pshufb`.
-///
-/// # Safety
-///
-/// The CPU must actually support AVX2. That is the whole of this function's
-/// contract - it has no requirement on `pixels`, because the length arithmetic
-/// below derives every offset from `pixels.len()` and the scalar tail finishes
-/// whatever the 32-byte loop could not reach. [`PixelSwizzle::detect`] is what
-/// establishes the feature for the only caller.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
-unsafe fn bgra_to_rgba_avx2(pixels: &mut [u8]) {
-    #[cfg(target_arch = "x86")]
-    use std::arch::x86::{_mm256_loadu_si256, _mm256_shuffle_epi8, _mm256_storeu_si256};
-    #[cfg(target_arch = "x86_64")]
-    use std::arch::x86_64::{_mm256_loadu_si256, _mm256_shuffle_epi8, _mm256_storeu_si256};
-
-    // SAFETY: `RED_BLUE_SHUFFLE` is a 32-byte `[i8; 32]` const, so the read of
-    // 32 bytes from its start is in bounds, and the intrinsic permits unaligned
-    // loads - the array carries no 32-byte alignment guarantee.
-    let shuffle = unsafe { _mm256_loadu_si256(RED_BLUE_SHUFFLE.as_ptr().cast()) };
-    let vectorized_len = pixels.len() / 32 * 32;
-    let mut offset = 0;
-    while offset < vectorized_len {
-        // SAFETY: `offset` starts at 0 and only grows by 32, and `vectorized_len`
-        // is at most `pixels.len()`, so `offset` is a byte index strictly inside
-        // the slice and `add` stays within its allocation.
-        let pointer = unsafe { pixels.as_mut_ptr().add(offset).cast() };
-        // SAFETY: `offset` and `vectorized_len` are both multiples of 32 with
-        // `offset < vectorized_len`, so `vectorized_len - offset >= 32`: the 32
-        // bytes this reads are all inside `pixels`. The intrinsic permits
-        // unaligned addresses, which a byte slice cannot promise anything about.
-        let value = unsafe { _mm256_loadu_si256(pointer) };
-        let value = _mm256_shuffle_epi8(value, shuffle);
-        // SAFETY: writes back exactly the 32 in-bounds bytes the load above read,
-        // through the `&mut [u8]` those bytes came from, so nothing else aliases
-        // them for the duration. `_mm256_storeu_si256` is likewise unaligned.
-        unsafe { _mm256_storeu_si256(pointer, value) };
-        offset += 32;
-    }
-
-    bgra_to_rgba_scalar(&mut pixels[vectorized_len..]);
-}
-
-/// Which red/blue swizzle implementation this CPU should use.
-///
-/// BGRA and RGBA differ only by swapping red and blue, so every conversion in
-/// either direction goes through this one enum. It exists as a value rather than
-/// a check inside the conversion because callers convert a frame *row at a
-/// time*: resolving the choice once per frame and carrying it into the row loop
-/// keeps the CPU-feature probe out of a loop that runs thousands of times, and
-/// the answer cannot change while the process lives.
-///
-/// The AVX2 variant is unrepresentable off x86, so no caller can ask for a path
-/// the target does not have.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PixelSwizzle {
-    /// 32-byte `pshufb` blocks with a portable tail.
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    Avx2,
-    /// Four bytes at a time, everywhere.
-    Portable,
-}
-
-impl PixelSwizzle {
-    /// Pick the fastest implementation the running CPU supports.
-    pub(crate) fn detect() -> Self {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if std::arch::is_x86_feature_detected!("avx2") {
-            return Self::Avx2;
-        }
-        Self::Portable
-    }
-
-    /// Copy `source` into `destination`, swapping each pixel's red and blue.
-    ///
-    /// Converts only whole pixels within the shorter of the two slices; a
-    /// trailing partial pixel is left untouched, matching [`bgra_to_rgba`].
-    pub(crate) fn convert(self, source: &[u8], destination: &mut [u8]) {
-        let len = source.len().min(destination.len()) / 4 * 4;
-        let source = &source[..len];
-        let destination = &mut destination[..len];
-
-        match self {
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            // SAFETY: `detect` yields `Avx2` only when the CPU reports AVX2.
-            // Both slices were trimmed to one shared whole-pixel length.
-            Self::Avx2 => unsafe { swap_red_blue_into_avx2(source, destination) },
-            Self::Portable => swap_red_blue_into_portable(source, destination),
-        }
-    }
-
-    /// Swap red and blue within `pixels`, in place.
-    pub(crate) fn convert_in_place(self, pixels: &mut [u8]) {
-        let complete_len = pixels.len() / 4 * 4;
-        let pixels = &mut pixels[..complete_len];
-
-        match self {
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            // SAFETY: as above; the helper stays inside the whole-pixel prefix.
-            Self::Avx2 => unsafe { bgra_to_rgba_avx2(pixels) },
-            Self::Portable => bgra_to_rgba_scalar(pixels),
-        }
-    }
-}
-
-#[inline]
-fn swap_red_blue_into_portable(source: &[u8], destination: &mut [u8]) {
-    for (source, destination) in source
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(destination.as_chunks_mut::<4>().0.iter_mut())
-    {
-        *destination = [source[2], source[1], source[0], source[3]];
-    }
-}
-
-/// Copy `source` into `destination` with red and blue swapped, 32 bytes per
-/// `pshufb`.
-///
-/// # Safety
-///
-/// Two preconditions, both discharged by [`PixelSwizzle::convert`]:
-/// - the CPU must actually support AVX2;
-/// - `destination.len()` must be at least `source.len()`. Every offset below is
-///   derived from the *source* length, so a shorter destination would be written
-///   past its end. `convert` trims both slices to one shared length first.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
-unsafe fn swap_red_blue_into_avx2(source: &[u8], destination: &mut [u8]) {
-    #[cfg(target_arch = "x86")]
-    use std::arch::x86::{_mm256_loadu_si256, _mm256_shuffle_epi8, _mm256_storeu_si256};
-    #[cfg(target_arch = "x86_64")]
-    use std::arch::x86_64::{_mm256_loadu_si256, _mm256_shuffle_epi8, _mm256_storeu_si256};
-
-    // SAFETY: `RED_BLUE_SHUFFLE` is a 32-byte `[i8; 32]` const, so the read of
-    // 32 bytes from its start is in bounds, and the intrinsic permits unaligned
-    // loads - the array carries no 32-byte alignment guarantee.
-    let shuffle = unsafe { _mm256_loadu_si256(RED_BLUE_SHUFFLE.as_ptr().cast()) };
-    let vectorized_len = source.len() / 32 * 32;
-    let mut offset = 0;
-    while offset < vectorized_len {
-        // SAFETY: `offset` starts at 0 and only grows by 32, and `vectorized_len`
-        // is at most `source.len()`, so `offset` indexes strictly inside `source`.
-        let source_pointer = unsafe { source.as_ptr().add(offset).cast() };
-        // SAFETY: the same index, in bounds of `destination` too because this
-        // function's contract requires `destination.len() >= source.len()`.
-        let destination_pointer = unsafe { destination.as_mut_ptr().add(offset).cast() };
-        // SAFETY: `offset` and `vectorized_len` are both multiples of 32 with
-        // `offset < vectorized_len`, so `vectorized_len - offset >= 32` and all 32
-        // bytes read lie inside `source`. Unaligned loads are permitted.
-        let value = unsafe { _mm256_loadu_si256(source_pointer) };
-        let value = _mm256_shuffle_epi8(value, shuffle);
-        // SAFETY: the mirrored 32 bytes of `destination`, in bounds by the length
-        // precondition above. `destination` is a `&mut` slice, so the write is
-        // unaliased - and it cannot overlap `source`, which is a shared borrow of
-        // a distinct slice.
-        unsafe { _mm256_storeu_si256(destination_pointer, value) };
-        offset += 32;
-    }
-
-    swap_red_blue_into_portable(
-        &source[vectorized_len..],
-        &mut destination[vectorized_len..],
-    );
-}
+pub use crate::pixels::bgra_to_rgba;
+#[cfg(test)]
+use crate::pixels::PixelSwizzle;
 
 /// List all available screens as human-readable strings (e.g. `"Screen 0: 1920x1080"`).
 pub fn list_screens() -> Vec<String> {
@@ -701,7 +439,7 @@ pub fn list_screens() -> Vec<String> {
 // pre-split path (`crate::capture::…` / `rustshot::capture::…`) resolving
 // unchanged, including the `benchmark_*` shims used by benches/benchmarks.rs.
 mod bench_support;
-mod platform;
+use crate::platform::window as platform;
 
 // Consumed only through the library tree (benches import
 // `rustshot::capture::benchmark_*`); unused in the binary tree by design.
@@ -710,9 +448,8 @@ pub use bench_support::*;
 use platform::capture_active_window_platform;
 #[cfg(windows)]
 pub(crate) use platform::capture_hwnd;
-#[cfg(windows)]
-pub(crate) use platform::pin_process_mta;
 pub(crate) use platform::WindowTarget;
 
 #[cfg(test)]
+#[path = "../tests/unit/capture/mod.rs"]
 mod tests;

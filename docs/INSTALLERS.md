@@ -135,14 +135,14 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 This is how `RustShot` auto-starts from the tray after login.
 
 The installer is not the only writer of that value: tray mode re-synchronises it
-on every start from the `auto_start` setting (`src/app/autorun.rs::sync_autorun`,
+on every start from the `auto_start` setting (`src/application/autorun.rs::sync_autorun`,
 `HKCU` only — never `HKLM`, which is what keeps RustShot elevation-free). So
 deleting the value by hand does not stick, and the supported off switch is the
 tray's Settings dialog — see
 [`docs/TUTORIAL.md`](TUTORIAL.md#-step-8--auto-start-and-where-settings-live).
 
 The installer is not the only writer of that value: tray mode re-synchronises it
-on every start from the `auto_start` setting (`src/app/autorun.rs::sync_autorun`,
+on every start from the `auto_start` setting (`src/application/autorun.rs::sync_autorun`,
 `HKCU` only — never `HKLM`, which is what keeps RustShot elevation-free). So
 deleting the value by hand does not stick, and the supported off switch is the
 tray's Settings dialog — see

@@ -34,22 +34,28 @@
 //! - [`get_recording_dir`] / [`get_recording_path`] — output path logic.
 
 mod bench;
-#[cfg(windows)]
-pub(crate) mod capture;
 mod domain;
 mod encoder;
-mod frame;
+use crate::pixels::frame;
 #[cfg(test)]
+#[path = "../tests/unit/record/mod.rs"]
 mod tests;
 
-use crate::selection::Region;
-use crate::settings::Fps;
+use crate::domain::{Fps, Region};
+#[cfg(test)]
+use crate::pixels::validate_capture_region;
+pub use crate::pixels::{
+    rgba_to_bgra_bottom_up, rgba_to_bgra_bottom_up_in_place, rgba_to_bgra_bottom_up_into,
+};
+#[cfg(test)]
+use crate::platform::worker::{cached_worker, forget_cached_worker, next_worker_step, WorkerStep};
 pub use bench::*;
+pub use domain::{checked_round_to_even, round_to_even};
 pub(crate) use domain::{Bitrate, FrameIndex, FrameTiming, RecordingDimensions};
 #[cfg(test)]
 pub(crate) use domain::{Height, Width};
-// The frame helpers are consumed by the cfg(windows) recording loop only.
-#[cfg_attr(not(windows), allow(unused_imports))]
+// Existing unit suites exercise the shared transforms through this facade.
+#[cfg(test)]
 use frame::*;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -142,72 +148,6 @@ impl Drop for RecordingSession {
         if let Err(error) = self.join_recording_thread() {
             log::error!("Failed to stop recording while dropping its session: {error}");
         }
-    }
-}
-
-/// Fetch a cached worker handle, starting one on first use and again after a
-/// failed start.
-///
-/// The slot is a `Mutex<Option<_>>` rather than a `OnceLock<Result<_, _>>`
-/// precisely so that a failure is *not* remembered: with a `OnceLock`, one
-/// transient "failed to start thread" would be cached and every later call would
-/// replay that same error, disabling the worker for the rest of the process
-/// lifetime. Here the next caller simply tries again.
-///
-/// A poisoned lock is recovered rather than propagated. The guarded value is
-/// just a channel handle, so a panic elsewhere leaves nothing inconsistent, and
-/// refusing to hand it out would turn one unrelated panic into a permanently
-/// broken worker — the very failure mode this function exists to avoid.
-pub(crate) fn cached_worker<T, Start>(
-    slot: &std::sync::Mutex<Option<T>>,
-    start: Start,
-) -> Result<T, String>
-where
-    T: Clone,
-    Start: FnOnce() -> Result<T, String>,
-{
-    let mut cached = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(handle) = cached.as_ref() {
-        return Ok(handle.clone());
-    }
-
-    let handle = start()?;
-    *cached = Some(handle.clone());
-    Ok(handle)
-}
-
-/// Drop the cached worker handle so the next [`cached_worker`] call starts a new
-/// one. Called when the worker is found to have died.
-pub(crate) fn forget_cached_worker<T>(slot: &std::sync::Mutex<Option<T>>) {
-    *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-}
-
-/// What a capture worker should do next.
-pub(crate) enum WorkerStep<T> {
-    /// Serve this request.
-    Request(T),
-    /// Nothing arrived within the idle timeout — a good moment to release
-    /// whatever the worker was holding on to between requests.
-    Idle,
-    /// Every sender is gone; the worker has nothing left to serve.
-    Stop,
-}
-
-/// Wait for the next worker request, reporting a quiet spell as [`WorkerStep::Idle`]
-/// rather than as shutdown.
-///
-/// Separated from the worker loop so the distinction is unit-tested: a worker
-/// that treated the timeout as "stop" would exit after the first idle period,
-/// and the handle cached by [`cached_worker`] would then hand every later caller
-/// a dead channel.
-pub(crate) fn next_worker_step<T>(
-    receiver: &mpsc::Receiver<T>,
-    idle_timeout: std::time::Duration,
-) -> WorkerStep<T> {
-    match receiver.recv_timeout(idle_timeout) {
-        Ok(request) => WorkerStep::Request(request),
-        Err(mpsc::RecvTimeoutError::Timeout) => WorkerStep::Idle,
-        Err(mpsc::RecvTimeoutError::Disconnected) => WorkerStep::Stop,
     }
 }
 
@@ -354,269 +294,6 @@ pub(crate) fn recording_bitrate(dimensions: RecordingDimensions, fps: Fps) -> Bi
         .saturating_mul(12)
         / 100;
     Bitrate::new(bits_per_second.clamp(2_000_000, 50_000_000) as u32)
-}
-
-/// Round a dimension up to the nearest even number, saturating at `u32::MAX - 1`.
-///
-/// H.264 encoders require even width and height. Odd values round up by 1, with
-/// exactly one exception: `u32::MAX`.
-///
-/// Algorithm:
-/// 1. Add 1 to the input, saturating.
-/// 2. Clear the least-significant bit.
-/// 3. Even values remain unchanged; odd values below `u32::MAX` round up to the
-///    next even, and `u32::MAX` saturates one below itself (see below).
-///
-/// This bit trick is branch-free and cheap, which is useful in sizing code
-/// that may run repeatedly during capture setup.
-///
-/// # The `u32::MAX` exception
-///
-/// `u32::MAX` is odd and the next even value, 2^32, does not fit in a `u32`, so
-/// step 1 saturates back to `u32::MAX` and step 2 yields `u32::MAX - 1` — one
-/// *below* the input. This function therefore does **not** guarantee
-/// `result >= value`, and no infallible `u32 -> u32` function can: the remaining
-/// options at that input are returning the odd `u32::MAX` (not even, so useless
-/// to the encoder) or panicking.
-///
-/// Use [`checked_round_to_even`] wherever `result >= value` must hold. It rejects
-/// `u32::MAX` with an error instead of handing back a smaller size, and it is the
-/// form the recording pipeline uses — every recorded dimension is built through
-/// `RecordingDimensions`, which rounds with the checked helper, so the saturating
-/// case is unreachable in production. The infallible form stays public for the
-/// branch-free benchmark and for callers whose input is already bounded.
-///
-/// Possible improvements:
-/// - Nothing outstanding. The two ideas previously listed here — "switch to
-///   `saturating_add`" and "return a checked error instead" — had both already
-///   been implemented (the add saturates; [`checked_round_to_even`] exists), and
-///   leaving them standing as future work is how this doc came to describe a
-///   plain `+ 1` that rounds every input up.
-///
-/// # Examples
-///
-/// ```
-/// use rustshot::record::round_to_even;
-///
-/// assert_eq!(round_to_even(1920), 1920); // already even
-/// assert_eq!(round_to_even(1921), 1922); // rounded up
-/// assert_eq!(round_to_even(0), 0);
-/// // The single input that comes back SMALLER: 2^32 is not representable.
-/// assert_eq!(round_to_even(u32::MAX), u32::MAX - 1);
-/// ```
-#[allow(dead_code)]
-pub fn round_to_even(value: u32) -> u32 {
-    value.saturating_add(1) & !1
-}
-
-/// Round a dimension up to the nearest even number, or reject it.
-///
-/// The guaranteed form of [`round_to_even`]: every `Ok` value is even and
-/// `>= value`. `u32::MAX` is the only rejected input, because the even value it
-/// would need is 2^32; returning `u32::MAX - 1` there — which is what the
-/// infallible helper does — would encode a frame one row or column short of the
-/// request with nothing reported. Failing at the boundary keeps that impossible
-/// geometry visible.
-pub fn checked_round_to_even(value: u32) -> Result<u32, String> {
-    if value == u32::MAX {
-        return Err("Recording dimension is too large to round to an even value".to_string());
-    }
-    Ok(round_to_even(value))
-}
-
-fn checked_rgba_len(width: u32, height: u32) -> Result<usize, String> {
-    (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| "Pixel buffer dimensions are too large".to_string())
-}
-
-#[cfg_attr(not(windows), allow(dead_code))]
-fn validate_capture_region(
-    region: Region,
-    frame_width: u32,
-    frame_height: u32,
-) -> Result<(), String> {
-    // Validate in three stages: origin, non-zero size, then far edge. Splitting
-    // the checks this way keeps the error messages simple and predictable.
-    if region.physical_x < 0 || region.physical_y < 0 {
-        return Err("Recording region must stay within the selected monitor".to_string());
-    }
-
-    if region.physical_width == 0 || region.physical_height == 0 {
-        return Err("Recording region must have non-zero size".to_string());
-    }
-
-    let region_right = i64::from(region.physical_x) + i64::from(region.physical_width);
-    let region_bottom = i64::from(region.physical_y) + i64::from(region.physical_height);
-
-    if region_right > i64::from(frame_width) || region_bottom > i64::from(frame_height) {
-        return Err("Recording region must stay within the selected monitor".to_string());
-    }
-
-    Ok(())
-}
-
-/// Convert RGBA (top-down) to BGRA bottom-up (WMF RGB32 format).
-///
-/// Allocates the destination and delegates to [`rgba_to_bgra_bottom_up_into`],
-/// which flips and swizzles each row in one pass through the crate-private
-/// `PixelSwizzle` (plain backticks, not a link: it is `pub(crate)`, and rustdoc
-/// runs with `-D warnings`).
-///
-/// No production path calls this. Every caller that matters supplies its own
-/// buffer - the screenshot worker converts in place via
-/// [`rgba_to_bgra_bottom_up_in_place`], and the recorder crops through
-/// `frame::copy_bgra_region_bottom_up` - so this allocating form survives for
-/// benchmarks, the BDD scenarios and doc examples. Prefer either of the other two
-/// in new code.
-///
-/// Possible improvements:
-/// - Nothing outstanding. This doc used to describe a two-pass "memcpy rows, then
-///   swap R/B in place" algorithm and list "fuse the row flip and channel swap"
-///   plus "reuse a caller-provided scratch buffer" as future work. All three had
-///   already happened: the pass is fused, `_into` takes the caller's buffer and
-///   `_in_place` needs no second one. Stale "possible improvements" are how
-///   [`round_to_even`]'s doc came to promise a contract the code did not honour.
-///
-/// # Examples
-///
-/// ```
-/// use rustshot::record::rgba_to_bgra_bottom_up;
-///
-/// // 2x1 image: pixel₀ = (R=10, G=20, B=30, A=255)
-/// let rgba = vec![10, 20, 30, 255, 40, 50, 60, 255];
-/// let bgra = rgba_to_bgra_bottom_up(&rgba, 2, 1).unwrap();
-/// // Single row, so bottom-up is the same order; R↔B swapped:
-/// assert_eq!(bgra, vec![30, 20, 10, 255, 60, 50, 40, 255]);
-/// ```
-#[allow(dead_code)]
-pub fn rgba_to_bgra_bottom_up(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let required = checked_rgba_len(width, height)?;
-    let mut out = vec![0u8; required];
-    rgba_to_bgra_bottom_up_into(rgba, &mut out, width, height)?;
-    Ok(out)
-}
-
-/// Optimized RGBA to BGRA bottom-up conversion.
-///
-/// Writes the converted pixels into the provided `out` buffer.
-/// Returns an error when either buffer is shorter than `width * height * 4`
-/// or when the dimension calculation overflows.
-///
-/// No production path calls this any more -- `rgba_to_bgra_bottom_up_in_place` is what
-/// the screenshot worker uses -- and it is `pub` and benchmarked anyway for three
-/// reasons that are each easy to miss while deleting it. Two `recording.feature`
-/// scenarios drive it through a BDD step in `tests/bdd.rs`, so it is specified
-/// behaviour rather than spare code. `pixels.rs`'s
-/// `rgba_to_bgra_bottom_up_in_place_matches_the_two_buffer_conversion` uses it as the
-/// ORACLE the in-place form is checked against, so removing it removes the only thing
-/// proving the two agree byte for byte. And its `PixelSwizzle::convert` kernel is a
-/// different function from `convert_in_place`'s (`swap_red_blue_into_avx2` versus
-/// `bgra_to_rgba_avx2`), live in `capture::platform::rgba_from_bgra_rows` and in the
-/// GDI recording fallback, which is why the performance gate still benchmarks this
-/// signature: it has no other way to reach that kernel.
-pub fn rgba_to_bgra_bottom_up_into(
-    rgba: &[u8],
-    out: &mut [u8],
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    let required = checked_rgba_len(width, height)?;
-    if rgba.len() < required {
-        return Err(format!(
-            "RGBA input buffer is too short: expected {required} bytes, got {}",
-            rgba.len()
-        ));
-    }
-    if out.len() < required {
-        return Err(format!(
-            "BGRA output buffer is too short: expected {required} bytes, got {}",
-            out.len()
-        ));
-    }
-    let row_bytes = (width as usize)
-        .checked_mul(4)
-        .ok_or_else(|| "Pixel row is too large".to_string())?;
-    let height = height as usize;
-    // Resolved once for the frame, not once per row.
-    let swizzle = crate::capture::PixelSwizzle::detect();
-
-    for y in 0..height {
-        let src_start = y * row_bytes;
-        let dst_start = (height - 1 - y) * row_bytes;
-        let src_row = &rgba[src_start..src_start + row_bytes];
-        let dst_row = &mut out[dst_start..dst_start + row_bytes];
-
-        swizzle.convert(src_row, dst_row);
-    }
-    Ok(())
-}
-
-/// The same flip-and-swizzle as [`rgba_to_bgra_bottom_up_into`], performed inside
-/// a single buffer.
-///
-/// The flip pairs row `y` with row `height - 1 - y` and the swizzle only trades
-/// red for blue, so the transform is its own inverse and needs no destination:
-/// swapping a row pair and swizzling both halves converts both rows at once. That
-/// is also why the screenshot path may run it in the opposite direction --
-/// bottom-up BGRA in, top-down RGBA out -- and get byte-identical results.
-///
-/// Deleting the destination is the point. `capture_monitor_image_on_worker` used
-/// to hand [`rgba_to_bgra_bottom_up_into`] a fresh `vec![0; width * height * 4]`,
-/// ~33 MB for one 4K monitor, which the conversion then overwrote byte for byte.
-/// The zero-fill was pure waste, and first-touching those ~8000 fresh pages costs
-/// milliseconds of the hotkey-to-overlay budget this module keeps under 100 ms.
-/// Peak footprint per screenshot halves too, from two monitor-sized buffers to one.
-///
-/// An odd `height` leaves the middle row without a partner, so it is swizzled
-/// exactly once, on its own. Swizzling it twice is the same as skipping it -- the
-/// swizzle is an involution -- and either mistake leaves a single scanline in the
-/// middle of an otherwise perfect screenshot with red and blue crossed, which no
-/// check on buffer length or corner pixels would notice.
-pub fn rgba_to_bgra_bottom_up_in_place(
-    pixels: &mut [u8],
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    let required = checked_rgba_len(width, height)?;
-    if pixels.len() < required {
-        return Err(format!(
-            "Pixel buffer is too short: expected {required} bytes, got {}",
-            pixels.len()
-        ));
-    }
-    let row_bytes = (width as usize)
-        .checked_mul(4)
-        .ok_or_else(|| "Pixel row is too large".to_string())?;
-    let height = height as usize;
-    // Resolved once for the frame, not once per row.
-    let swizzle = crate::capture::PixelSwizzle::detect();
-
-    // Split into three disjoint pieces so the borrow checker can see that a row
-    // and its partner never alias: the top half, the unpaired middle row, and the
-    // bottom half walked backwards. `middle` is empty for an even height, which is
-    // what keeps the odd case from needing a branch that could count it twice.
-    let pairs = height / 2;
-    let (top, rest) = pixels[..required].split_at_mut(pairs * row_bytes);
-    let (middle, bottom) = rest.split_at_mut((height % 2) * row_bytes);
-
-    // Indexed rather than `chunks_exact_mut`: a zero-width frame makes `row_bytes`
-    // zero, and a zero chunk size panics, where the two-buffer form converts such
-    // a frame to nothing at all.
-    for y in 0..pairs {
-        let top_row = &mut top[y * row_bytes..(y + 1) * row_bytes];
-        let bottom_row = &mut bottom[(pairs - 1 - y) * row_bytes..(pairs - y) * row_bytes];
-        // Move the bytes first, then swizzle each row where it has landed.
-        // `PixelSwizzle::convert` cannot do this in one pass without scratch
-        // space: writing either flipped row would destroy its partner's source.
-        top_row.swap_with_slice(bottom_row);
-        swizzle.convert_in_place(top_row);
-        swizzle.convert_in_place(bottom_row);
-    }
-    // Empty for an even height; the frame's only row when `height` is 1.
-    swizzle.convert_in_place(middle);
-    Ok(())
 }
 
 /// Expose the production FP16 scRGB tone-mapping frame copy for benchmarks.

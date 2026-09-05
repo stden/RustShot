@@ -5,7 +5,7 @@
 use super::*;
 
 #[cfg(windows)]
-use super::capture::RecordingFrameSource;
+use crate::platform::monitor::RecordingFrameSource;
 #[cfg(windows)]
 use std::time::Duration;
 
@@ -133,7 +133,7 @@ pub(super) unsafe fn wmf_record(
         let height = dimensions.height().get();
         let mut frame_source = RecordingFrameSource::new(screen_x, screen_y, region)?;
 
-        let path_wide = crate::settings::wide(&output_path.to_string_lossy());
+        let path_wide = crate::platform::wide(&output_path.to_string_lossy());
         let pcwstr = PCWSTR(path_wide.as_ptr());
 
         // SAFETY: `pcwstr` borrows `path_wide`, a NUL-terminated UTF-16 vector

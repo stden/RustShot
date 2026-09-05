@@ -17,27 +17,24 @@
 
 mod bench;
 mod desktop;
-mod domain;
-mod geometry;
-mod layout;
 mod overlay;
 
-// The bench shims are consumed only through the library tree (benches import
-// `rustshot::selection::benchmark_*`); in the binary tree this re-export has
-// no users, which is fine.
+// Keep existing public selection paths while shared geometry has its own owner.
+pub use crate::domain::{
+    build_region_from_drag, build_region_from_physical_drag, find_screen_index_at_position,
+    logical_to_physical, preferred_screen_index, virtual_desktop_scale_factor, LogicalPoint,
+    LogicalSize, PhysicalPoint, PhysicalSize, Region, ScaleFactor,
+};
+pub use crate::platform::get_cursor_position;
 #[allow(unused_imports)]
 pub use bench::*;
 pub use desktop::*;
-pub use domain::*;
-pub use geometry::*;
-// layout and overlay contain no fully-`pub` items (their contents are
-// `pub(super)`), so a visible re-export would re-export nothing and trip the
-// unused_imports lint; a private glob still lets descendant modules (tests)
-// reach them through `crate::selection::*`.
+// Internal geometry and overlay helpers stay private to consumers of this facade.
 #[allow(unused_imports)]
-use layout::*;
+use crate::domain::{geometry::*, layout::*};
 #[allow(unused_imports)]
 use overlay::*;
 
 #[cfg(test)]
+#[path = "../tests/unit/selection/mod.rs"]
 mod tests;

@@ -98,7 +98,7 @@ fn expect_tolerated_failure(error: &str) {
 
 /// Skip guard for tests that perform a live screen capture./// The wider waiver is scoped to the contended stress test, so pin its set too.
 ///
-/// These three come from `src/record/capture.rs` and are the only ones eight
+/// These three come from `src/platform/monitor.rs` and are the only ones eight
 /// concurrent callers can provoke against a single serial worker. A worker that
 /// *died* reports something else entirely, and that must keep failing even in
 /// the concurrent phase - otherwise the test stops being about worker survival,

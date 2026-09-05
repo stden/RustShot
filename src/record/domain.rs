@@ -1,7 +1,7 @@
 //! Validated value types used by the recording pipeline.
 
-use super::{checked_rgba_len, checked_round_to_even};
-use crate::selection::Region;
+use crate::domain::Region;
+use crate::pixels::checked_rgba_len;
 use std::fmt;
 
 /// Declare an even, non-zero H.264 output dimension.
@@ -195,4 +195,72 @@ impl Bitrate {
     pub(crate) const fn get(self) -> u32 {
         self.0
     }
+}
+
+/// Round a dimension up to the nearest even number, saturating at `u32::MAX - 1`.
+///
+/// H.264 encoders require even width and height. Odd values round up by 1, with
+/// exactly one exception: `u32::MAX`.
+///
+/// Algorithm:
+/// 1. Add 1 to the input, saturating.
+/// 2. Clear the least-significant bit.
+/// 3. Even values remain unchanged; odd values below `u32::MAX` round up to the
+///    next even, and `u32::MAX` saturates one below itself (see below).
+///
+/// This bit trick is branch-free and cheap, which is useful in sizing code
+/// that may run repeatedly during capture setup.
+///
+/// # The `u32::MAX` exception
+///
+/// `u32::MAX` is odd and the next even value, 2^32, does not fit in a `u32`, so
+/// step 1 saturates back to `u32::MAX` and step 2 yields `u32::MAX - 1` — one
+/// *below* the input. This function therefore does **not** guarantee
+/// `result >= value`, and no infallible `u32 -> u32` function can: the remaining
+/// options at that input are returning the odd `u32::MAX` (not even, so useless
+/// to the encoder) or panicking.
+///
+/// Use [`checked_round_to_even`] wherever `result >= value` must hold. It rejects
+/// `u32::MAX` with an error instead of handing back a smaller size, and it is the
+/// form the recording pipeline uses — every recorded dimension is built through
+/// `RecordingDimensions`, which rounds with the checked helper, so the saturating
+/// case is unreachable in production. The infallible form stays public for the
+/// branch-free benchmark and for callers whose input is already bounded.
+///
+/// Possible improvements:
+/// - Nothing outstanding. The two ideas previously listed here — "switch to
+///   `saturating_add`" and "return a checked error instead" — had both already
+///   been implemented (the add saturates; [`checked_round_to_even`] exists), and
+///   leaving them standing as future work is how this doc came to describe a
+///   plain `+ 1` that rounds every input up.
+///
+/// # Examples
+///
+/// ```
+/// use rustshot::record::round_to_even;
+///
+/// assert_eq!(round_to_even(1920), 1920); // already even
+/// assert_eq!(round_to_even(1921), 1922); // rounded up
+/// assert_eq!(round_to_even(0), 0);
+/// // The single input that comes back SMALLER: 2^32 is not representable.
+/// assert_eq!(round_to_even(u32::MAX), u32::MAX - 1);
+/// ```
+#[allow(dead_code)]
+pub fn round_to_even(value: u32) -> u32 {
+    value.saturating_add(1) & !1
+}
+
+/// Round a dimension up to the nearest even number, or reject it.
+///
+/// The guaranteed form of [`round_to_even`]: every `Ok` value is even and
+/// `>= value`. `u32::MAX` is the only rejected input, because the even value it
+/// would need is 2^32; returning `u32::MAX - 1` there — which is what the
+/// infallible helper does — would encode a frame one row or column short of the
+/// request with nothing reported. Failing at the boundary keeps that impossible
+/// geometry visible.
+pub fn checked_round_to_even(value: u32) -> Result<u32, String> {
+    if value == u32::MAX {
+        return Err("Recording dimension is too large to round to an even value".to_string());
+    }
+    Ok(round_to_even(value))
 }

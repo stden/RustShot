@@ -1,11 +1,10 @@
-//! Application layer for the RustShot binary.
+//! Composition root and presentation coordination for the RustShot binary.
 //!
-//! `main.rs` stays a thin crate root; the actual application logic lives in
-//! the parts below. Each part is re-exported wholesale so `main.rs` and the
-//! unit tests in `crate::main_tests` can keep referring to items unqualified,
-//! exactly as they did when everything lived in `main.rs`.
+//! [`run`] chooses the process mode and connects presentation adapters to the
+//! capture, recording, settings, and [`crate::application`] workflows. Shared
+//! workflows must not import this module: otherwise a dialog calling a startup
+//! use case pulls the composition root back into the presentation dependency graph.
 //!
-//! - `autorun` — Windows auto-start registry integration
 //! - `cli_mode` — CLI argument model, format policy, and one-shot capture flow
 //! - `runtime` — logging setup and the selection/recording child-process modes
 //! - `tray_app` — tray icon, global hotkeys, and the winit event-loop app
@@ -14,20 +13,21 @@ use clap::Parser;
 use log::{debug, error, info};
 use winit::event_loop::{ControlFlow, EventLoop};
 
-pub(crate) mod autorun;
 pub(crate) mod cli_mode;
 pub(crate) mod runtime;
 pub(crate) mod tray_app;
 
-pub(crate) use autorun::*;
+pub(crate) use crate::application::autorun::*;
 #[doc(hidden)]
-pub use autorun::{
+pub use crate::application::autorun::{
     benchmark_sync_autorun_at_with_handlers, benchmark_sync_current_exe_autorun_at_with_handlers,
 };
+#[doc(hidden)]
+pub use crate::application::capture::benchmark_capture_active_window_outputs_with_handlers;
+#[cfg(test)]
+pub(crate) use crate::application::capture::capture_active_window_outputs_with_handlers;
 pub(crate) use cli_mode::*;
 pub(crate) use runtime::*;
-#[doc(hidden)]
-pub use tray_app::benchmark_capture_active_window_outputs_with_handlers;
 pub(crate) use tray_app::*;
 
 /// Start RustShot and route the parsed command line to the selected app mode.

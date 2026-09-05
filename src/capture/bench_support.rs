@@ -37,7 +37,7 @@ pub fn benchmark_first_screen_from_result<T>(screens: Result<Vec<T>, String>) ->
 pub fn benchmark_capture_monitor_image(screen: &Screen) -> Result<image::RgbaImage, String> {
     #[cfg(windows)]
     {
-        crate::record::capture::capture_monitor_image(screen.display_info.raw_handle.0)
+        crate::platform::monitor::capture_monitor_image(screen.display_info.raw_handle.0)
     }
 
     #[cfg(not(windows))]

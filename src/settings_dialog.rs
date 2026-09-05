@@ -379,7 +379,9 @@ unsafe fn handle_command(hwnd: HWND, id: i32) {
                         // the success path — so it can own the message box.
                         unsafe { show_error(hwnd, &format!("Failed to save: {e}")) };
                     } else {
-                        match crate::app::sync_current_exe_autorun(settings.auto_start) {
+                        match crate::application::autorun::sync_current_exe_autorun(
+                            settings.auto_start,
+                        ) {
                             Ok(()) => {
                                 // SAFETY: `hwnd` is the live window created on this
                                 // thread, the only thread allowed to destroy it, and
@@ -543,4 +545,5 @@ unsafe fn get_control_text(parent: HWND, id: i32) -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[path = "../tests/unit/settings_dialog/mod.rs"]
 mod tests;
