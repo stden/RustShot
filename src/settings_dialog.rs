@@ -58,16 +58,21 @@ struct SettingsDialogLayout {
 /// A function, rather than scattered constants, keeps the wider fields and
 /// their surrounding controls on one production-used layout contract.
 fn settings_dialog_layout() -> SettingsDialogLayout {
+    let dialog_width = 800;
+    let field_x = 150;
+    let browse_width = 70;
+    // Reserve the native frame and right margin; folder fields take the rest.
+    let browse_x = dialog_width - browse_width - 30;
     SettingsDialogLayout {
-        dialog_width: 610,
+        dialog_width,
         dialog_height: 320,
-        field_x: 150,
-        path_edit_width: 350,
+        field_x,
+        path_edit_width: browse_x - field_x - 10,
         format_field_width: 160,
         fps_field_width: 110,
         field_height: 27,
-        browse_x: 510,
-        browse_width: 70,
+        browse_x,
+        browse_width,
         button_height: 30,
         font_point_size: 11,
     }

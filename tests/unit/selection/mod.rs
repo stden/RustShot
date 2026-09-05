@@ -9,8 +9,12 @@ mod edge_cases_wave2;
 mod geometry_edges;
 mod layout_fallbacks;
 mod layout_inputs;
+#[cfg(windows)]
+mod native_cursor;
 mod neighbor_inference;
 mod overlay_scaling;
+#[cfg(windows)]
+mod presentation;
 mod recording_resolution;
 mod region_basics;
 mod requirements_and_props;

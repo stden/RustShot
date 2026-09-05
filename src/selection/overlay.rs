@@ -508,11 +508,9 @@ pub(super) fn compose_overlay_frame(
 /// the buffer contents are unspecified and [`compose_overlay_frame`] has to
 /// rebuild the whole frame instead.
 ///
-/// A buffer-size mismatch is reported here only as empty damage, which makes
-/// `present_with_damage` blit nothing - deliberately, unlike
-/// [`compose_overlay_frame`], which has to say so out loud. Empty damage is a
-/// legitimate result (an inverted border paints nothing), so it could not double
-/// as a failure signal anyway.
+/// A buffer-size mismatch returns empty damage. That is also a legitimate
+/// result (an inverted border paints nothing), so damage cannot double as a
+/// failure signal or authorize presentation of an otherwise invalid frame.
 ///
 /// What keeps this path safe is not the length check below but the dimension
 /// check in [`SelectionApp::draw`], which returns before either composition
@@ -557,25 +555,45 @@ pub(super) fn redraw_overlay_frame(
     damage
 }
 
-/// Translate overlay damage into softbuffer's present rectangles.
+/// Choose the native presentation regions independently of CPU composition.
 ///
-/// Rectangles that do not fit softbuffer's `u32`/`NonZeroU32` shape are dropped
-/// rather than panicking; every rectangle produced by [`decoration_rects`] is
-/// non-empty and bounded by the frame, so this only guards against absurd
-/// window sizes.
-fn damage_rects(damage: &OverlayDamage) -> Vec<softbuffer::Rect> {
-    damage
-        .as_slice()
-        .iter()
-        .filter_map(|rect| {
-            Some(softbuffer::Rect {
-                x: u32::try_from(rect.x).ok()?,
-                y: u32::try_from(rect.y).ok()?,
-                width: NonZeroU32::new(u32::try_from(rect.width).ok()?)?,
-                height: NonZeroU32::new(u32::try_from(rect.height).ok()?)?,
+/// softbuffer's Win32 backend issues a separate BitBlt for each damage rectangle.
+/// Sending the thin restore/paint spans individually exposes partially erased
+/// crosshairs and borders between blits. It also validates the entire window,
+/// so decoration bounds alone miss an OS repaint outside them. Present the full
+/// completed frame in one blit on Windows, while still composing only the thin
+/// changed spans. Other backends can keep using their damage hints.
+pub(super) fn damage_rects(
+    damage: &OverlayDamage,
+    width: NonZeroU32,
+    height: NonZeroU32,
+) -> Vec<softbuffer::Rect> {
+    #[cfg(windows)]
+    {
+        let _ = damage;
+        vec![softbuffer::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        }]
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (width, height);
+        damage
+            .as_slice()
+            .iter()
+            .filter_map(|rect| {
+                Some(softbuffer::Rect {
+                    x: u32::try_from(rect.x).ok()?,
+                    y: u32::try_from(rect.y).ok()?,
+                    width: NonZeroU32::new(u32::try_from(rect.width).ok()?)?,
+                    height: NonZeroU32::new(u32::try_from(rect.height).ok()?)?,
+                })
             })
-        })
-        .collect()
+            .collect()
+    }
 }
 
 /// Winit application handler for the fullscreen selection overlay.
@@ -603,8 +621,8 @@ pub(super) struct SelectionApp {
     /// reusable as the base for an incremental redraw. `None` forces a full
     /// recompose on the next draw.
     last_decoration: Option<OverlayDecoration>,
-    /// Whether the buffer-size mismatch that skipped a frame has been reported
-    /// already. `draw` runs on every cursor move and one mismatch is permanent
+    /// Whether the error that skipped a frame has been reported already.
+    /// Redraws follow cursor movement and one mismatch is permanent
     /// (a capture with a zero extent leaves the cached background empty for the
     /// whole session), so logging every occurrence would write one identical
     /// line per mouse motion and bury everything else in the log.
@@ -655,8 +673,16 @@ impl SelectionApp {
         let Some(surface) = &mut self.surface else {
             return;
         };
-        let Ok(mut buffer) = surface.buffer_mut() else {
-            return;
+        let mut buffer = match surface.buffer_mut() {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                if !self.frame_skip_logged {
+                    log::warn!("overlay buffer unavailable: {error}");
+                    self.frame_skip_logged = true;
+                }
+                self.last_decoration = None;
+                return;
+            }
         };
 
         // Use actual window size for the buffer; screenshot may differ due to DPI
@@ -699,10 +725,10 @@ impl SelectionApp {
         // age 1 means the buffer still holds the frame presented last, which is
         // the precondition for repainting only what changed.
         let reusable = buffer.age() == 1;
-        match self.last_decoration.filter(|_| reusable) {
-            // The window already shows this exact frame: sub-pixel cursor moves
-            // that clamp to the same pixel need no work at all.
-            Some(previous) if previous == decoration => return,
+        let presentation = match self.last_decoration.filter(|_| reusable) {
+            // An OS repaint can request an unchanged frame after exposure.
+            // Buffer age describes the backing pixels, not the window contents.
+            Some(previous) if previous == decoration => buffer.present(),
             Some(previous) => {
                 let damage = redraw_overlay_frame(
                     &self.pixel_map.background,
@@ -712,7 +738,8 @@ impl SelectionApp {
                     previous,
                     decoration,
                 );
-                let _ = buffer.present_with_damage(&damage_rects(&damage));
+                let rectangles = damage_rects(&damage, buffer.width(), buffer.height());
+                buffer.present_with_damage(&rectangles)
             }
             None => {
                 if !compose_overlay_frame(
@@ -742,16 +769,45 @@ impl SelectionApp {
                     self.last_decoration = None;
                     return;
                 }
-                let _ = buffer.present();
+                buffer.present()
+            }
+        };
+        match presentation {
+            Ok(()) => {
+                self.last_decoration = Some(decoration);
+                self.frame_skip_logged = false;
+            }
+            Err(error) => {
+                if !self.frame_skip_logged {
+                    log::warn!("overlay frame not presented: {error}");
+                    self.frame_skip_logged = true;
+                }
+                self.last_decoration = None;
             }
         }
-        self.last_decoration = Some(decoration);
-        self.frame_skip_logged = false;
+    }
+
+    fn request_redraw(&self) {
+        if let Some(window) = &self.window {
+            // Winit coalesces requests, so queued mouse events produce one
+            // completed frame at the latest position, not intermediate frames.
+            window.request_redraw();
+        }
     }
 
     fn set_cursor_grab(&self, mode: CursorGrabMode) {
         if let Some(window) = &self.window {
+            // Winit's Win32 backend turns hidden + confined into a 1x1 lock
+            // at the window center. During a drag the border replaces the red
+            // crosshair, so show the native pointer before confining it.
+            if mode != CursorGrabMode::None {
+                window.set_cursor_visible(true);
+            }
             let _ = window.set_cursor_grab(mode);
+            // Release confinement before hiding, or mouse-up would warp too.
+            if mode == CursorGrabMode::None {
+                window.set_cursor_visible(false);
+            }
         }
     }
 
@@ -769,6 +825,7 @@ impl SelectionApp {
             self.is_dragging = true;
             self.start_pos = self.current_pos;
             self.set_cursor_grab(CursorGrabMode::Confined);
+            self.request_redraw();
         }
     }
 
@@ -804,6 +861,7 @@ impl SelectionApp {
         } else {
             self.start_pos = None;
         }
+        self.request_redraw();
         false
     }
 
@@ -834,7 +892,7 @@ impl SelectionApp {
             self.start_pos = None;
             self.current_pos = None;
         }
-        self.draw();
+        self.request_redraw();
     }
 
     /// Cursor move: clamp the position into the overlay bounds and redraw.
@@ -846,11 +904,14 @@ impl SelectionApp {
             .unwrap_or_else(|| PhysicalSize::new(self.screen_width, self.screen_height));
         let max_x = f64::from(actual.width.min(i32::MAX as u32));
         let max_y = f64::from(actual.height.min(i32::MAX as u32));
-        self.current_pos = Some((
+        let current_pos = Some((
             position.x.round().clamp(0.0, max_x) as i32,
             position.y.round().clamp(0.0, max_y) as i32,
         ));
-        self.draw();
+        if self.current_pos != current_pos {
+            self.current_pos = current_pos;
+            self.request_redraw();
+        }
     }
 }
 
@@ -889,7 +950,10 @@ impl ApplicationHandler for SelectionApp {
                 return;
             }
         };
+        // Only show this native cursor while dragging a border. Before the
+        // press, the frame supplies the red crosshair without a second cursor.
         window.set_cursor(CursorIcon::Crosshair);
+        window.set_cursor_visible(false);
 
         // Use the actual window size (may differ from requested due to DPI)
         let actual_size = window.inner_size();

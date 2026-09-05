@@ -14,8 +14,8 @@ fn fos_pickfolders_value_is_0x20() {
 fn settings_dialog_fields_are_wider_than_the_previous_compact_layout() {
     let layout = settings_dialog_layout();
 
-    assert_eq!(layout.dialog_width, 610);
-    assert!(layout.path_edit_width >= 340);
+    assert_eq!(layout.dialog_width, 800);
+    assert!(layout.path_edit_width >= 530);
     assert!(layout.format_field_width >= 150);
     assert!(layout.fps_field_width >= 100);
     assert_eq!(
