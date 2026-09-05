@@ -175,3 +175,32 @@ impl ScaleFactor {
         Ok(scaled.ceil() as u32)
     }
 }
+
+/// A rectangular selection region measured in physical framebuffer pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Region {
+    pub physical_x: i32,
+    pub physical_y: i32,
+    pub physical_width: u32,
+    pub physical_height: u32,
+}
+
+impl Region {
+    /// Construct a selection region from explicitly physical coordinates.
+    pub const fn from_physical(origin: PhysicalPoint, size: PhysicalSize) -> Self {
+        Self {
+            physical_x: origin.x(),
+            physical_y: origin.y(),
+            physical_width: size.width(),
+            physical_height: size.height(),
+        }
+    }
+
+    pub const fn origin(self) -> PhysicalPoint {
+        PhysicalPoint::new(self.physical_x, self.physical_y)
+    }
+
+    pub const fn size(self) -> PhysicalSize {
+        PhysicalSize::new(self.physical_width, self.physical_height)
+    }
+}
