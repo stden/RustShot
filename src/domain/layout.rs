@@ -228,6 +228,86 @@ pub(crate) fn fallback_physical_y(
         .map(|(_, candidate)| candidate)
 }
 
+/// Fill only unresolved axes, preferring direct alignment over perpendicular
+/// adjacency so later neighbours cannot replace an earlier placement.
+fn resolve_neighbor_origin(
+    reference: &ScreenLayoutInput,
+    target: &ScreenLayoutInput,
+    reference_origin: (i32, i32),
+    target_x: &mut Option<i32>,
+    target_y: &mut Option<i32>,
+) -> bool {
+    let (reference_x, reference_y) = reference_origin;
+    let mut progress = false;
+    if target_x.is_none() {
+        if let Some(candidate) = infer_physical_x(reference, target, reference_x)
+            .or_else(|| infer_physical_x_from_vertical_neighbor(reference, target, reference_x))
+        {
+            *target_x = Some(candidate);
+            progress = true;
+        }
+    }
+    if target_y.is_none() {
+        if let Some(candidate) = infer_physical_y(reference, target, reference_y)
+            .or_else(|| infer_physical_y_from_horizontal_neighbor(reference, target, reference_y))
+        {
+            *target_y = Some(candidate);
+            progress = true;
+        }
+    }
+    progress
+}
+
+/// Run one ordered inference pass. Later references see positions filled earlier
+/// in this pass; fallback placement starts only after all adjacency attempts.
+fn resolve_screen_positions_pass(
+    inputs: &[ScreenLayoutInput],
+    physical_x: &mut [Option<i32>],
+    physical_y: &mut [Option<i32>],
+) -> bool {
+    let mut progress = false;
+
+    for (reference_index, reference) in inputs.iter().enumerate() {
+        let (Some(reference_x), Some(reference_y)) =
+            (physical_x[reference_index], physical_y[reference_index])
+        else {
+            continue;
+        };
+
+        for (target_index, target) in inputs.iter().enumerate() {
+            if reference_index == target_index {
+                continue;
+            }
+
+            progress |= resolve_neighbor_origin(
+                reference,
+                target,
+                (reference_x, reference_y),
+                &mut physical_x[target_index],
+                &mut physical_y[target_index],
+            );
+        }
+    }
+
+    for index in 0..inputs.len() {
+        if physical_x[index].is_none() {
+            if let Some(candidate) = fallback_physical_x(inputs, physical_x, index) {
+                physical_x[index] = Some(candidate);
+                progress = true;
+            }
+        }
+
+        if physical_y[index].is_none() {
+            if let Some(candidate) = fallback_physical_y(inputs, physical_y, index) {
+                physical_y[index] = Some(candidate);
+                progress = true;
+            }
+        }
+    }
+
+    progress
+}
+
 /// Map every screen from logical (`display_info`) space into physical space.
 ///
 /// There is deliberately **no single global scale factor**. `display_info`
@@ -256,69 +336,7 @@ pub(crate) fn build_physical_screen_layouts(
     physical_x[anchor_index] = Some(0);
     physical_y[anchor_index] = Some(0);
 
-    loop {
-        let mut progress = false;
-
-        for (reference_index, reference) in inputs.iter().enumerate() {
-            let (Some(reference_x), Some(reference_y)) =
-                (physical_x[reference_index], physical_y[reference_index])
-            else {
-                continue;
-            };
-
-            for (target_index, target) in inputs.iter().enumerate() {
-                if reference_index == target_index {
-                    continue;
-                }
-
-                if physical_x[target_index].is_none() {
-                    if let Some(candidate) = infer_physical_x(reference, target, reference_x)
-                        .or_else(|| {
-                            infer_physical_x_from_vertical_neighbor(reference, target, reference_x)
-                        })
-                    {
-                        physical_x[target_index] = Some(candidate);
-                        progress = true;
-                    }
-                }
-
-                if physical_y[target_index].is_none() {
-                    if let Some(candidate) = infer_physical_y(reference, target, reference_y)
-                        .or_else(|| {
-                            infer_physical_y_from_horizontal_neighbor(
-                                reference,
-                                target,
-                                reference_y,
-                            )
-                        })
-                    {
-                        physical_y[target_index] = Some(candidate);
-                        progress = true;
-                    }
-                }
-            }
-        }
-
-        for index in 0..inputs.len() {
-            if physical_x[index].is_none() {
-                if let Some(candidate) = fallback_physical_x(inputs, &physical_x, index) {
-                    physical_x[index] = Some(candidate);
-                    progress = true;
-                }
-            }
-
-            if physical_y[index].is_none() {
-                if let Some(candidate) = fallback_physical_y(inputs, &physical_y, index) {
-                    physical_y[index] = Some(candidate);
-                    progress = true;
-                }
-            }
-        }
-
-        if !progress {
-            break;
-        }
-    }
+    while resolve_screen_positions_pass(inputs, &mut physical_x, &mut physical_y) {}
 
     inputs
         .iter()
@@ -343,7 +361,6 @@ pub(crate) fn build_physical_screen_layouts(
         .collect()
 }
 
-#[allow(dead_code)]
 pub(crate) fn normalize_physical_screen_layouts(
     layouts: &[PhysicalScreenLayout],
 ) -> Result<(Vec<PhysicalScreenLayout>, i32, i32, u32, u32), String> {

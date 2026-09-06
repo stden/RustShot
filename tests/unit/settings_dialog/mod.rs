@@ -1,9 +1,11 @@
-//! Unit tests for the settings dialog (pure-logic parts only, no GUI).
+//! Settings validation, lifecycle guards, and native dialog regressions.
 
 use super::*;
 
 use crate::capture::Format;
 use crate::settings::Fps;
+
+mod resizing;
 
 #[test]
 fn fos_pickfolders_value_is_0x20() {
@@ -248,30 +250,82 @@ fn dialog_slot_admits_only_one_holder() {
     DIALOG_OPEN.store(false, Ordering::SeqCst);
 }
 
+fn current_process_settings_window() -> Result<Option<HWND>, windows::core::Error> {
+    // FindWindowW returns only its first global match: an installed RustShot
+    // dialog can otherwise hide the test process's own window from the test.
+    unsafe extern "system" fn find_ours(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
+        let mut process_id = 0;
+        // SAFETY: EnumWindows supplies a live handle; the output stays writable.
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
+        if process_id != std::process::id() {
+            return windows::core::BOOL(1);
+        }
+        let mut class_name = [0u16; 64];
+        let mut title = [0u16; 64];
+        // SAFETY: hwnd is from enumeration, and both APIs derive their output
+        // capacity from these live slices without retaining them.
+        let class_len = unsafe { GetClassNameW(hwnd, &mut class_name) } as usize;
+        // SAFETY: as above, `title` is live and its slice bounds the write.
+        let title_len = unsafe { GetWindowTextW(hwnd, &mut title) } as usize;
+        if class_name[..class_len]
+            .iter()
+            .copied()
+            .eq("RustShotSettingsWnd".encode_utf16())
+            && title[..title_len]
+                .iter()
+                .copied()
+                .eq("RustShot Settings".encode_utf16())
+        {
+            // SAFETY: the only caller passes a live Option<HWND> through
+            // lparam, exclusively borrowed for this synchronous enumeration.
+            unsafe { *(lparam.0 as *mut Option<HWND>) = Some(hwnd) };
+        }
+        windows::core::BOOL(1)
+    }
+
+    let mut found = None;
+    // SAFETY: find_ours has the native callback signature, and found remains
+    // alive and exclusively borrowed until EnumWindows returns.
+    unsafe {
+        EnumWindows(
+            Some(find_ours),
+            LPARAM(std::ptr::from_mut(&mut found) as isize),
+        )
+    }?;
+    Ok(found)
+}
+
 fn wait_for_settings_window() -> Option<HWND> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while std::time::Instant::now() < deadline {
-        // SAFETY: both names are static, NUL-terminated UTF-16 literals. A
-        // successful lookup returns a live top-level window handle.
-        if let Ok(hwnd) = unsafe { FindWindowW(w!("RustShotSettingsWnd"), w!("RustShot Settings")) }
+        if let Some(hwnd) =
+            current_process_settings_window().expect("enumerate settings windows in this process")
         {
-            let mut process_id = 0;
-            // SAFETY: `hwnd` came from `FindWindowW`, and `process_id` remains
-            // writable for the duration of this synchronous query.
-            unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
-            // SAFETY: `hwnd` is the live handle returned above; this query does
-            // not retain it or mutate the window.
-            let visible = unsafe { IsWindowVisible(hwnd) }.as_bool();
-            // `FindWindowW` can observe the handle in the narrow interval
-            // between `CreateWindowExW` and `ShowWindow`, so wait for both the
-            // right process and the user-visible state.
-            if process_id == std::process::id() && visible {
+            // SAFETY: these handle queries fail safely if the window closes.
+            if unsafe { IsWindowVisible(hwnd) }.as_bool() && !unsafe { IsIconic(hwnd) }.as_bool() {
                 return Some(hwnd);
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     None
+}
+
+struct CloseSettingsWindowOnDrop;
+
+impl Drop for CloseSettingsWindowOnDrop {
+    fn drop(&mut self) {
+        match current_process_settings_window() {
+            Ok(Some(hwnd)) => {
+                // A hidden-window assertion must not leave its worker and dialog
+                // slot alive, poisoning subsequent tests in the same process.
+                let _ = close_settings_window(hwnd);
+            }
+            Ok(None) => {}
+            // Cleanup must not panic again while an assertion is unwinding.
+            Err(error) => eprintln!("could not find settings dialog for cleanup: {error}"),
+        }
+    }
 }
 
 fn close_settings_window(hwnd: HWND) -> bool {
@@ -298,6 +352,7 @@ fn control_width(hwnd: HWND, id: i32) -> Option<i32> {
     // fail cleanly if the requested child was not created.
     let control = unsafe { GetDlgItem(Some(hwnd), id) }.ok()?;
     let mut rect = windows::Win32::Foundation::RECT::default();
+    // SAFETY: `control` belongs to the live dialog and `rect` stays writable.
     unsafe { GetWindowRect(control, &mut rect) }.ok()?;
     Some(rect.right - rect.left)
 }
@@ -306,6 +361,7 @@ fn control_font(hwnd: HWND, id: i32) -> Option<usize> {
     // SAFETY: callers keep the dialog alive, `GetDlgItem` establishes a live
     // child, and WM_GETFONT returns a handle value without crossing pointers.
     let control = unsafe { GetDlgItem(Some(hwnd), id) }.ok()?;
+    // SAFETY: the live child handles WM_GETFONT without pointer arguments.
     let font = unsafe { SendMessageW(control, WM_GETFONT, None, None) }.0 as usize;
     (font != 0).then_some(font)
 }
@@ -316,6 +372,7 @@ fn settings_dialog_opens_visible_controls_and_can_reopen() {
     DIALOG_OPEN.store(false, Ordering::SeqCst);
 
     for attempt in 1..=2 {
+        let _close_on_failure = CloseSettingsWindowOnDrop;
         show_settings_dialog();
         let hwnd = wait_for_settings_window()
             .unwrap_or_else(|| panic!("attempt {attempt}: settings window did not appear"));
@@ -323,8 +380,14 @@ fn settings_dialog_opens_visible_controls_and_can_reopen() {
         // SAFETY: the window is live until WM_CLOSE is posted below. A missing
         // Save control is reported as `Err`, not as an invalid usable handle.
         let visible = unsafe { IsWindowVisible(hwnd) }.as_bool();
+        // SAFETY: `hwnd` remains live until the close request below; the lookup
+        // reports a missing child as `Err` without creating a usable handle.
         let has_save_button = unsafe { GetDlgItem(Some(hwnd), IDC_SAVE_BTN) }.is_ok();
         let folder_width = control_width(hwnd, IDC_SCREENSHOTS_EDIT);
+        let mut client = windows::Win32::Foundation::RECT::default();
+        // SAFETY: the dialog is live until the close request below, and client
+        // remains writable for this synchronous geometry query.
+        unsafe { GetClientRect(hwnd, &mut client) }.expect("settings client bounds");
         let format_width = control_width(hwnd, IDC_FORMAT_COMBO);
         let fps_width = control_width(hwnd, IDC_FPS_EDIT);
         let fonts = [
@@ -347,7 +410,11 @@ fn settings_dialog_opens_visible_controls_and_can_reopen() {
             "attempt {attempt}: WM_CREATE did not build the dialog controls"
         );
         let layout = settings_dialog_layout();
-        assert_eq!(folder_width, Some(layout.path_edit_width));
+        assert_eq!(
+            folder_width,
+            Some(client.right - client.left - layout.field_x - layout.browse_width - 10 - 20),
+            "folder field must fill the client area while preserving the browse gap and margin"
+        );
         assert_eq!(format_width, Some(layout.format_field_width));
         assert_eq!(fps_width, Some(layout.fps_field_width));
         assert!(
@@ -359,5 +426,35 @@ fn settings_dialog_opens_visible_controls_and_can_reopen() {
             "attempt {attempt}: controls did not share one consistent dialog font"
         );
         assert!(closed, "attempt {attempt}: settings dialog did not close");
+    }
+}
+
+#[test]
+fn settings_request_restores_a_hidden_or_minimized_existing_dialog() {
+    let _serial = lock_dialog_flag();
+    DIALOG_OPEN.store(false, Ordering::SeqCst);
+    let _close_on_failure = CloseSettingsWindowOnDrop;
+    show_settings_dialog();
+    let hwnd = wait_for_settings_window().expect("initial settings dialog must appear");
+
+    for state in [SW_HIDE, SW_MINIMIZE] {
+        // SAFETY: the dialog belongs to this process and remains alive until
+        // the cleanup guard posts WM_CLOSE on its owning thread.
+        let _ = unsafe { ShowWindow(hwnd, state) };
+        // SAFETY: both queries use the same live, test-owned dialog handle.
+        let was_hidden_or_minimized =
+            !unsafe { IsWindowVisible(hwnd) }.as_bool() || unsafe { IsIconic(hwnd) }.as_bool();
+        assert!(
+            was_hidden_or_minimized,
+            "fixture must hide or minimize the dialog"
+        );
+
+        show_settings_dialog();
+
+        assert_eq!(
+            wait_for_settings_window(),
+            Some(hwnd),
+            "requesting Settings must restore the same existing dialog from {state:?}"
+        );
     }
 }

@@ -247,19 +247,7 @@ fn save_settings_is_never_observed_half_written() {
 
     let stop = std::sync::atomic::AtomicBool::new(false);
     std::thread::scope(|scope| {
-        let reader = scope.spawn(|| {
-            let mut observed_partial = 0usize;
-            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                // Read the raw bytes: any moment where the file exists but is
-                // not complete JSON is exactly the failure being guarded.
-                if let Ok(content) = std::fs::read_to_string(&settings_path) {
-                    if parse_settings_json(&content) != written {
-                        observed_partial += 1;
-                    }
-                }
-            }
-            observed_partial
-        });
+        let reader = scope.spawn(|| count_partial_settings_reads(&settings_path, &written, &stop));
 
         for _ in 0..300 {
             save_settings(&written).expect("concurrent save");
@@ -281,4 +269,23 @@ fn save_settings_is_never_observed_half_written() {
         .filter(|name| name != "settings.json")
         .collect();
     assert!(leftovers.is_empty(), "left temporary files: {leftovers:?}");
+}
+
+fn count_partial_settings_reads(
+    settings_path: &std::path::Path,
+    expected: &Settings,
+    stop: &std::sync::atomic::AtomicBool,
+) -> usize {
+    let mut observed_partial = 0;
+    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        // Read the raw bytes: any moment where the file exists but is not
+        // complete JSON is exactly the failure the concurrent reader guards.
+        let Ok(content) = std::fs::read_to_string(settings_path) else {
+            continue;
+        };
+        if parse_settings_json(&content) != *expected {
+            observed_partial += 1;
+        }
+    }
+    observed_partial
 }

@@ -98,7 +98,7 @@ const BENCHMARK_GUARD: &str = include_str!("../../scripts/benchmark_guard.ps1");
 /// Benchmark ids the gate declares, in declaration order.
 ///
 /// Text rather than reflection: Criterion ids exist only at run time, and the
-/// whole point is to compare them with a PowerShell array without running a
+/// whole point is to compare them with a `PowerShell` array without running a
 /// benchmark.
 fn gate_benchmark_ids() -> Vec<&'static str> {
     PERFORMANCE_GATE

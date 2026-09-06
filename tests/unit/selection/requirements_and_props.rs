@@ -45,7 +45,7 @@ fn req3_4_resolve_recording_selection_spanning_two_monitors_returns_error() {
 /// Requirement 3.5: region at the exact boundary of a monitor is accepted.
 #[test]
 fn req3_5_resolve_recording_selection_exact_boundary_accepted() {
-    let layouts = vec![make_layout(0, 0, 1920, 1080, 0, 0, 1920, 1080)];
+    let layouts = vec![make_layout((0, 0), (1920, 1080), (0, 0), (1920, 1080))];
     // Region fills the entire monitor exactly
     let region = Region {
         physical_x: 0,

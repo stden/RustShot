@@ -21,38 +21,37 @@ mod requirements_and_props;
 mod selection_app;
 mod task_requirements;
 
-fn make_screen(lx: i32, ly: i32, lw: u32, lh: u32, pw: u32, ph: u32) -> ScreenLayoutInput {
+fn make_screen(
+    logical_origin: (i32, i32),
+    logical_size: (u32, u32),
+    physical_size: (u32, u32),
+) -> ScreenLayoutInput {
     ScreenLayoutInput {
-        logical_x: lx,
-        logical_y: ly,
-        logical_width: lw,
-        logical_height: lh,
-        physical_width: pw,
-        physical_height: ph,
+        logical_x: logical_origin.0,
+        logical_y: logical_origin.1,
+        logical_width: logical_size.0,
+        logical_height: logical_size.1,
+        physical_width: physical_size.0,
+        physical_height: physical_size.1,
         is_primary: false,
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn make_layout(
-    lx: i32,
-    ly: i32,
-    lw: u32,
-    lh: u32,
-    px: i32,
-    py: i32,
-    pw: u32,
-    ph: u32,
+    logical_origin: (i32, i32),
+    logical_size: (u32, u32),
+    physical_origin: (i32, i32),
+    physical_size: (u32, u32),
 ) -> PhysicalScreenLayout {
     PhysicalScreenLayout {
-        logical_x: lx,
-        logical_y: ly,
-        logical_width: lw,
-        logical_height: lh,
-        physical_x: px,
-        physical_y: py,
-        physical_width: pw,
-        physical_height: ph,
+        logical_x: logical_origin.0,
+        logical_y: logical_origin.1,
+        logical_width: logical_size.0,
+        logical_height: logical_size.1,
+        physical_x: physical_origin.0,
+        physical_y: physical_origin.1,
+        physical_width: physical_size.0,
+        physical_height: physical_size.1,
     }
 }
 
@@ -61,7 +60,7 @@ fn make_layout(
 /// to its right, both at 1:1 DPI (physical == logical).
 fn two_monitor_layouts() -> Vec<PhysicalScreenLayout> {
     vec![
-        make_layout(0, 0, 1920, 1080, 0, 0, 1920, 1080),
-        make_layout(1920, 0, 2560, 1440, 1920, 0, 2560, 1440),
+        make_layout((0, 0), (1920, 1080), (0, 0), (1920, 1080)),
+        make_layout((1920, 0), (2560, 1440), (1920, 0), (2560, 1440)),
     ]
 }

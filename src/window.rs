@@ -93,10 +93,8 @@ pub fn capture_window_image(id: u64) -> Result<image::RgbaImage, String> {
 /// Capture window `id` and save it, choosing the path the same way as a normal
 /// screenshot when `output` is not given.
 ///
-/// `#[allow(dead_code)]`: the binary always passes an explicit directory via
-/// [`capture_window_in_dir`]; this default-directory convenience exists for
-/// library consumers (the MCP server, tests).
-#[allow(dead_code)]
+/// The tray passes an explicit directory via [`capture_window_in_dir`]; this
+/// default-directory convenience remains available to library consumers.
 pub fn capture_window(id: u64, output: Option<PathBuf>, format: Format) -> Result<PathBuf, String> {
     capture_window_in_dir(id, output, format, &capture::get_screenshots_dir())
 }

@@ -36,6 +36,15 @@ same findings and **exits 0**, because `[lints]` in `Cargo.toml` is `warn`: gree
 locally, red in CI. `cargo test` includes the Gherkin features via `tests/bdd.rs`;
 `cargo bench --bench performance_gate` is the CI-gated target.
 
+Readability is part of `cargo lint`: branch complexity, block nesting, argument
+count and type complexity have explicit budgets in `clippy.toml`. Exceeding one
+requires simplifying the code, not a blanket lint exemption.
+At review, use guard clauses and named operations to keep nesting within four
+levels, signatures within five arguments, and at most one boolean parameter.
+Group dependencies by responsibility. Prefer a narrow `#[expect(..., reason =
+"...")]` for unavoidable boundary exceptions; any allowance needs a concrete
+reason. Unsafe blocks need a local `SAFETY` proof.
+
 ## Rules
 
 - English in comments, commits, reviews, discussion.

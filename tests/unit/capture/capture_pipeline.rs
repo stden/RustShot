@@ -11,15 +11,19 @@ fn capture_screenshot_with_saves_to_explicit_path() {
     let output = PathBuf::from("custom.jpg");
 
     let result = capture_screenshot_with(
-        2,
-        Some(1),
+        ScreenSelection {
+            available: 2,
+            index: Some(1),
+        },
         || {
             captured.set(true);
             Ok("fake-image")
         },
-        Some(output.clone()),
-        Format::Jpg,
-        &PathBuf::from("."),
+        ScreenshotDestination {
+            output: Some(output.clone()),
+            format: Format::Jpg,
+            directory: Path::new("."),
+        },
         |path| {
             ensured.set(true);
             assert_eq!(path, output.as_path());
@@ -44,12 +48,16 @@ fn capture_screenshot_with_saves_to_explicit_path() {
 #[test]
 fn capture_screenshot_with_reports_save_error() {
     let result = capture_screenshot_with(
-        1,
-        None,
+        ScreenSelection {
+            available: 1,
+            index: None,
+        },
         || Ok(()),
-        Some(PathBuf::from("out.png")),
-        Format::Png,
-        &PathBuf::from("."),
+        ScreenshotDestination {
+            output: Some(PathBuf::from("out.png")),
+            format: Format::Png,
+            directory: Path::new("."),
+        },
         |_| Ok(()),
         |_, _, _| Err("save failed".to_string()),
     );
@@ -61,15 +69,19 @@ fn capture_screenshot_with_reports_save_error() {
 fn capture_screenshot_with_reports_invalid_screen_index() {
     let capture_called = Cell::new(false);
     let result = capture_screenshot_with(
-        1,
-        Some(5),
+        ScreenSelection {
+            available: 1,
+            index: Some(5),
+        },
         || {
             capture_called.set(true);
             Ok(())
         },
-        None,
-        Format::Bmp,
-        &PathBuf::from("."),
+        ScreenshotDestination {
+            output: None,
+            format: Format::Bmp,
+            directory: Path::new("."),
+        },
         |_| Ok(()),
         |_, _, _| Ok(()),
     );
@@ -85,15 +97,19 @@ fn capture_screenshot_with_reports_invalid_screen_index() {
 fn capture_screenshot_with_reports_no_screens_detected() {
     let capture_called = Cell::new(false);
     let result = capture_screenshot_with(
-        0,
-        None,
+        ScreenSelection {
+            available: 0,
+            index: None,
+        },
         || {
             capture_called.set(true);
             Ok(())
         },
-        None,
-        Format::Png,
-        &PathBuf::from("."),
+        ScreenshotDestination {
+            output: None,
+            format: Format::Png,
+            directory: Path::new("."),
+        },
         |_| Ok(()),
         |_, _, _| Ok(()),
     );
@@ -109,12 +125,16 @@ fn capture_screenshot_with_uses_default_path_when_output_is_none() {
     let screenshots_dir = PathBuf::from("custom-default-shots");
 
     let result = capture_screenshot_with(
-        1,
-        None,
+        ScreenSelection {
+            available: 1,
+            index: None,
+        },
         || Ok(()),
-        None,
-        Format::Bmp,
-        &screenshots_dir,
+        ScreenshotDestination {
+            output: None,
+            format: Format::Bmp,
+            directory: &screenshots_dir,
+        },
         |path| {
             ensured_path.replace(Some(path.to_path_buf()));
             Ok(())

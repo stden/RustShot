@@ -83,15 +83,6 @@ unsafe_op_in_unsafe_fn = "deny"
 #                                       and hides from tallies that grep for
 #                                       lowercase lint names, which is how it once
 #                                       got recorded as "zero violations".
-#   undocumented_unsafe_blocks (20)   - every remaining site is in
-#                                       examples/profile_capture.rs, which is a
-#                                       near-copy of the WGC code in
-#                                       src/capture/platform/wgc.rs. Documenting
-#                                       the copy would entrench the duplication;
-#                                       de-duplicating the example is the actual
-#                                       fix, and the lint goes on after that. All
-#                                       of src/ is already documented, so the gap
-#                                       is the example alone.
 #   let_underscore_drop (138)         - fires on every `let _ = ...` used to
 #                                       discard a Win32 BOOL, which is the
 #                                       idiom this codebase uses on purpose.
@@ -101,6 +92,21 @@ unsafe_op_in_unsafe_fn = "deny"
 #   missing_copy_implementations (2)  - same.
 
 [lints.clippy]
+# Readability budgets live in clippy.toml. These are review tripwires, not a
+# claim that a numeric score can prove code is understandable. Explicit budgets
+# survive toolchain changes; nesting otherwise stays off.
+cognitive_complexity = "warn"
+excessive_nesting = "warn"
+too_many_arguments = "warn"
+type_complexity = "warn"
+allow_attributes_without_reason = "warn"
+fn_params_excessive_bools = "warn"
+# Unsafe operations require a local explanation of their pointer, lifetime, or
+# ownership contract, including examples and tests covered by --all-targets.
+undocumented_unsafe_blocks = "warn"
+# A raw line-count gate was evaluated at Clippy's default 100: nine functions
+# failed, mostly native initialization and benchmark/test setup. Splitting those
+# solely by length obscures their sequence; branching/nesting are checked instead.
 # Bug classes, not style.
 or_fun_call = "warn"           # eager allocation inside unwrap_or/and: 4 fixed
 redundant_clone = "warn"       # 3 fixed, all clones dropped without use
@@ -111,6 +117,12 @@ lossy_float_literal = "warn"
 debug_assert_with_mut_call = "warn"
 suspicious_operation_groupings = "warn"
 mutex_atomic = "warn"
+needless_pass_by_value = "warn"
+doc_markdown = "warn"
+# API and ownership hygiene. These are warnings because platform adapters and
+# tests may need a narrow, documented exception at a boundary.
+return_self_not_must_use = "warn"
+large_enum_variant = "warn"
 # Placeholders and debug aids must not reach a release. The project uses
 # `Result<_, String>` everywhere, so a `todo!()` is always the wrong answer.
 todo = "warn"
@@ -159,9 +171,6 @@ wildcard_dependencies = "warn"
 # Deliberately NOT enabled, with the count that decided it:
 #   str_to_string (316)              - prefers `.to_owned()` over `.to_string()`
 #                                      on &str. Pure style, enormous diff.
-#   undocumented_unsafe_blocks (112) - genuinely wanted for an FFI codebase and
-#                                      the best candidate for follow-up work,
-#                                      but 112 SAFETY comments is its own task.
 #   use_self (69)                    - style.
 #   significant_drop_tightening (6)  - nursery, and its suggestions here move
 #                                      lock scopes in recording code; too risky

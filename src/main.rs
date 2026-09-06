@@ -1,4 +1,4 @@
-//! Executable launcher for RustShot.
+//! Executable launcher for `RustShot`.
 //!
 //! Mode routing and dependency construction belong to `rustshot::app`.
 //! Architecture diagrams and ownership rules live in the library rustdoc

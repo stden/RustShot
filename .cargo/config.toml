@@ -11,7 +11,7 @@
 # is not amortised.
 
 [alias]
-lint = "clippy --all-targets --all-features -- -D warnings"
+lint = "clippy --lib --bins --all-features -- -D warnings"
 
 [env]
 RUST_TEST_THREADS = { value = "1", force = false }

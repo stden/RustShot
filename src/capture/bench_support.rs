@@ -6,7 +6,6 @@ use std::path::Path;
 
 /// Convert screen enumeration results into an explicit benchmark screen count.
 #[doc(hidden)]
-#[allow(dead_code)]
 pub fn benchmark_screen_count_from_result<T>(
     screens: Result<Vec<T>, String>,
 ) -> Result<usize, String> {
@@ -21,7 +20,6 @@ pub fn benchmark_screen_count_from_result<T>(
 
 /// Extract the first screen for benchmarks or return an explicit error.
 #[doc(hidden)]
-#[allow(dead_code)]
 pub fn benchmark_first_screen_from_result<T>(screens: Result<Vec<T>, String>) -> Result<T, String> {
     screens.and_then(|screens| {
         screens
@@ -33,7 +31,6 @@ pub fn benchmark_first_screen_from_result<T>(screens: Result<Vec<T>, String>) ->
 
 /// Capture a monitor through the same backend as the production screenshot path.
 #[doc(hidden)]
-#[allow(dead_code)]
 pub fn benchmark_capture_monitor_image(screen: &Screen) -> Result<image::RgbaImage, String> {
     #[cfg(windows)]
     {
@@ -52,14 +49,12 @@ pub fn benchmark_capture_monitor_image(screen: &Screen) -> Result<image::RgbaIma
 
 /// Convert RGBA benchmark images into JPEG-compatible RGB data.
 #[doc(hidden)]
-#[allow(dead_code)]
 pub fn benchmark_rgb_image_from_rgba(image: &image::RgbaImage) -> image::RgbImage {
     image::DynamicImage::ImageRgba8(image.clone()).to_rgb8()
 }
 
 /// Expose `save_image_optimized` for benchmarks.
 #[doc(hidden)]
-#[allow(dead_code)]
 pub fn benchmark_save_image_optimized(
     image: &image::RgbaImage,
     path: &Path,
@@ -70,7 +65,6 @@ pub fn benchmark_save_image_optimized(
 
 /// Expose `ensure_parent_directory` for benchmarks.
 #[doc(hidden)]
-#[allow(dead_code)]
 pub fn benchmark_ensure_parent_directory(path: &Path) -> Result<(), String> {
     ensure_parent_directory(path)
 }
@@ -80,15 +74,16 @@ pub fn benchmark_ensure_parent_directory(path: &Path) -> Result<(), String> {
 /// This keeps executable specifications independent of display hardware while
 /// exercising the same short-circuit control flow as production capture.
 #[doc(hidden)]
-#[allow(dead_code)]
 pub fn benchmark_capture_pipeline(
     failing_stage: &str,
     error: &str,
 ) -> (Result<PathBuf, String>, Vec<String>) {
     let stages = RefCell::new(Vec::new());
     let result = capture_screenshot_with(
-        1,
-        Some(0),
+        ScreenSelection {
+            available: 1,
+            index: Some(0),
+        },
         || {
             stages.borrow_mut().push("capture".to_string());
             if failing_stage == "capture" {
@@ -97,9 +92,11 @@ pub fn benchmark_capture_pipeline(
                 Ok(())
             }
         },
-        Some(PathBuf::from("bdd-shot.png")),
-        Format::Png,
-        Path::new("."),
+        ScreenshotDestination {
+            output: Some(PathBuf::from("bdd-shot.png")),
+            format: Format::Png,
+            directory: Path::new("."),
+        },
         |_| {
             stages.borrow_mut().push("directory".to_string());
             if failing_stage == "directory" {

@@ -87,8 +87,8 @@ fn build_physical_screen_layouts_keeps_primary_aligned_to_high_dpi_monitor_on_ri
 #[test]
 fn resolve_recording_selection_returns_screen_local_physical_region() {
     let layouts = vec![
-        make_layout(0, 0, 1920, 1080, 0, 0, 1920, 1080),
-        make_layout(1920, 0, 1707, 960, 1920, 0, 2560, 1440),
+        make_layout((0, 0), (1920, 1080), (0, 0), (1920, 1080)),
+        make_layout((1920, 0), (1707, 960), (1920, 0), (2560, 1440)),
     ];
 
     let (screen_index, local_region) = resolve_recording_selection(

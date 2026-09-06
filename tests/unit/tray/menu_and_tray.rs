@@ -21,10 +21,11 @@ fn menu_constants_are_stable() {
 
 #[test]
 fn toggle_record_label_describes_action_and_hotkey() {
-    assert!(TOGGLE_RECORD_LABEL.contains("Start"));
-    assert!(TOGGLE_RECORD_LABEL.contains("Stop"));
+    let label = MenuAction::ToggleRecord.menu_label();
+    assert!(label.contains("Start"));
+    assert!(label.contains("Stop"));
     assert!(
-        TOGGLE_RECORD_LABEL.contains("Ctrl+Shift+R"),
+        label.contains("Ctrl+Shift+R"),
         "label should mention the hotkey"
     );
 }

@@ -1,4 +1,15 @@
-//! RustShot — screenshot and screen recording library.
+//! `RustShot` — screenshot and screen recording library.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::doc_markdown,
+        clippy::needless_pass_by_value,
+        reason = "test assertions intentionally fail fast"
+    )
+)]
 //!
 //! # Layers and dependency direction
 //!
@@ -45,9 +56,24 @@
 //!
 //! This is a modular library, not a set of runtime plug-ins. Native resource
 //! ownership remains explicit: window-generation leases, capture workers, and
-//! recording sessions retain their existing cleanup behavior. Closure parameters
-//! provide replaceable effects where a workflow needs them; pure geometry and
-//! pixel transforms need no service objects.
+//! recording sessions retain their existing cleanup behavior. Installer and
+//! autorun-registration ports group related replaceable effects; capture-output
+//! workflows accept independent delivery handlers. Borrowed frame views pair
+//! pixels with their dimensions and row pitch. Pure geometry needs no service
+//! objects, and none of these descriptors hides I/O or resource ownership.
+//!
+//! Interactive capture uses a small typed internal DSL in `application/capture`:
+//! request constructors pair region selection with clipboard delivery, or a
+//! retained window snapshot with clipboard-and-file delivery. File format and
+//! directory travel together. These application values can own a native window
+//! lease, so they do not belong in the standard-library-only `domain` layer.
+//! CLI and MCP retain their separate file-only policies.
+//!
+//! The data-only `command_catalog!` in `tray` declares stable IDs, menu captions,
+//! ordering, and typed shortcut metadata once. Native registration converts that
+//! metadata to OS hotkeys; menu and hotkey events then reach the same exhaustive
+//! action dispatcher. Macros do not execute capture, spawn workers, or own native
+//! resources: those operations remain ordinary Rust functions.
 //!
 //! Existing paths such as `capture::Format`, `settings::Fps`, and
 //! `selection::Region` re-export the shared types, preserving callers while
@@ -70,7 +96,7 @@
 //!     participant File as Image file writer
 //!     User->>Tray: Hotkey or tray command
 //!     Tray->>Tray: Retain invocation-time window identity
-//!     Tray->>Workflow: Supply capture and output handlers
+//!     Tray->>Workflow: Typed window request and effect handlers
 //!     Workflow->>Native: Capture validated window target
 //!     Native-->>Workflow: One RGBA image or capture error
 //!     opt Capture succeeded

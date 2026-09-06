@@ -10,12 +10,16 @@ fn capture_screenshot_with_capture_error_skips_later_pipeline_stages() {
     let ensure_called = Cell::new(false);
     let save_called = Cell::new(false);
     let result = capture_screenshot_with(
-        1,
-        None,
+        ScreenSelection {
+            available: 1,
+            index: None,
+        },
         || Err::<(), _>("hardware failure".to_string()),
-        Some(PathBuf::from("out.png")),
-        Format::Png,
-        &PathBuf::from("."),
+        ScreenshotDestination {
+            output: Some(PathBuf::from("out.png")),
+            format: Format::Png,
+            directory: Path::new("."),
+        },
         |_| {
             ensure_called.set(true);
             Ok(())
@@ -42,12 +46,16 @@ fn capture_screenshot_with_capture_error_skips_later_pipeline_stages() {
 fn capture_screenshot_with_dir_error_prevents_save_and_returns_error() {
     let save_called = Cell::new(false);
     let result = capture_screenshot_with(
-        2,
-        Some(0),
+        ScreenSelection {
+            available: 2,
+            index: Some(0),
+        },
         || Ok("image-data"),
-        Some(PathBuf::from("nested/shot.png")),
-        Format::Png,
-        &PathBuf::from("."),
+        ScreenshotDestination {
+            output: Some(PathBuf::from("nested/shot.png")),
+            format: Format::Png,
+            directory: Path::new("."),
+        },
         |_| Err("permission denied".to_string()),
         |_, _, _| {
             save_called.set(true);
@@ -170,12 +178,16 @@ fn capture_screenshot_with_all_formats_pass_correct_image_format() {
     ] {
         let observed = RefCell::new(None::<ImageFormat>);
         let _ = capture_screenshot_with(
-            1,
-            None,
+            ScreenSelection {
+                available: 1,
+                index: None,
+            },
             || Ok(()),
-            Some(PathBuf::from("test.out")),
-            fmt,
-            &PathBuf::from("."),
+            ScreenshotDestination {
+                output: Some(PathBuf::from("test.out")),
+                format: fmt,
+                directory: Path::new("."),
+            },
             |_| Ok(()),
             |_, _, image_format| {
                 observed.replace(Some(image_format));

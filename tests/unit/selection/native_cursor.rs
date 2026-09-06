@@ -133,8 +133,8 @@ fn native_drag_confines_to_client_without_warping_and_releases_on_exit() {
     while unsafe { GetForegroundWindow() } != hwnd && Instant::now() < deadline {
         event_loop.pump_app_events(Some(Duration::from_millis(10)), &mut fixture);
     }
-    // SAFETY: same handle-only query, after the bounded activation wait.
     assert_eq!(
+        // SAFETY: same handle-only query, after the bounded activation wait.
         unsafe { GetForegroundWindow() },
         hwnd,
         "test window must own focus"

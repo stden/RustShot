@@ -2,8 +2,10 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"))
-        .join("rustshot.exe.manifest");
+    let Some(manifest_dir) = env::var_os("CARGO_MANIFEST_DIR") else {
+        return;
+    };
+    let manifest = PathBuf::from(manifest_dir).join("rustshot.exe.manifest");
     println!("cargo:rerun-if-changed={}", manifest.display());
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")

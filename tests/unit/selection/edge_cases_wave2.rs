@@ -16,9 +16,9 @@ fn build_physical_screen_layouts_disconnected_screens_resolved_via_gap_fallback(
     let inputs = vec![
         ScreenLayoutInput {
             is_primary: true,
-            ..make_screen(0, 0, 1920, 1080, 1920, 1080)
+            ..make_screen((0, 0), (1920, 1080), (1920, 1080))
         },
-        make_screen(5000, 5000, 1920, 1080, 1920, 1080),
+        make_screen((5000, 5000), (1920, 1080), (1920, 1080)),
     ];
     let layouts = build_physical_screen_layouts(&inputs).expect("gap fallback should resolve");
     assert_eq!(layouts[0].physical_x, 0);
@@ -35,8 +35,8 @@ fn build_physical_screen_layouts_disconnected_screens_resolved_via_gap_fallback(
 fn normalize_physical_screen_layouts_extreme_coordinates() {
     // Screens at extreme coordinates that cause i64 subtraction to exceed u32 range
     let layouts = vec![
-        make_layout(0, 0, 1920, 1080, i32::MIN, 0, 1920, 1080),
-        make_layout(1920, 0, 1920, 1080, i32::MAX, 0, 1920, 1080),
+        make_layout((0, 0), (1920, 1080), (i32::MIN, 0), (1920, 1080)),
+        make_layout((1920, 0), (1920, 1080), (i32::MAX, 0), (1920, 1080)),
     ];
     let result = normalize_physical_screen_layouts(&layouts);
     // physical_end of second screen = i32::MAX + 1920 as i64 = 2147485567
@@ -55,7 +55,7 @@ fn normalize_physical_screen_layouts_extreme_coordinates() {
 
 #[test]
 fn resolve_recording_selection_region_at_bottom_right_corner() {
-    let layouts = vec![make_layout(0, 0, 1920, 1080, 0, 0, 1920, 1080)];
+    let layouts = vec![make_layout((0, 0), (1920, 1080), (0, 0), (1920, 1080))];
     // Region touching the bottom-right corner (1-pixel region at last pixel)
     let region = Region {
         physical_x: 1919,
@@ -73,7 +73,7 @@ fn resolve_recording_selection_region_at_bottom_right_corner() {
 
 #[test]
 fn resolve_recording_selection_region_one_pixel_past_boundary() {
-    let layouts = vec![make_layout(0, 0, 1920, 1080, 0, 0, 1920, 1080)];
+    let layouts = vec![make_layout((0, 0), (1920, 1080), (0, 0), (1920, 1080))];
     // Region that extends 1 pixel past the right edge
     let region = Region {
         physical_x: 1920,
@@ -112,8 +112,8 @@ fn normalize_physical_screen_layouts_width_overflow_returns_error() {
     // min_x = 0, so width = u32::MAX+1 > u32::MAX → Err.
     // Normalization: (0 - 0 = 0) and (1 - 0 = 1), both safe i32 ops.
     let layouts = vec![
-        make_layout(0, 0, 1, 1080, 0, 0, 1, 1080),
-        make_layout(1, 0, 1920, 1080, 1, 0, u32::MAX, 1080),
+        make_layout((0, 0), (1, 1080), (0, 0), (1, 1080)),
+        make_layout((1, 0), (1920, 1080), (1, 0), (u32::MAX, 1080)),
     ];
     let result = normalize_physical_screen_layouts(&layouts);
     assert!(result.is_err());

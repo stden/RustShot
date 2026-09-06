@@ -5,6 +5,7 @@
 //! recording refuses a frame, so a reworded or misordered check is a visible
 //! regression rather than an internal detail.
 
+use crate::domain::PhysicalSize;
 use crate::record::*;
 
 fn full_region(width: u32, height: u32) -> Region {
@@ -22,8 +23,12 @@ fn native_frame_copy_rejects_an_output_smaller_than_the_region() {
     let source = vec![0u8; 2 * 2 * 4];
     let mut output = vec![0u8; 2 * 4];
 
-    let error = copy_bgra_region_bottom_up(&source, 8, 2, 2, full_region(2, 2), 1, 2, &mut output)
-        .expect_err("an output frame narrower than the region must be rejected");
+    let error = copy_bgra_region_bottom_up(
+        FrameView::new(&source, PhysicalSize::new(2, 2), 8),
+        full_region(2, 2),
+        BgraFrameMut::new(&mut output, PhysicalSize::new(1, 2)),
+    )
+    .expect_err("an output frame narrower than the region must be rejected");
 
     assert_eq!(error, "Encoded frame is smaller than the recording region");
 }
@@ -33,8 +38,12 @@ fn native_frame_copy_reports_a_truncated_source_buffer() {
     // Two 8-byte rows at an 8-byte pitch need 16 bytes; only 12 are supplied.
     let mut output = vec![0u8; 2 * 2 * 4];
 
-    let error = copy_bgra_region_bottom_up(&[0; 12], 8, 2, 2, full_region(2, 2), 2, 2, &mut output)
-        .expect_err("a source shorter than the captured frame must be rejected");
+    let error = copy_bgra_region_bottom_up(
+        FrameView::new(&[0; 12], PhysicalSize::new(2, 2), 8),
+        full_region(2, 2),
+        BgraFrameMut::new(&mut output, PhysicalSize::new(2, 2)),
+    )
+    .expect_err("a source shorter than the captured frame must be rejected");
 
     assert_eq!(error, "Captured frame has 12 bytes but 16 are required");
 }
@@ -45,30 +54,20 @@ fn scrgb_copy_rejects_undersized_output_and_bad_pitch() {
     let mut output = vec![0u8; 2 * 2 * 4];
 
     let error = copy_scrgb_region_bottom_up(
-        &source,
-        16,
-        2,
-        2,
+        FrameView::new(&source, PhysicalSize::new(2, 2), 16),
         full_region(2, 2),
-        1,
-        2,
         1_000.0,
-        &mut output,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(1, 2)),
     )
     .expect_err("an output frame narrower than the region must be rejected");
     assert_eq!(error, "Encoded frame is smaller than the recording region");
 
     // FP16 rows are 8 bytes per pixel, so a 2-pixel row cannot fit in 8 bytes.
     let error = copy_scrgb_region_bottom_up(
-        &source,
-        8,
-        2,
-        2,
+        FrameView::new(&source, PhysicalSize::new(2, 2), 8),
         full_region(2, 2),
-        2,
-        2,
         1_000.0,
-        &mut output,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(2, 2)),
     )
     .expect_err("a pitch below one FP16 row must be rejected");
     assert_eq!(
@@ -83,15 +82,10 @@ fn scrgb_copy_reports_truncated_source_and_output_buffers() {
 
     // Two FP16 rows at a 16-byte pitch need 32 bytes; only 20 are supplied.
     let error = copy_scrgb_region_bottom_up(
-        &[0; 20],
-        16,
-        2,
-        2,
+        FrameView::new(&[0; 20], PhysicalSize::new(2, 2), 16),
         full_region(2, 2),
-        2,
-        2,
         1_000.0,
-        &mut output,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(2, 2)),
     )
     .expect_err("a source shorter than the captured FP16 frame must be rejected");
     assert_eq!(
@@ -103,15 +97,10 @@ fn scrgb_copy_reports_truncated_source_and_output_buffers() {
     let source = vec![0u8; 2 * 2 * 8];
     let mut short_output = vec![0u8; 12];
     let error = copy_scrgb_region_bottom_up(
-        &source,
-        16,
-        2,
-        2,
+        FrameView::new(&source, PhysicalSize::new(2, 2), 16),
         full_region(2, 2),
-        2,
-        2,
         1_000.0,
-        &mut short_output,
+        BgraFrameMut::new(&mut short_output, PhysicalSize::new(2, 2)),
     )
     .expect_err("an output buffer shorter than the encoded frame must be rejected");
     assert_eq!(error, "Encoded frame has 12 bytes but 16 are required");
@@ -130,15 +119,10 @@ fn scrgb_copy_zero_pads_when_the_output_is_larger_than_the_region() {
     let mut output = vec![0xcc; 2 * 2 * 4];
 
     copy_scrgb_region_bottom_up(
-        &source,
-        16,
-        2,
-        2,
+        FrameView::new(&source, PhysicalSize::new(2, 2), 16),
         full_region(1, 1),
-        2,
-        2,
         1_000.0,
-        &mut output,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(2, 2)),
     )
     .expect("a 1x1 region padded into a 2x2 frame is valid");
 

@@ -72,29 +72,33 @@ fn enabled_non_installed_launch_installs_registers_and_relaunches_stable_copy() 
 
     let action = sync_autorun_at_with_handlers(
         true,
-        current_exe,
-        local_app_data,
-        |target: &Path| -> io::Result<bool> {
-            assert_eq!(target, stable_exe);
-            Ok(false)
-        },
-        |dir: &Path| -> io::Result<()> {
-            assert_eq!(dir, stable_exe.parent().unwrap());
-            events.borrow_mut().push("create directory");
-            Ok(())
-        },
-        |source: &Path, target: &Path| -> io::Result<u64> {
-            assert_eq!(source, current_exe);
-            assert_eq!(target, stable_exe);
-            events.borrow_mut().push("copy executable");
-            Ok(42)
-        },
-        |registered_exe: &Path| -> Result<(), String> {
-            assert_eq!(registered_exe, stable_exe);
-            events.borrow_mut().push("register autorun");
-            Ok(())
-        },
-        || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ExecutableInstaller::new(
+            current_exe,
+            local_app_data,
+            |target: &Path| -> io::Result<bool> {
+                assert_eq!(target, stable_exe);
+                Ok(false)
+            },
+            |dir: &Path| -> io::Result<()> {
+                assert_eq!(dir, stable_exe.parent().unwrap());
+                events.borrow_mut().push("create directory");
+                Ok(())
+            },
+            |source: &Path, target: &Path| -> io::Result<u64> {
+                assert_eq!(source, current_exe);
+                assert_eq!(target, stable_exe);
+                events.borrow_mut().push("copy executable");
+                Ok(42)
+            },
+        ),
+        AutorunRegistration::new(
+            |registered_exe: &Path| -> Result<(), String> {
+                assert_eq!(registered_exe, stable_exe);
+                events.borrow_mut().push("register autorun");
+                Ok(())
+            },
+            || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ),
         |launched_exe: &Path| -> io::Result<()> {
             assert_eq!(launched_exe, stable_exe);
             events.borrow_mut().push("launch installed executable");
@@ -125,22 +129,28 @@ fn external_launch_hands_off_without_replacing_an_existing_install() {
 
     let action = sync_autorun_at_with_handlers(
         true,
-        current_exe,
-        local_app_data,
-        |target: &Path| -> io::Result<bool> {
-            assert_eq!(target, stable_exe);
-            Ok(true)
-        },
-        |_: &Path| -> io::Result<()> { panic!("an existing install needs no directory creation") },
-        |_: &Path, _: &Path| -> io::Result<u64> {
-            panic!("an existing installed executable must not be overwritten")
-        },
-        |registered_exe: &Path| -> Result<(), String> {
-            assert_eq!(registered_exe, stable_exe);
-            events.borrow_mut().push("register autorun");
-            Ok(())
-        },
-        || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ExecutableInstaller::new(
+            current_exe,
+            local_app_data,
+            |target: &Path| -> io::Result<bool> {
+                assert_eq!(target, stable_exe);
+                Ok(true)
+            },
+            |_: &Path| -> io::Result<()> {
+                panic!("an existing install needs no directory creation")
+            },
+            |_: &Path, _: &Path| -> io::Result<u64> {
+                panic!("an existing installed executable must not be overwritten")
+            },
+        ),
+        AutorunRegistration::new(
+            |registered_exe: &Path| -> Result<(), String> {
+                assert_eq!(registered_exe, stable_exe);
+                events.borrow_mut().push("register autorun");
+                Ok(())
+            },
+            || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ),
         |launched_exe: &Path| -> io::Result<()> {
             assert_eq!(launched_exe, stable_exe);
             events.borrow_mut().push("launch installed executable");
@@ -166,29 +176,33 @@ fn settings_reenable_from_portable_copy_registers_stable_path_without_relaunch()
 
     sync_current_exe_autorun_at_with_handlers(
         true,
-        current_exe,
-        local_app_data,
-        |target: &Path| -> io::Result<bool> {
-            assert_eq!(target, stable_exe);
-            Ok(false)
-        },
-        |directory: &Path| -> io::Result<()> {
-            assert_eq!(directory, stable_exe.parent().unwrap());
-            events.borrow_mut().push("create directory");
-            Ok(())
-        },
-        |source: &Path, target: &Path| -> io::Result<u64> {
-            assert_eq!(source, current_exe);
-            assert_eq!(target, stable_exe);
-            events.borrow_mut().push("copy executable");
-            Ok(42)
-        },
-        |registered_exe: &Path| -> Result<(), String> {
-            assert_eq!(registered_exe, stable_exe);
-            events.borrow_mut().push("register autorun");
-            Ok(())
-        },
-        || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ExecutableInstaller::new(
+            current_exe,
+            local_app_data,
+            |target: &Path| -> io::Result<bool> {
+                assert_eq!(target, stable_exe);
+                Ok(false)
+            },
+            |directory: &Path| -> io::Result<()> {
+                assert_eq!(directory, stable_exe.parent().unwrap());
+                events.borrow_mut().push("create directory");
+                Ok(())
+            },
+            |source: &Path, target: &Path| -> io::Result<u64> {
+                assert_eq!(source, current_exe);
+                assert_eq!(target, stable_exe);
+                events.borrow_mut().push("copy executable");
+                Ok(42)
+            },
+        ),
+        AutorunRegistration::new(
+            |registered_exe: &Path| -> Result<(), String> {
+                assert_eq!(registered_exe, stable_exe);
+                events.borrow_mut().push("register autorun");
+                Ok(())
+            },
+            || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ),
     )
     .expect("re-enabling startup should install the stable copy");
 
@@ -211,21 +225,25 @@ fn enabled_already_installed_launch_only_registers_and_continues() {
 
     let action = sync_autorun_at_with_handlers(
         true,
-        &installed_launch,
-        local_app_data,
-        |_: &Path| -> io::Result<bool> {
-            panic!("an installed launch must not probe itself as an external target")
-        },
-        |_: &Path| -> io::Result<()> { panic!("installed launch must not create a directory") },
-        |_: &Path, _: &Path| -> io::Result<u64> {
-            panic!("installed launch must not copy the executable")
-        },
-        |registered_exe: &Path| -> Result<(), String> {
-            assert_eq!(registered_exe, stable_exe);
-            register_count.set(register_count.get() + 1);
-            Ok(())
-        },
-        || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ExecutableInstaller::new(
+            &installed_launch,
+            local_app_data,
+            |_: &Path| -> io::Result<bool> {
+                panic!("an installed launch must not probe itself as an external target")
+            },
+            |_: &Path| -> io::Result<()> { panic!("installed launch must not create a directory") },
+            |_: &Path, _: &Path| -> io::Result<u64> {
+                panic!("installed launch must not copy the executable")
+            },
+        ),
+        AutorunRegistration::new(
+            |registered_exe: &Path| -> Result<(), String> {
+                assert_eq!(registered_exe, stable_exe);
+                register_count.set(register_count.get() + 1);
+                Ok(())
+            },
+            || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ),
         |_: &Path| -> io::Result<()> { panic!("installed launch must not relaunch itself") },
     )
     .expect("installed startup should succeed");
@@ -243,18 +261,26 @@ fn disabled_startup_only_removes_autorun_and_continues() {
 
     let action = sync_autorun_at_with_handlers(
         false,
-        current_exe,
-        local_app_data,
-        |_: &Path| -> io::Result<bool> { panic!("disabled startup must not inspect an install") },
-        |_: &Path| -> io::Result<()> { panic!("disabled startup must not create a directory") },
-        |_: &Path, _: &Path| -> io::Result<u64> {
-            panic!("disabled startup must not copy the executable")
-        },
-        |_: &Path| -> Result<(), String> { panic!("disabled startup must not register autorun") },
-        || -> Result<(), String> {
-            remove_count.set(remove_count.get() + 1);
-            Ok(())
-        },
+        ExecutableInstaller::new(
+            current_exe,
+            local_app_data,
+            |_: &Path| -> io::Result<bool> {
+                panic!("disabled startup must not inspect an install")
+            },
+            |_: &Path| -> io::Result<()> { panic!("disabled startup must not create a directory") },
+            |_: &Path, _: &Path| -> io::Result<u64> {
+                panic!("disabled startup must not copy the executable")
+            },
+        ),
+        AutorunRegistration::new(
+            |_: &Path| -> Result<(), String> {
+                panic!("disabled startup must not register autorun")
+            },
+            || -> Result<(), String> {
+                remove_count.set(remove_count.get() + 1);
+                Ok(())
+            },
+        ),
         |_: &Path| -> io::Result<()> { panic!("disabled startup must not launch an executable") },
     )
     .expect("disabling startup should succeed");
@@ -274,21 +300,25 @@ fn copy_failure_does_not_register_or_launch_and_is_human_readable() {
 
     let error = sync_autorun_at_with_handlers(
         true,
-        current_exe,
-        local_app_data,
-        |_: &Path| -> io::Result<bool> { Ok(false) },
-        |_: &Path| -> io::Result<()> { Ok(()) },
-        |_: &Path, _: &Path| -> io::Result<u64> {
-            Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "access denied",
-            ))
-        },
-        |_: &Path| -> Result<(), String> {
-            registered.set(true);
-            Ok(())
-        },
-        || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ExecutableInstaller::new(
+            current_exe,
+            local_app_data,
+            |_: &Path| -> io::Result<bool> { Ok(false) },
+            |_: &Path| -> io::Result<()> { Ok(()) },
+            |_: &Path, _: &Path| -> io::Result<u64> {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "access denied",
+                ))
+            },
+        ),
+        AutorunRegistration::new(
+            |_: &Path| -> Result<(), String> {
+                registered.set(true);
+                Ok(())
+            },
+            || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ),
         |_: &Path| -> io::Result<()> {
             launched.set(true);
             Ok(())
@@ -320,20 +350,24 @@ fn launch_failure_removes_the_new_autorun_entry_before_reporting_the_error() {
 
     let error = sync_autorun_at_with_handlers(
         true,
-        current_exe,
-        local_app_data,
-        |_: &Path| -> io::Result<bool> { Ok(false) },
-        |_: &Path| -> io::Result<()> { Ok(()) },
-        |_: &Path, _: &Path| -> io::Result<u64> { Ok(42) },
-        |registered_exe: &Path| -> Result<(), String> {
-            assert_eq!(registered_exe, stable_exe);
-            events.borrow_mut().push("register autorun");
-            Ok(())
-        },
-        || -> Result<(), String> {
-            events.borrow_mut().push("remove autorun");
-            Ok(())
-        },
+        ExecutableInstaller::new(
+            current_exe,
+            local_app_data,
+            |_: &Path| -> io::Result<bool> { Ok(false) },
+            |_: &Path| -> io::Result<()> { Ok(()) },
+            |_: &Path, _: &Path| -> io::Result<u64> { Ok(42) },
+        ),
+        AutorunRegistration::new(
+            |registered_exe: &Path| -> Result<(), String> {
+                assert_eq!(registered_exe, stable_exe);
+                events.borrow_mut().push("register autorun");
+                Ok(())
+            },
+            || -> Result<(), String> {
+                events.borrow_mut().push("remove autorun");
+                Ok(())
+            },
+        ),
         |launched_exe: &Path| -> io::Result<()> {
             assert_eq!(launched_exe, stable_exe);
             events.borrow_mut().push("launch installed executable");
@@ -374,20 +408,24 @@ fn a_directory_at_the_stable_exe_path_is_rejected_before_register_or_launch() {
 
     let error = sync_autorun_at_with_handlers(
         true,
-        &current_exe,
-        root.path(),
-        inspect_installed_executable,
-        |_: &Path| -> io::Result<()> {
-            panic!("an invalid occupied target must not create another directory")
-        },
-        |_: &Path, _: &Path| -> io::Result<u64> {
-            panic!("an invalid occupied target must not be overwritten")
-        },
-        |_: &Path| -> Result<(), String> {
-            registered.set(true);
-            Ok(())
-        },
-        || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ExecutableInstaller::new(
+            &current_exe,
+            root.path(),
+            inspect_installed_executable,
+            |_: &Path| -> io::Result<()> {
+                panic!("an invalid occupied target must not create another directory")
+            },
+            |_: &Path, _: &Path| -> io::Result<u64> {
+                panic!("an invalid occupied target must not be overwritten")
+            },
+        ),
+        AutorunRegistration::new(
+            |_: &Path| -> Result<(), String> {
+                registered.set(true);
+                Ok(())
+            },
+            || -> Result<(), String> { panic!("enabled startup must not remove autorun") },
+        ),
         |_: &Path| -> io::Result<()> {
             launched.set(true);
             Ok(())

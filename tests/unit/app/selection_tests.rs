@@ -9,7 +9,13 @@ fn run_selection_with_clipboard_forwards_the_selected_image_once() {
     image.put_pixel(0, 0, image::Rgba([1, 2, 3, 255]));
 
     run_selection_with_clipboard(
-        || Ok(image.clone()),
+        |source| {
+            assert!(matches!(
+                source,
+                crate::application::capture::CaptureSource::Selection
+            ));
+            Ok(image.clone())
+        },
         |received| {
             call_count.set(call_count.get() + 1);
             assert_eq!(received.dimensions(), (2, 3));
@@ -26,7 +32,7 @@ fn run_selection_with_clipboard_forwards_the_selected_image_once() {
 fn run_selection_with_clipboard_preserves_clipboard_errors() {
     let image = image::RgbaImage::new(2, 3);
     let result = run_selection_with_clipboard(
-        || Ok(image.clone()),
+        |_| Ok(image.clone()),
         |_| Err("clipboard failed".to_string()),
     );
     assert_eq!(result, Err("clipboard failed".to_string()));
@@ -36,7 +42,7 @@ fn run_selection_with_clipboard_preserves_clipboard_errors() {
 fn run_selection_with_clipboard_cancelled_does_not_call_clipboard() {
     let clipboard_called = Cell::new(false);
     let result = run_selection_with_clipboard(
-        || Err("Selection cancelled".to_string()),
+        |_| Err("Selection cancelled".to_string()),
         |_| {
             clipboard_called.set(true);
             Ok(())
@@ -50,7 +56,7 @@ fn run_selection_with_clipboard_cancelled_does_not_call_clipboard() {
 fn run_selection_with_clipboard_wraps_selection_error_and_skips_clipboard() {
     let clipboard_called = Cell::new(false);
     let result = run_selection_with_clipboard(
-        || Err("some error".to_string()),
+        |_| Err("some error".to_string()),
         |_| {
             clipboard_called.set(true);
             Ok(())

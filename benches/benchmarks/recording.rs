@@ -1,7 +1,7 @@
 //! Benchmarks — record: timing, pixel conversion, paths, recording stages.
 
 use crate::{benchmark_screens, benchmark_skip, patterned_bytes};
-use criterion::{Criterion, Throughput};
+use criterion::{measurement::WallTime, BenchmarkGroup, Criterion, Throughput};
 use image::RgbaImage;
 use rustshot::{capture, record};
 use std::hint::black_box;
@@ -313,6 +313,36 @@ pub(crate) fn bench_get_recording_path_in_dir(c: &mut Criterion) {
 // recording_stages — per-stage profiling of the video recording pipeline
 // ---------------------------------------------------------------------------
 
+fn bench_recording_frame_pipeline(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    screen: &screenshots::Screen,
+    region_size: (u32, u32),
+    even_size: (u32, u32),
+    probe_raw: Vec<u8>,
+) {
+    let (region_w, region_h) = region_size;
+    let (even_w, even_h) = even_size;
+    group.bench_function("recording_frame_pipeline", |b| {
+        b.iter(|| {
+            let Ok(captured) = screen.capture() else {
+                black_box(&probe_raw);
+                return;
+            };
+            let Some(img) =
+                RgbaImage::from_raw(captured.width(), captured.height(), captured.into_raw())
+            else {
+                black_box(&probe_raw);
+                return;
+            };
+            let cropped = image::imageops::crop_imm(&img, 0, 0, region_w, region_h).to_image();
+            let mut padded = RgbaImage::new(even_w, even_h);
+            image::imageops::replace(&mut padded, &cropped, 0, 0);
+            let bgra = record::rgba_to_bgra_bottom_up(padded.as_raw(), even_w, even_h);
+            let _ = black_box(bgra);
+        });
+    });
+}
+
 pub(crate) fn bench_recording_stages(c: &mut Criterion) {
     let mut group = c.benchmark_group("recording_stages");
 
@@ -400,30 +430,13 @@ pub(crate) fn bench_recording_stages(c: &mut Criterion) {
                 let even_h = record::round_to_even(region_h);
                 let probe_raw = captured.into_raw();
 
-                group.bench_function("recording_frame_pipeline", |b| {
-                    b.iter(|| {
-                        if let Ok(captured) = screen.capture() {
-                            if let Some(img) = RgbaImage::from_raw(
-                                captured.width(),
-                                captured.height(),
-                                captured.into_raw(),
-                            ) {
-                                let cropped =
-                                    image::imageops::crop_imm(&img, 0, 0, region_w, region_h)
-                                        .to_image();
-                                let mut padded = RgbaImage::new(even_w, even_h);
-                                image::imageops::replace(&mut padded, &cropped, 0, 0);
-                                let bgra =
-                                    record::rgba_to_bgra_bottom_up(padded.as_raw(), even_w, even_h);
-                                let _ = black_box(bgra);
-                            } else {
-                                black_box(&probe_raw);
-                            }
-                        } else {
-                            black_box(&probe_raw);
-                        }
-                    });
-                });
+                bench_recording_frame_pipeline(
+                    &mut group,
+                    &screen,
+                    (region_w, region_h),
+                    (even_w, even_h),
+                    probe_raw,
+                );
             }
             Err(err) => benchmark_skip(
                 "recording_stages/recording_frame_pipeline",

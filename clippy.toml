@@ -12,3 +12,14 @@
 # failure in a transitive dependency, not to advertise a support floor to
 # consumers, and the two would then have to be kept in step for no gain.
 msrv = "1.93"
+
+# Bound branch-heavy functions, signatures and nested types. Cognitive complexity
+# is a heuristic, not a readability score; naming operations remains a review task.
+cognitive-complexity-threshold = 25
+too-many-arguments-threshold = 5
+type-complexity-threshold = 250
+max-fn-params-bools = 1
+
+# Zero (Clippy's default) disables this check. Four source-block levels keep
+# additional responsibilities visible instead of burying them in nested branches.
+excessive-nesting-threshold = 4

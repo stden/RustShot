@@ -108,15 +108,18 @@ impl Drop for MfGuard {
 #[cfg(windows)]
 pub(super) unsafe fn wmf_record(
     output_path: &PathBuf,
-    screen_x: i32,
-    screen_y: i32,
-    region: Region,
-    dimensions: RecordingDimensions,
-    fps: Fps,
+    parameters: RecordingParameters,
     stop_rx: mpsc::Receiver<()>,
 ) -> Result<PathBuf, String> {
     use windows::{core::PCWSTR, Win32::Media::MediaFoundation::*};
 
+    let RecordingParameters {
+        monitor_origin,
+        region,
+        dimensions,
+        fps,
+    } = parameters;
+    let mut startup_timer = Some(crate::timing::ActionTimer::new("recording.encoder_start"));
     // SAFETY: both guards' contracts are discharged by this function's own
     // `# Safety` section plus its structure. COM is untouched on this thread when
     // we are called, both guards stay in locals that never leave the thread, and
@@ -131,7 +134,8 @@ pub(super) unsafe fn wmf_record(
     let result = (|| -> Result<PathBuf, String> {
         let width = dimensions.width().get();
         let height = dimensions.height().get();
-        let mut frame_source = RecordingFrameSource::new(screen_x, screen_y, region)?;
+        let mut frame_source =
+            RecordingFrameSource::new(monitor_origin.x(), monitor_origin.y(), region)?;
 
         let path_wide = crate::platform::wide(&output_path.to_string_lossy());
         let pcwstr = PCWSTR(path_wide.as_ptr());
@@ -246,6 +250,9 @@ pub(super) unsafe fn wmf_record(
         // SAFETY: `sink_writer` is live and now in the state `BeginWriting`
         // expects - one stream added, with its input type set.
         unsafe { sink_writer.BeginWriting() }.map_err(|e| format!("BeginWriting: {e}"))?;
+        if let Some(timer) = &startup_timer {
+            timer.mark("encoder_configured");
+        }
 
         let frame_interval = Duration::from_secs(1) / fps.get();
 
@@ -299,6 +306,9 @@ pub(super) unsafe fn wmf_record(
                 break;
             }
 
+            if let Some(timer) = startup_timer.take() {
+                timer.finish("first_frame_accepted");
+            }
             let timeline_start = *timeline_start.get_or_insert(t0);
             // Anchored to the wall clock, not to the number of frames written:
             // when a frame costs more than its interval the timeline skips ahead
@@ -320,8 +330,10 @@ pub(super) unsafe fn wmf_record(
         // exactly once, after `BeginWriting`, which is what it requires; the closure
         // returns immediately afterwards, so no further sample can be written to a
         // finalized writer.
-        let finalize_result =
-            unsafe { sink_writer.Finalize() }.map_err(|e| format!("Finalize: {e}"));
+        let finalize_result = crate::timing::time_result("recording.encoder_finalize", || {
+            // SAFETY: all frame writes have ended; the live sink is finalized once before the COM guards drop.
+            unsafe { sink_writer.Finalize() }.map_err(|e| format!("Finalize: {e}"))
+        });
         match (terminal_error, finalize_result) {
             (Some(error), Ok(())) => return Err(error),
             (Some(error), Err(finalize_error)) => return Err(format!("{error}; {finalize_error}")),

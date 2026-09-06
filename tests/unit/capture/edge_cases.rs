@@ -77,15 +77,19 @@ fn capture_screenshot_with_calls_closures_in_order() {
     let order = RefCell::new(Vec::<&str>::new());
 
     let _ = capture_screenshot_with(
-        1,
-        None,
+        ScreenSelection {
+            available: 1,
+            index: None,
+        },
         || {
             order.borrow_mut().push("capture");
             Ok(())
         },
-        Some(PathBuf::from("test.png")),
-        Format::Png,
-        &PathBuf::from("."),
+        ScreenshotDestination {
+            output: Some(PathBuf::from("test.png")),
+            format: Format::Png,
+            directory: Path::new("."),
+        },
         |_| {
             order.borrow_mut().push("ensure_dir");
             Ok(())

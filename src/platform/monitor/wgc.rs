@@ -6,9 +6,10 @@ use self::platform::{
     capture_format_for_existing_factory, capture_format_for_monitor, create_d3d11_device,
 };
 use super::{CaptureRuntimeError, GraphicsCaptureInitError};
-use crate::domain::Region;
+use crate::domain::{PhysicalSize, Region};
 use crate::pixels::frame::{
-    copy_bgra_region_bottom_up, copy_scrgb_region_bottom_up, frame_pool_update, FramePoolUpdate,
+    copy_bgra_region_bottom_up, copy_scrgb_region_bottom_up, frame_pool_update, BgraFrameMut,
+    FramePoolUpdate, FrameView,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -624,29 +625,20 @@ impl GraphicsCaptureMonitor {
                 physical_width: self.region.physical_width,
                 physical_height: self.region.physical_height,
             };
+            let source = FrameView::new(bytes, self.region.size(), row_pitch);
+            let destination =
+                BgraFrameMut::new(output, PhysicalSize::new(output_width, output_height));
             match self.format {
-                CaptureFormat::Bgra8 => copy_bgra_region_bottom_up(
-                    bytes,
-                    row_pitch,
-                    self.region.physical_width,
-                    self.region.physical_height,
-                    local_region,
-                    output_width,
-                    output_height,
-                    output,
-                ),
+                CaptureFormat::Bgra8 => {
+                    copy_bgra_region_bottom_up(source, local_region, destination)
+                }
                 CaptureFormat::ScRgb16 {
                     peak_luminance_nits,
                 } => copy_scrgb_region_bottom_up(
-                    bytes,
-                    row_pitch,
-                    self.region.physical_width,
-                    self.region.physical_height,
+                    source,
                     local_region,
-                    output_width,
-                    output_height,
                     peak_luminance_nits,
-                    output,
+                    destination,
                 ),
             }
             .map_err(CaptureRuntimeError::Fatal)

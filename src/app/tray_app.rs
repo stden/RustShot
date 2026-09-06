@@ -11,11 +11,19 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::window::WindowId;
 
 use super::cli_mode::settings_capture_format;
-use super::runtime::{copy_image_to_clipboard, stop_flag_path};
-use crate::application::capture::capture_active_window_outputs_with_handlers;
+use super::runtime::{
+    capture_requested_source, copy_image_to_clipboard, log_capture_outcome, save_capture_file,
+    stop_flag_path,
+};
+use crate::application::capture::{execute_capture_with, CaptureFile, CaptureRequest};
 #[cfg(windows)]
 use crate::settings_dialog;
+use crate::timing::{time_result, ActionTimer};
 use crate::{capture, cli, settings, tray};
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/hotkeys.rs"]
+mod hotkey_tests;
 
 /// External tray-mode events forwarded into winit so `ControlFlow::Wait`
 /// wakes as soon as a menu item or global hotkey is activated.
@@ -134,11 +142,11 @@ pub(crate) fn install_event_handlers(proxy: EventLoopProxy<RustShotEvent>) {
 /// Owns the tray icon, global hotkey registrations, and handles to any
 /// spawned child processes (selection overlay, recording session).
 pub(crate) struct RustShotApp {
+    pub(crate) startup_timer: Option<ActionTimer>,
+    pub(crate) exit_timer: Option<ActionTimer>,
     _tray: Option<tray_icon::TrayIcon>,
     _hotkey_manager: GlobalHotKeyManager,
-    hotkey_id: u32,
-    window_hotkey_id: u32,
-    record_hotkey_id: u32,
+    hotkeys: RegisteredHotkeys,
     selection_process: Option<std::process::Child>,
     recording: Option<(std::process::Child, std::path::PathBuf)>,
     /// The in-flight active-window capture, if any. Held only so a second
@@ -160,56 +168,93 @@ where
     Ok(hotkey_id)
 }
 
-pub(crate) fn capture_window_target_with<Capture>(
-    target: Result<capture::WindowTarget, String>,
-    capture_target: Capture,
-) -> Result<image::RgbaImage, String>
-where
-    Capture: FnOnce(capture::WindowTarget) -> Result<image::RgbaImage, String>,
-{
-    target.and_then(capture_target)
+/// Native IDs are assigned at registration; the catalogue remains OS-independent.
+struct RegisteredHotkeys {
+    actions: Vec<(u32, tray::MenuAction)>,
+}
+
+impl RegisteredHotkeys {
+    fn register_with<F, E>(mut register: F) -> Result<Self, String>
+    where
+        F: FnMut(HotKey) -> Result<(), E>,
+        E: std::fmt::Display,
+    {
+        let mut actions = Vec::new();
+        for action in tray::MenuAction::ALL {
+            let Some(shortcut) = action.hotkey() else {
+                continue;
+            };
+            let id = register_hotkey_with(&mut register, native_hotkey(shortcut), shortcut.label)?;
+            actions.push((id, action));
+        }
+        Ok(Self { actions })
+    }
+
+    fn action_for(&self, event: GlobalHotKeyEvent) -> Option<tray::MenuAction> {
+        if event.state != HotKeyState::Pressed {
+            return None;
+        }
+        self.actions
+            .iter()
+            .find_map(|&(id, action)| (event.id == id).then_some(action))
+    }
+}
+
+fn native_hotkey(shortcut: tray::HotkeySpec) -> HotKey {
+    use global_hotkey::hotkey::{Code, Modifiers};
+    let key = match shortcut.key {
+        tray::HotkeyKey::PrintScreen => Code::PrintScreen,
+        tray::HotkeyKey::R => Code::KeyR,
+    };
+    let modifiers = match shortcut.modifiers {
+        tray::HotkeyModifiers::None => None,
+        tray::HotkeyModifiers::Alt => Some(Modifiers::ALT),
+        tray::HotkeyModifiers::ControlShift => Some(Modifiers::CONTROL | Modifiers::SHIFT),
+    };
+    HotKey::new(modifiers, key)
+}
+
+fn run_window_capture(request: CaptureRequest, timer: ActionTimer) {
+    timer.mark("worker_started");
+    match execute_capture_with(
+        request,
+        |source| {
+            time_result("window_capture.capture", || {
+                capture_requested_source(source)
+            })
+        },
+        |image| {
+            time_result("window_capture.clipboard", || {
+                copy_image_to_clipboard(image)
+            })
+        },
+        |image, file| time_result("window_capture.save", || save_capture_file(image, file)),
+    ) {
+        Ok(outcome) => {
+            log_capture_outcome(outcome);
+            timer.finish("success");
+        }
+        Err(e) => {
+            error!("Window capture error: {}", e);
+            timer.finish("error");
+        }
+    }
 }
 
 impl RustShotApp {
     pub(crate) fn new() -> Result<Self, String> {
-        use global_hotkey::hotkey::Modifiers;
-
-        // Register PrintScreen hotkey
         let manager = GlobalHotKeyManager::new()
             .map_err(|e| format!("Failed to create hotkey manager: {e}"))?;
-        let hotkey = HotKey::new(None, global_hotkey::hotkey::Code::PrintScreen);
-        let hotkey_id =
-            register_hotkey_with(|hotkey| manager.register(hotkey), hotkey, "PrintScreen")?;
-
-        // Register Alt+PrintScreen for active window capture
-        let window_hotkey = HotKey::new(
-            Some(Modifiers::ALT),
-            global_hotkey::hotkey::Code::PrintScreen,
-        );
-        let window_hotkey_id = register_hotkey_with(
-            |hotkey| manager.register(hotkey),
-            window_hotkey,
-            "Alt+PrintScreen",
-        )?;
-
-        let record_hotkey = HotKey::new(
-            Some(Modifiers::CONTROL | Modifiers::SHIFT),
-            global_hotkey::hotkey::Code::KeyR,
-        );
-        let record_hotkey_id = register_hotkey_with(
-            |hotkey| manager.register(hotkey),
-            record_hotkey,
-            "Ctrl+Shift+R",
-        )?;
+        let hotkeys = RegisteredHotkeys::register_with(|hotkey| manager.register(hotkey))?;
 
         info!("Hotkeys registered");
 
         Ok(Self {
+            startup_timer: None,
+            exit_timer: None,
             _tray: None,
             _hotkey_manager: manager,
-            hotkey_id,
-            window_hotkey_id,
-            record_hotkey_id,
+            hotkeys,
             selection_process: None,
             recording: None,
             window_capture: None,
@@ -225,40 +270,26 @@ impl RustShotApp {
     /// long as it took — the rest of this type already avoids that, spawning a
     /// child process for selection and a thread to reap the recorder.
     fn handle_window_capture(&mut self, foreground_window: Result<capture::WindowTarget, String>) {
+        let timer = ActionTimer::new("window_capture");
         if !window_capture_slot_is_free(self.window_capture.as_ref().map(|h| h.is_finished())) {
+            timer.finish("ignored_busy");
             return;
         }
         self.window_capture = None;
 
         let settings = settings::load_settings();
-        let worker = std::thread::Builder::new()
-            .name("rustshot-window-capture".to_string())
-            .spawn(move || {
-                let format = settings_capture_format(&settings);
-                match capture_active_window_outputs_with_handlers(
-                    || {
-                        capture_window_target_with(
-                            foreground_window,
-                            capture::capture_window_target,
-                        )
-                    },
-                    copy_image_to_clipboard,
-                    |image| {
-                        capture::save_active_window_image_in_dir(
-                            image,
-                            None,
-                            format,
-                            &settings.screenshots_dir,
-                        )
-                    },
-                ) {
-                    Ok(path) => info!(
-                        "Window screenshot copied to clipboard and saved to: {}",
-                        path.display()
-                    ),
-                    Err(e) => error!("Window capture error: {}", e),
-                }
-            });
+        let request = CaptureRequest::window(
+            foreground_window,
+            CaptureFile {
+                format: settings_capture_format(&settings),
+                directory: settings.screenshots_dir,
+            },
+        );
+        let worker = time_result("window_capture.worker_launch", || {
+            std::thread::Builder::new()
+                .name("rustshot-window-capture".to_string())
+                .spawn(move || run_window_capture(request, timer))
+        });
 
         match worker {
             Ok(handle) => self.window_capture = Some(handle),
@@ -267,9 +298,11 @@ impl RustShotApp {
     }
 
     fn handle_capture(&mut self) {
+        let timer = ActionTimer::new("selection.launch");
         // Check if a selection process is already running
         if let Some(ref mut child) = self.selection_process {
             if child_process_is_running(child.try_wait()) {
+                timer.finish("ignored_busy");
                 return;
             }
         }
@@ -279,11 +312,20 @@ impl RustShotApp {
             Ok(p) => p,
             Err(e) => {
                 error!("Failed to get current exe: {e}");
+                timer.finish("error");
                 return;
             }
         };
-        if let Ok(child) = std::process::Command::new(exe).arg("--select").spawn() {
-            self.selection_process = Some(child);
+        match std::process::Command::new(exe).arg("--select").spawn() {
+            Ok(child) => {
+                info!("Selection child started with pid={}", child.id());
+                self.selection_process = Some(child);
+                timer.finish("child_started");
+            }
+            Err(error) => {
+                error!("Failed to start the selection process: {error}");
+                timer.finish("error");
+            }
         }
     }
 
@@ -291,7 +333,10 @@ impl RustShotApp {
         let settings = settings::load_settings();
         open_screenshots_folder_at_with_handlers(
             &settings.screenshots_dir,
-            |dir| std::fs::create_dir_all(dir).map_err(|e| e.to_string()),
+            |dir| {
+                time_result("folder.prepare", || std::fs::create_dir_all(dir))
+                    .map_err(|e| e.to_string())
+            },
             open_screenshot_directory,
         );
     }
@@ -299,43 +344,112 @@ impl RustShotApp {
     fn handle_recording_toggle(&mut self) {
         if let Some((mut child, stop_file)) = self.recording.take() {
             if child_process_is_running(child.try_wait()) {
-                // Stop without blocking the winit event loop. If signalling
-                // fails, retain the child so the user can retry.
-                if let Err(error) =
-                    request_recording_stop_with(&stop_file, |path, data| std::fs::write(path, data))
-                {
-                    error!("Failed to request recording stop: {error}");
-                    self.recording = Some((child, stop_file));
-                    return;
-                }
-                std::thread::spawn(move || match child.wait() {
-                    Ok(status) if status.success() => {}
-                    Ok(status) => error!("Recording process exited with {status}"),
-                    Err(error) => error!("Failed to wait for recording process: {error}"),
-                });
+                self.handle_recording_stop(child, stop_file);
                 return;
             }
         }
 
         // Start: spawn --select-record child
+        let timer = ActionTimer::new("recording.launch");
         let exe = match std::env::current_exe() {
             Ok(p) => p,
             Err(e) => {
                 error!("Failed to get current exe: {e}");
+                timer.finish("error");
                 return;
             }
         };
-        if let Ok(child) = std::process::Command::new(&exe)
+        match std::process::Command::new(&exe)
             .arg("--select-record")
             .spawn()
         {
-            let pid = child.id();
-            // Stopping a recording is a filesystem IPC contract: the parent
-            // creates this flag file, and the child (`run_select_record`) polls
-            // for the same path derived from its OWN pid. Both sides go through
-            // the shared `stop_flag_path` helper so the paths cannot drift.
-            let stop_file = stop_flag_path(pid);
+            Ok(child) => {
+                let pid = child.id();
+                // Stopping a recording is a filesystem IPC contract: the parent
+                // creates this flag file, and the child (`run_select_record`) polls
+                // for the same path derived from its OWN pid. Both sides go through
+                // the shared `stop_flag_path` helper so the paths cannot drift.
+                let stop_file = stop_flag_path(pid);
+                self.recording = Some((child, stop_file));
+                info!("Recording child started with pid={pid}");
+                timer.finish("child_started");
+            }
+            Err(error) => {
+                error!("Failed to start the recording process: {error}");
+                timer.finish("error");
+            }
+        }
+    }
+
+    fn handle_recording_stop(&mut self, child: std::process::Child, stop_file: std::path::PathBuf) {
+        let timer = ActionTimer::new("recording.stop");
+        // Stop without blocking the winit event loop. If signalling fails,
+        // retain the child so the user can retry.
+        if let Err(error) =
+            request_recording_stop_with(&stop_file, |path, data| std::fs::write(path, data))
+        {
+            error!("Failed to request recording stop: {error}");
             self.recording = Some((child, stop_file));
+            timer.finish("error");
+            return;
+        }
+        timer.mark("stop_requested");
+        std::thread::spawn(move || wait_for_recording_child(child, timer));
+    }
+
+    fn handle_hotkey(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: GlobalHotKeyEvent,
+        foreground_window: Option<Result<capture::WindowTarget, String>>,
+    ) {
+        let Some(action) = self.hotkeys.action_for(event) else {
+            return;
+        };
+        let target = foreground_window.unwrap_or_else(|| {
+            Err("No foreground window snapshot accompanied Alt+PrintScreen".to_string())
+        });
+        self.dispatch_action(event_loop, action, target);
+    }
+
+    /// Both OS event sources use this exhaustive dispatcher, so actions cannot drift.
+    fn dispatch_action(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        action: tray::MenuAction,
+        foreground_window: Result<capture::WindowTarget, String>,
+    ) {
+        match action {
+            tray::MenuAction::Capture => self.handle_capture(),
+            tray::MenuAction::CaptureWindow => self.handle_window_capture(foreground_window),
+            tray::MenuAction::OpenFolder => self.open_screenshots_folder(),
+            tray::MenuAction::ToggleRecord => self.handle_recording_toggle(),
+            tray::MenuAction::Settings => {
+                #[cfg(windows)]
+                settings_dialog::show_settings_dialog();
+                #[cfg(not(windows))]
+                settings::open_settings_dialog();
+            }
+            tray::MenuAction::Exit => {
+                self.exit_timer = Some(ActionTimer::new("exit"));
+                event_loop.exit();
+            }
+        }
+    }
+}
+
+fn wait_for_recording_child(mut child: std::process::Child, timer: ActionTimer) {
+    match child.wait() {
+        // The child logs recording failures before returning, so a zero exit
+        // code is not evidence that an MP4 was saved.
+        Ok(status) if status.success() => timer.finish("child_exited"),
+        Ok(status) => {
+            error!("Recording process exited with {status}");
+            timer.finish("child_failed");
+        }
+        Err(error) => {
+            error!("Failed to wait for recording process: {error}");
+            timer.finish("error");
         }
     }
 }
@@ -383,13 +497,22 @@ pub(crate) fn open_screenshots_folder_at_with_handlers<CreateDir, OpenDir>(
 impl ApplicationHandler<RustShotEvent> for RustShotApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         // Create tray icon when the event loop is ready
-        if self._tray.is_none() {
-            match tray::create_tray() {
-                Ok(tray) => {
-                    info!("Tray icon created");
-                    self._tray = Some(tray);
+        if self._tray.is_some() {
+            return;
+        }
+        match tray::create_tray() {
+            Ok(tray) => {
+                info!("Tray icon created");
+                self._tray = Some(tray);
+                if let Some(timer) = self.startup_timer.take() {
+                    timer.finish("tray_ready");
                 }
-                Err(e) => error!("Failed to create tray icon: {}", e),
+            }
+            Err(e) => {
+                error!("Failed to create tray icon: {}", e);
+                if let Some(timer) = self.startup_timer.take() {
+                    timer.finish("error");
+                }
             }
         }
     }
@@ -401,44 +524,15 @@ impl ApplicationHandler<RustShotEvent> for RustShotApp {
             RustShotEvent::HotKey {
                 event,
                 foreground_window,
-            } => {
-                if event.id == self.hotkey_id && event.state == HotKeyState::Pressed {
-                    self.handle_capture();
-                }
-                if event.id == self.window_hotkey_id && event.state == HotKeyState::Pressed {
-                    let target = foreground_window.unwrap_or_else(|| {
-                        Err("No foreground window snapshot accompanied Alt+PrintScreen".to_string())
-                    });
-                    self.handle_window_capture(target);
-                }
-                if event.id == self.record_hotkey_id && event.state == HotKeyState::Pressed {
-                    self.handle_recording_toggle();
-                }
-            }
+            } => self.handle_hotkey(event_loop, event, foreground_window),
             RustShotEvent::Menu {
                 event,
                 foreground_window,
             } => {
-                // Dispatch on `MenuAction` rather than raw id strings: this is
-                // exhaustive, so a new menu entry must be handled here.
                 let Some(action) = tray::MenuAction::from_id(event.id.0.as_str()) else {
                     return;
                 };
-                match action {
-                    tray::MenuAction::Capture => self.handle_capture(),
-                    tray::MenuAction::CaptureWindow => {
-                        self.handle_window_capture(foreground_window)
-                    }
-                    tray::MenuAction::OpenFolder => self.open_screenshots_folder(),
-                    tray::MenuAction::ToggleRecord => self.handle_recording_toggle(),
-                    tray::MenuAction::Settings => {
-                        #[cfg(windows)]
-                        settings_dialog::show_settings_dialog();
-                        #[cfg(not(windows))]
-                        settings::open_settings_dialog();
-                    }
-                    tray::MenuAction::Exit => event_loop.exit(),
-                }
+                self.dispatch_action(event_loop, action, foreground_window);
             }
         }
     }
@@ -446,15 +540,23 @@ impl ApplicationHandler<RustShotEvent> for RustShotApp {
 
 #[cfg(windows)]
 pub(crate) fn open_screenshot_directory(path: &Path) {
-    let _ = std::process::Command::new("explorer").arg(path).spawn();
+    // Explorer can delegate to an existing process; spawn measures only the
+    // shell launch request, not when a folder window becomes visible.
+    let _ = time_result("folder.launch_request", || {
+        std::process::Command::new("explorer").arg(path).spawn()
+    });
 }
 
 #[cfg(target_os = "macos")]
 pub(crate) fn open_screenshot_directory(path: &Path) {
-    let _ = std::process::Command::new("open").arg(path).spawn();
+    let _ = time_result("folder.launch_request", || {
+        std::process::Command::new("open").arg(path).spawn()
+    });
 }
 
 #[cfg(target_os = "linux")]
 pub(crate) fn open_screenshot_directory(path: &Path) {
-    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    let _ = time_result("folder.launch_request", || {
+        std::process::Command::new("xdg-open").arg(path).spawn()
+    });
 }

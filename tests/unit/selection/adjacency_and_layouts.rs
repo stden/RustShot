@@ -105,7 +105,7 @@ fn build_physical_screen_layouts_primary_not_first() {
 
 #[test]
 fn normalize_physical_screen_layouts_single_screen() {
-    let layouts = vec![make_layout(0, 0, 1920, 1080, 0, 0, 1920, 1080)];
+    let layouts = vec![make_layout((0, 0), (1920, 1080), (0, 0), (1920, 1080))];
     let (normalized, min_x, min_y, w, h) = normalize_physical_screen_layouts(&layouts).unwrap();
     assert_eq!(min_x, 0);
     assert_eq!(min_y, 0);

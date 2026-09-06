@@ -237,8 +237,8 @@ fn build_layouts_no_primary_uses_first_as_anchor() {
 #[test]
 fn normalize_layouts_negative_coords_shifted_to_zero() {
     let layouts = vec![
-        make_layout(-1920, -500, 1920, 1080, -2560, -750, 2560, 1440),
-        make_layout(0, 0, 1920, 1080, 0, 0, 1920, 1080),
+        make_layout((-1920, -500), (1920, 1080), (-2560, -750), (2560, 1440)),
+        make_layout((0, 0), (1920, 1080), (0, 0), (1920, 1080)),
     ];
     let (normalized, min_x, min_y, _w, _h) = normalize_physical_screen_layouts(&layouts).unwrap();
     assert_eq!(min_x, -2560);
@@ -263,8 +263,8 @@ fn normalize_layouts_negative_coords_shifted_to_zero() {
 fn normalize_layouts_total_size_spans_full_virtual_desktop() {
     // Two horizontally adjacent monitors with different physical sizes
     let layouts = vec![
-        make_layout(0, 0, 1920, 1080, 0, 0, 1920, 1080),
-        make_layout(1920, 0, 1707, 960, 1920, 0, 2560, 1440),
+        make_layout((0, 0), (1920, 1080), (0, 0), (1920, 1080)),
+        make_layout((1920, 0), (1707, 960), (1920, 0), (2560, 1440)),
     ];
     let (_normalized, _min_x, _min_y, width, height) =
         normalize_physical_screen_layouts(&layouts).unwrap();
@@ -285,8 +285,8 @@ fn normalize_layouts_total_size_spans_full_virtual_desktop() {
 #[test]
 fn normalize_layouts_vertical_stack_total_height_is_sum() {
     let layouts = vec![
-        make_layout(0, 0, 1920, 1080, 0, 0, 1920, 1080),
-        make_layout(0, 1080, 1920, 1080, 0, 1080, 1920, 1080),
+        make_layout((0, 0), (1920, 1080), (0, 0), (1920, 1080)),
+        make_layout((0, 1080), (1920, 1080), (0, 1080), (1920, 1080)),
     ];
     let (_normalized, _min_x, _min_y, width, height) =
         normalize_physical_screen_layouts(&layouts).unwrap();

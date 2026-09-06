@@ -111,7 +111,10 @@ where
 }
 
 /// Capture all screens and composite them into a single physical virtual desktop image.
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Retained full-desktop capture alternative; the interactive path currently captures one monitor."
+)]
 pub(super) fn capture_virtual_desktop() -> Result<VirtualDesktopCapture, String> {
     let screens = Screen::all().map_err(|e| format!("Failed to get screens: {}", e))?;
     if screens.is_empty() {
@@ -263,6 +266,7 @@ pub fn select_region_for_recording() -> Result<(screenshots::Screen, Region), St
     }
 
     let region = app.result.ok_or("No region selected")?;
+    crate::timing::mark(crate::timing::CaptureMilestone::RegionSelected);
     let (screen_index, local_region) = resolve_recording_selection(&desktop.layouts, region)?;
     let screen = desktop
         .screens

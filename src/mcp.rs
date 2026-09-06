@@ -1,4 +1,8 @@
-//! MCP (Model Context Protocol) server, exposing RustShot's capture tools to an
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "JSON values are consumed during serialization"
+)]
+//! MCP (Model Context Protocol) server, exposing `RustShot`'s capture tools to an
 //! MCP client such as an AI assistant.
 //!
 //! Transport is the MCP stdio transport: newline-delimited JSON-RPC 2.0 on

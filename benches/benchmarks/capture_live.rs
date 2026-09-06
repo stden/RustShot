@@ -198,7 +198,6 @@ pub(crate) fn bench_capture_screenshot_stages(c: &mut Criterion) {
 // capture::capture_active_window_image (WGC backend with GDI fallback)
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 pub(crate) fn bench_capture_active_window(c: &mut Criterion) {
     // Probe once: headless environments and non-Windows platforms return an
     // error here, and the WGC-vs-GDI routing happens inside the call.

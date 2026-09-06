@@ -38,7 +38,7 @@ fn assert_presentation_completes_frame(
     );
 
     let mut back = previous_frame.clone();
-    let damage = redraw_overlay_frame(&background, &mut back, WIDTH, HEIGHT, previous, next);
+    let damage = redraw_overlay_frame(&background, &mut back, (WIDTH, HEIGHT), previous, next);
     assert_eq!(back, expected, "the prepared back frame must be complete");
 
     // Win32 softbuffer submits one BitBlt for each presentation rectangle. The

@@ -1,3 +1,7 @@
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "recording resources transfer to worker threads"
+)]
 //! Screen recording to MP4 (Windows only, H.264 via Media Foundation).
 //!
 //! # Key concepts
@@ -74,13 +78,27 @@ pub struct RecordingSession {
     output_path: PathBuf,
 }
 
+/// Validated source geometry and encoding policy passed to the recording worker.
+#[cfg_attr(
+    not(windows),
+    allow(
+        dead_code,
+        reason = "Non-Windows builds reject recording before consuming the shared worker parameters."
+    )
+)]
+struct RecordingParameters {
+    monitor_origin: crate::domain::LogicalPoint,
+    region: Region,
+    dimensions: RecordingDimensions,
+    fps: Fps,
+}
+
 impl RecordingSession {
     /// Start recording the given screen region at the specified frame rate.
     ///
     /// `screen_x`/`screen_y` identify the monitor by its display origin.
     /// `region` is the capture area within that monitor (screen-local coords).
     /// Returns immediately; encoding runs on a background thread.
-    #[allow(dead_code)]
     pub fn start(screen_x: i32, screen_y: i32, region: Region, fps: Fps) -> Result<Self, String> {
         Self::start_in_dir(screen_x, screen_y, region, fps, get_recording_dir())
     }
@@ -98,11 +116,13 @@ impl RecordingSession {
         let output_path = get_recording_path_in_dir(&recordings_dir);
         let path_clone = output_path.clone();
         let (stop_tx, stop_rx) = mpsc::sync_channel(1);
-        let join = thread::spawn(move || {
-            record_loop(
-                path_clone, screen_x, screen_y, region, dimensions, fps, stop_rx,
-            )
-        });
+        let parameters = RecordingParameters {
+            monitor_origin: crate::domain::LogicalPoint::new(screen_x, screen_y),
+            region,
+            dimensions,
+            fps,
+        };
+        let join = thread::spawn(move || record_loop(path_clone, parameters, stop_rx));
         Ok(Self {
             stop_tx,
             join: Some(join),
@@ -133,7 +153,6 @@ impl RecordingSession {
     }
 
     /// Returns a reference to the output MP4 file path.
-    #[allow(dead_code)]
     pub fn output_path(&self) -> &PathBuf {
         &self.output_path
     }
@@ -159,7 +178,6 @@ fn recording_stop_requested(stop_rx: &mpsc::Receiver<()>) -> bool {
 }
 
 /// Returns the directory where recordings are saved: `Pictures/RustShot/recordings`.
-#[allow(dead_code)]
 pub fn get_recording_dir() -> PathBuf {
     dirs::picture_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -168,7 +186,6 @@ pub fn get_recording_dir() -> PathBuf {
 }
 
 /// Returns a timestamped MP4 path inside [`get_recording_dir`].
-#[allow(dead_code)]
 pub fn get_recording_path() -> PathBuf {
     let recordings_dir = get_recording_dir();
     get_recording_path_in_dir(&recordings_dir)
@@ -240,7 +257,6 @@ fn validate_recording_platform() -> Result<(), String> {
 /// assert_eq!(frame_duration_hns(60), 166_666);
 /// assert_eq!(frame_duration_hns(0), 0);
 /// ```
-#[allow(dead_code)]
 pub fn frame_duration_hns(fps: u32) -> i64 {
     if fps == 0 {
         return 0;
@@ -315,20 +331,19 @@ pub fn benchmark_copy_scrgb_frame_exact_fit(
         .checked_mul(8)
         .ok_or_else(|| "Captured FP16 frame row is too large".to_string())?;
     frame::copy_scrgb_region_bottom_up(
-        source,
-        source_row_pitch,
-        width,
-        height,
+        frame::FrameView::new(
+            source,
+            crate::domain::PhysicalSize::new(width, height),
+            source_row_pitch,
+        ),
         Region {
             physical_x: 0,
             physical_y: 0,
             physical_width: width,
             physical_height: height,
         },
-        width,
-        height,
         peak_luminance_nits,
-        output,
+        frame::BgraFrameMut::new(output, crate::domain::PhysicalSize::new(width, height)),
     )
 }
 
@@ -345,19 +360,18 @@ pub fn benchmark_copy_bgra_frame_exact_fit(
         .ok_or_else(|| "Captured frame row is too large".to_string())?
         as usize;
     frame::copy_bgra_region_bottom_up(
-        source,
-        source_row_pitch,
-        width,
-        height,
+        frame::FrameView::new(
+            source,
+            crate::domain::PhysicalSize::new(width, height),
+            source_row_pitch,
+        ),
         Region {
             physical_x: 0,
             physical_y: 0,
             physical_width: width,
             physical_height: height,
         },
-        width,
-        height,
-        output,
+        frame::BgraFrameMut::new(output, crate::domain::PhysicalSize::new(width, height)),
     )
 }
 
@@ -369,6 +383,10 @@ pub fn benchmark_copy_bgra_frame_exact_fit(
 /// `copy_bgra_region_bottom_up` prevents the benchmark from drifting into a
 /// lookalike implementation that skips the production validation and row flip.
 #[doc(hidden)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Retain the public pitched-copy benchmark adapter signature; production copies use borrowed frame descriptors."
+)]
 pub fn benchmark_copy_bgra_region(
     source: &[u8],
     source_row_pitch: usize,
@@ -378,30 +396,21 @@ pub fn benchmark_copy_bgra_region(
     output: &mut [u8],
 ) -> Result<(), String> {
     frame::copy_bgra_region_bottom_up(
-        source,
-        source_row_pitch,
-        source_size.0,
-        source_size.1,
+        frame::FrameView::new(source, source_size.into(), source_row_pitch),
         Region {
             physical_x: region.0,
             physical_y: region.1,
             physical_width: region.2,
             physical_height: region.3,
         },
-        output_size.0,
-        output_size.1,
-        output,
+        frame::BgraFrameMut::new(output, output_size.into()),
     )
 }
 
 #[cfg(windows)]
 fn record_loop(
     output_path: PathBuf,
-    screen_x: i32,
-    screen_y: i32,
-    region: Region,
-    dimensions: RecordingDimensions,
-    fps: Fps,
+    parameters: RecordingParameters,
     stop_rx: mpsc::Receiver<()>,
 ) -> Result<PathBuf, String> {
     use std::fs;
@@ -415,27 +424,13 @@ fn record_loop(
     // this call is create the output directory - no COM call has run here. The
     // thread also does nothing after `wmf_record` returns, so every COM object it
     // created is released before its `CoUninitialize`.
-    unsafe {
-        wmf_record(
-            &output_path,
-            screen_x,
-            screen_y,
-            region,
-            dimensions,
-            fps,
-            stop_rx,
-        )
-    }
+    unsafe { wmf_record(&output_path, parameters, stop_rx) }
 }
 
 #[cfg(not(windows))]
 fn record_loop(
     _output_path: PathBuf,
-    _screen_x: i32,
-    _screen_y: i32,
-    _region: Region,
-    _dimensions: RecordingDimensions,
-    _fps: Fps,
+    _parameters: RecordingParameters,
     _stop_rx: mpsc::Receiver<()>,
 ) -> Result<PathBuf, String> {
     Err("Recording is only supported on Windows".to_string())
@@ -454,7 +449,6 @@ fn record_loop(
 /// assert_eq!(pack_u32_pair(1920, 1080), (1920u64 << 32) | 1080);
 /// assert_eq!(pack_u32_pair(30, 1), (30u64 << 32) | 1);
 /// ```
-#[allow(dead_code)]
 pub fn pack_u32_pair(hi: u32, lo: u32) -> u64 {
     ((hi as u64) << 32) | (lo as u64)
 }

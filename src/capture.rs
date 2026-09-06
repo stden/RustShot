@@ -93,7 +93,6 @@ pub fn resolve_screen_index(
 ///   can detect inconsistent platform data instead of silently using the first.
 /// - Accept screen objects directly if the monitor-selection logic is ever
 ///   consolidated into one shared screen abstraction.
-#[allow(dead_code)]
 pub fn default_screen_index<I>(is_primary_flags: I) -> Option<usize>
 where
     I: IntoIterator<Item = bool>,
@@ -122,7 +121,6 @@ where
 /// let p = resolve_output_path(Some(PathBuf::from("/tmp/shot.png")), Format::Png);
 /// assert_eq!(p, PathBuf::from("/tmp/shot.png"));
 /// ```
-#[allow(dead_code)]
 pub fn resolve_output_path(output: Option<PathBuf>, format: Format) -> PathBuf {
     let screenshots_dir = get_screenshots_dir();
     resolve_output_path_in_dir(output, format, &screenshots_dir)
@@ -253,7 +251,6 @@ fn save_image_to_writer<W: Write>(
 }
 
 /// Capture a screenshot and save it to the specified path or default location
-#[allow(dead_code)]
 pub fn capture_screenshot(
     output: Option<PathBuf>,
     format: Format,
@@ -294,8 +291,10 @@ pub fn capture_screenshot_in_dir(
     };
 
     capture_screenshot_with(
-        screens.len(),
-        Some(idx),
+        ScreenSelection {
+            available: screens.len(),
+            index: Some(idx),
+        },
         || {
             #[cfg(windows)]
             {
@@ -316,31 +315,42 @@ pub fn capture_screenshot_in_dir(
             image::RgbaImage::from_raw(captured.width(), captured.height(), captured.into_raw())
                 .ok_or_else(|| "Failed to convert captured image".to_string())
         },
-        output,
-        format,
-        screenshots_dir,
+        ScreenshotDestination {
+            output,
+            format,
+            directory: screenshots_dir,
+        },
         ensure_parent_directory,
         |image, path, _image_format| save_image_optimized(image, path, format),
     )
 }
 
 /// Get the default screenshots directory
-#[allow(dead_code)]
 pub fn get_screenshots_dir() -> PathBuf {
     dirs::picture_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("RustShot")
 }
 
-/// Internal capture pipeline with dependency injection for unit testing.
-#[allow(clippy::too_many_arguments)]
-fn capture_screenshot_with<CaptureImage, EnsureDir, SaveImage, Img>(
-    screen_count: usize,
-    screen_index: Option<usize>,
-    capture_image: CaptureImage,
+/// A requested monitor index interpreted against the current enumeration.
+#[derive(Clone, Copy)]
+struct ScreenSelection {
+    available: usize,
+    index: Option<usize>,
+}
+
+/// Output policy shared by destination resolution and image encoding.
+struct ScreenshotDestination<'a> {
     output: Option<PathBuf>,
     format: Format,
-    screenshots_dir: &Path,
+    directory: &'a Path,
+}
+
+/// Internal capture pipeline with dependency injection for unit testing.
+fn capture_screenshot_with<CaptureImage, EnsureDir, SaveImage, Img>(
+    screen: ScreenSelection,
+    capture_image: CaptureImage,
+    destination: ScreenshotDestination<'_>,
     ensure_dir: EnsureDir,
     save_image: SaveImage,
 ) -> Result<PathBuf, String>
@@ -349,19 +359,22 @@ where
     EnsureDir: Fn(&Path) -> Result<(), String>,
     SaveImage: FnOnce(&Img, &Path, ImageFormat) -> Result<(), String>,
 {
-    resolve_screen_index(screen_count, screen_index)?;
+    resolve_screen_index(screen.available, screen.index)?;
 
     let image = capture_image()?;
-    let output_path = resolve_output_path_in_dir(output, format, screenshots_dir);
+    let output_path = resolve_output_path_in_dir(
+        destination.output,
+        destination.format,
+        destination.directory,
+    );
     ensure_dir(&output_path)?;
-    save_image(&image, &output_path, format.to_image_format())?;
+    save_image(&image, &output_path, destination.format.to_image_format())?;
 
     Ok(output_path)
 }
 
 /// Capture the currently active (foreground) window and save it to the specified path.
 /// Uses Windows Graphics Capture with a GDI fallback. Returns an error on other platforms.
-#[allow(dead_code)]
 pub fn capture_active_window(output: Option<PathBuf>, format: Format) -> Result<PathBuf, String> {
     let screenshots_dir = get_screenshots_dir();
     capture_active_window_in_dir(output, format, &screenshots_dir)
@@ -395,7 +408,7 @@ pub(crate) fn save_active_window_image_in_dir(
     Ok(output_path)
 }
 
-/// Capture the active window as an RgbaImage (for clipboard use).
+/// Capture the active window as an `RgbaImage` (for clipboard use).
 pub fn capture_active_window_image() -> Result<image::RgbaImage, String> {
     capture_active_window_platform()
 }
@@ -441,9 +454,6 @@ pub fn list_screens() -> Vec<String> {
 mod bench_support;
 use crate::platform::window as platform;
 
-// Consumed only through the library tree (benches import
-// `rustshot::capture::benchmark_*`); unused in the binary tree by design.
-#[allow(unused_imports)]
 pub use bench_support::*;
 use platform::capture_active_window_platform;
 #[cfg(windows)]

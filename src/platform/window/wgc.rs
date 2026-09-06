@@ -226,19 +226,7 @@ fn capture_supported_hwnd(
 
             if content_size.Width != pool_size.Width || content_size.Height != pool_size.Height {
                 let _ = frame.Close();
-                while let Ok(pending) = frame_pool.TryGetNextFrame() {
-                    let _ = pending.Close();
-                }
-                frame_pool
-                    .Recreate(
-                        &winrt_device,
-                        DirectXPixelFormat::B8G8R8A8UIntNormalized,
-                        2,
-                        content_size,
-                    )
-                    .map_err(|error| {
-                        format!("Failed to recreate resized window frame pool: {error}")
-                    })?;
+                resize_frame_pool(&frame_pool, &winrt_device, content_size)?;
                 pool_size = content_size;
                 continue;
             }
@@ -254,6 +242,18 @@ fn capture_supported_hwnd(
     let _ = session.Close();
     let _ = frame_pool.Close();
     result
+}
+
+fn resize_frame_pool(
+    pool: &Direct3D11CaptureFramePool,
+    device: &IDirect3DDevice,
+    size: windows::Graphics::SizeInt32,
+) -> Result<(), String> {
+    while let Ok(pending) = pool.TryGetNextFrame() {
+        let _ = pending.Close();
+    }
+    pool.Recreate(device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size)
+        .map_err(|error| format!("Failed to recreate resized window frame pool: {error}"))
 }
 
 fn create_d3d11_device() -> Result<(ID3D11Device, ID3D11DeviceContext), String> {

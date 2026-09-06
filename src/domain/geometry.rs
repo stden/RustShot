@@ -37,7 +37,6 @@ use super::{PhysicalPoint, PhysicalSize, Region, ScaleFactor};
 /// - Derive a merged desktop scale from monitor geometry if mixed-DPI layouts
 ///   need something more precise than "primary monitor wins".
 /// - Surface inconsistent primary-monitor metadata for diagnostics.
-#[allow(dead_code)]
 pub fn virtual_desktop_scale_factor<I>(screens: I) -> Option<f32>
 where
     I: IntoIterator<Item = (bool, f32)>,
@@ -63,7 +62,6 @@ where
 /// Convert a logical (DPI-independent) coordinate to physical pixels.
 ///
 /// Multiplies by the monitor's scale factor and rounds to the nearest integer.
-#[allow(dead_code)]
 pub fn logical_to_physical(value: i32, scale_factor: f32) -> i32 {
     ((value as f32) * scale_factor).round() as i32
 }

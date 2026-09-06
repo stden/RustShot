@@ -260,6 +260,10 @@ fn assert_recording_selection_failure(world: &mut RustShotWorld, expected: Strin
 #[then(
     regex = r"^monitor (\d+) is selected with local region \((-?\d+), (-?\d+)\) sized (\d+) x (\d+)$"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Cucumber binds five documented step captures plus the scenario world; preserve the executable specification's wording."
+)]
 fn assert_local_recording_region(
     world: &mut RustShotWorld,
     monitor: usize,

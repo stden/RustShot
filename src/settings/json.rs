@@ -83,7 +83,7 @@ pub fn format_settings_json(settings: &Settings) -> String {
     buf
 }
 
-/// Parse the RustShot settings JSON using the project's minimal handwritten parser.
+/// Parse the `RustShot` settings JSON using the project's minimal handwritten parser.
 ///
 /// Algorithm:
 /// 1. Start from [`Settings::default`].
@@ -171,19 +171,16 @@ fn path_from_settings_string(value: String) -> PathBuf {
 // `Fps::from_settings`, so an invalid value cannot survive parsing in the first
 // place and there is nothing left to normalize after the fact.
 
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_normalize_default_format(value: &str) -> Format {
     Format::from_settings_str(value)
 }
 
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_normalize_recording_fps(value: u32) -> Fps {
     Fps::from_settings(value)
 }
 
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_extract_json_string(json: &str, key: &str) -> Option<String> {
     extract_json_string(json, key)
@@ -280,7 +277,7 @@ pub(super) fn has_json_value_boundary(rest: &str) -> bool {
 /// 4. Unescape the captured slice and return it.
 ///
 /// This parser is intentionally narrow: it understands the subset of JSON that
-/// RustShot writes itself and treats anything malformed as "missing".
+/// `RustShot` writes itself and treats anything malformed as "missing".
 ///
 /// Possible improvements:
 /// - Support the full JSON escape set, including unicode escape sequences.
@@ -309,7 +306,6 @@ pub(super) fn extract_json_string(json: &str, key: &str) -> Option<String> {
     None
 }
 
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_extract_json_number(json: &str, key: &str) -> Option<u32> {
     extract_json_number(json, key)
@@ -337,7 +333,6 @@ pub(super) fn extract_json_number(json: &str, key: &str) -> Option<u32> {
     after_colon[..end].parse().ok()
 }
 
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_extract_json_bool(json: &str, key: &str) -> Option<bool> {
     extract_json_bool(json, key)

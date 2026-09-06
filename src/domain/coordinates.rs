@@ -4,7 +4,7 @@ const INVALID_SCALE_FACTOR: &str = "Display scale factor must be positive";
 
 /// A point measured in logical, DPI-independent desktop coordinates.
 ///
-/// This type is intentionally distinct from [PhysicalPoint], so coordinate
+/// This type is intentionally distinct from [`PhysicalPoint`], so coordinate
 /// spaces cannot be mixed without an explicit scale conversion.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LogicalPoint((i32, i32));

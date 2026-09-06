@@ -1,7 +1,7 @@
 //! Windows registry and executable-installation adapters.
 //!
 //! This leaf owns native effects, without deciding whether startup should enable,
-//! disable, or launch RustShot. Application workflows determine that ordering.
+//! disable, or launch `RustShot`. Application workflows determine that ordering.
 
 use crate::platform::wide;
 use std::path::Path;
@@ -10,7 +10,7 @@ use std::path::Path;
 #[cfg(windows)]
 pub(crate) const AUTORUN_SUBKEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
-/// Registry value name used by RustShot.
+/// Registry value name used by `RustShot`.
 #[cfg(windows)]
 pub(crate) const AUTORUN_VALUE: &str = "RustShot";
 
@@ -35,7 +35,7 @@ pub(crate) fn quoted_autorun_command(path: &Path) -> String {
     format!("\"{}\"", path.to_string_lossy())
 }
 
-/// Register a RustShot executable in Windows startup using the native Registry API.
+/// Register a `RustShot` executable in Windows startup using the native Registry API.
 #[cfg(windows)]
 pub(crate) fn setup_autorun(exe_path: &Path) -> Result<(), String> {
     use windows::core::PCWSTR;

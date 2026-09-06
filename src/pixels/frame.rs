@@ -1,12 +1,47 @@
 //! Pure frame validation, cropping, padding, and pixel-order conversion.
 
 use super::validate_capture_region;
-use crate::domain::Region;
+use crate::domain::{PhysicalSize, Region};
 use std::sync::OnceLock;
 
 const SCRGB_REFERENCE_WHITE_NITS: f32 = 80.0;
 const SDR_DIFFUSE_WHITE: f32 = 0.80;
 const SDR_PEAK: f32 = 0.98;
+
+/// Borrowed top-down capture storage, including native row padding.
+///
+/// Pixel format belongs to the chosen copy operation. Construction does not
+/// validate storage: the copy checks geometry, pitch, and byte length in the
+/// same order before writing any output.
+#[derive(Clone, Copy)]
+pub(crate) struct FrameView<'a> {
+    bytes: &'a [u8],
+    size: PhysicalSize,
+    row_pitch: usize,
+}
+
+impl<'a> FrameView<'a> {
+    pub(crate) fn new(bytes: &'a [u8], size: PhysicalSize, row_pitch: usize) -> Self {
+        Self {
+            bytes,
+            size,
+            row_pitch,
+        }
+    }
+}
+
+/// Borrowed, tightly packed bottom-up BGRA storage for one encoded frame.
+/// Dimensions can exceed the copied region when H.264 padding is required.
+pub(crate) struct BgraFrameMut<'a> {
+    bytes: &'a mut [u8],
+    size: PhysicalSize,
+}
+
+impl<'a> BgraFrameMut<'a> {
+    pub(crate) fn new(bytes: &'a mut [u8], size: PhysicalSize) -> Self {
+        Self { bytes, size }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FramePoolUpdate {
@@ -59,26 +94,29 @@ pub(crate) fn frame_pool_update(
 
 // Consumed by the cfg(windows) recording loop; compiled everywhere so the
 // pure logic stays unit-tested on every platform.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(
+    not(windows),
+    allow(dead_code, reason = "RGBA fallback recording runs only on Windows")
+)]
 #[derive(Clone, Copy)]
 enum SourcePixelOrder {
     Bgra,
     Rgba,
 }
 
-#[allow(clippy::too_many_arguments)]
-#[cfg_attr(not(windows), allow(dead_code))]
 fn copy_region_bottom_up(
-    source: &[u8],
-    source_row_pitch: usize,
-    source_width: u32,
-    source_height: u32,
+    source: FrameView<'_>,
     region: Region,
-    output_width: u32,
-    output_height: u32,
-    output: &mut [u8],
+    output: BgraFrameMut<'_>,
     source_order: SourcePixelOrder,
 ) -> Result<(), String> {
+    let source_width = source.size.width();
+    let source_height = source.size.height();
+    let source_row_pitch = source.row_pitch;
+    let source = source.bytes;
+    let output_width = output.size.width();
+    let output_height = output.size.height();
+    let output = output.bytes;
     validate_capture_region(region, source_width, source_height)?;
     if output_width < region.physical_width || output_height < region.physical_height {
         return Err("Encoded frame is smaller than the recording region".to_string());
@@ -144,57 +182,37 @@ fn copy_region_bottom_up(
 }
 
 /// Crop a pitched, top-down BGRA desktop frame into a bottom-up MF frame.
-#[allow(clippy::too_many_arguments)]
-#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn copy_bgra_region_bottom_up(
-    source: &[u8],
-    source_row_pitch: usize,
-    source_width: u32,
-    source_height: u32,
+    source: FrameView<'_>,
     region: Region,
-    output_width: u32,
-    output_height: u32,
-    output: &mut [u8],
+    output: BgraFrameMut<'_>,
 ) -> Result<(), String> {
-    copy_region_bottom_up(
-        source,
-        source_row_pitch,
-        source_width,
-        source_height,
-        region,
-        output_width,
-        output_height,
-        output,
-        SourcePixelOrder::Bgra,
-    )
+    copy_region_bottom_up(source, region, output, SourcePixelOrder::Bgra)
 }
 
 /// Convert a tightly packed top-down RGBA fallback frame into padded MF RGB32.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(
+    not(windows),
+    allow(dead_code, reason = "RGBA fallback recording runs only on Windows")
+)]
 pub(crate) fn copy_rgba_frame_bottom_up(
     source: &[u8],
-    source_width: u32,
-    source_height: u32,
-    output_width: u32,
-    output_height: u32,
-    output: &mut [u8],
+    source_size: PhysicalSize,
+    output: BgraFrameMut<'_>,
 ) -> Result<(), String> {
+    let source_width = source_size.width();
+    let source_height = source_size.height();
     let source_row_pitch = (source_width as usize)
         .checked_mul(4)
         .ok_or_else(|| "Captured frame row is too large".to_string())?;
     copy_region_bottom_up(
-        source,
-        source_row_pitch,
-        source_width,
-        source_height,
+        FrameView::new(source, source_size, source_row_pitch),
         Region {
             physical_x: 0,
             physical_y: 0,
             physical_width: source_width,
             physical_height: source_height,
         },
-        output_width,
-        output_height,
         output,
         SourcePixelOrder::Rgba,
     )
@@ -374,7 +392,13 @@ fn linear_to_srgb8_with(lut: &[u8; 4097], value: f32) -> u8 {
 /// The recording loop uses [`ToneCurve`] so it can hoist everything that depends
 /// only on the monitor out of its per-pixel loop; this single-pixel form is what
 /// the tests pin the tone curve against.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "The pixel-at-a-time reference pins the frame tone curve in tests"
+    )
+)]
 pub(crate) fn tone_map_scrgb_pixel(
     red: f32,
     green: f32,
@@ -444,18 +468,19 @@ impl<'a> ToneCurve<'a> {
 }
 
 /// Crop pitched, top-down FP16 scRGB into tone-mapped bottom-up MF RGB32.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn copy_scrgb_region_bottom_up(
-    source: &[u8],
-    source_row_pitch: usize,
-    source_width: u32,
-    source_height: u32,
+    source: FrameView<'_>,
     region: Region,
-    output_width: u32,
-    output_height: u32,
     peak_luminance_nits: f32,
-    output: &mut [u8],
+    output: BgraFrameMut<'_>,
 ) -> Result<(), String> {
+    let source_width = source.size.width();
+    let source_height = source.size.height();
+    let source_row_pitch = source.row_pitch;
+    let source = source.bytes;
+    let output_width = output.size.width();
+    let output_height = output.size.height();
+    let output = output.bytes;
     validate_capture_region(region, source_width, source_height)?;
     if output_width < region.physical_width || output_height < region.physical_height {
         return Err("Encoded frame is smaller than the recording region".to_string());

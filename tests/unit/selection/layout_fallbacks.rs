@@ -7,12 +7,12 @@ use super::*;
 #[test]
 fn build_physical_screen_layouts_three_monitors_horizontal() {
     let layouts = build_physical_screen_layouts(&[
-        make_screen(0, 0, 1920, 1080, 1920, 1080),
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),
         ScreenLayoutInput {
             is_primary: true,
-            ..make_screen(1920, 0, 1920, 1080, 1920, 1080)
+            ..make_screen((1920, 0), (1920, 1080), (1920, 1080))
         },
-        make_screen(3840, 0, 1920, 1080, 1920, 1080),
+        make_screen((3840, 0), (1920, 1080), (1920, 1080)),
     ])
     .unwrap();
     // Primary is index 1, anchored at physical_x=0
@@ -26,8 +26,8 @@ fn build_physical_screen_layouts_three_monitors_horizontal() {
 #[test]
 fn fallback_physical_x_from_left_neighbor_with_gap() {
     let inputs = vec![
-        make_screen(0, 0, 1920, 1080, 1920, 1080),
-        make_screen(2000, 0, 1920, 1080, 1920, 1080), // 80px gap
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),
+        make_screen((2000, 0), (1920, 1080), (1920, 1080)), // 80px gap
     ];
     let positions = vec![Some(0), None];
     let result = fallback_physical_x(&inputs, &positions, 1);
@@ -38,8 +38,8 @@ fn fallback_physical_x_from_left_neighbor_with_gap() {
 #[test]
 fn fallback_physical_x_from_right_neighbor_with_gap() {
     let inputs = vec![
-        make_screen(0, 0, 1920, 1080, 1920, 1080),
-        make_screen(2000, 0, 1920, 1080, 1920, 1080),
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),
+        make_screen((2000, 0), (1920, 1080), (1920, 1080)),
     ];
     let positions = vec![None, Some(2000)];
     let result = fallback_physical_x(&inputs, &positions, 0);
@@ -50,9 +50,9 @@ fn fallback_physical_x_from_right_neighbor_with_gap() {
 #[test]
 fn fallback_physical_x_prefers_nearest_left_neighbor() {
     let inputs = vec![
-        make_screen(0, 0, 1920, 1080, 1920, 1080),
-        make_screen(2500, 0, 1920, 1080, 1920, 1080),
-        make_screen(4100, 0, 1920, 1080, 1920, 1080),
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),
+        make_screen((2500, 0), (1920, 1080), (1920, 1080)),
+        make_screen((4100, 0), (1920, 1080), (1920, 1080)),
     ];
     let positions = vec![Some(0), Some(2500), None];
     let result = fallback_physical_x(&inputs, &positions, 2);
@@ -62,8 +62,8 @@ fn fallback_physical_x_prefers_nearest_left_neighbor() {
 #[test]
 fn fallback_physical_x_high_dpi_gap_scales_target_width() {
     let inputs = vec![
-        make_screen(0, 0, 100, 100, 100, 100),
-        make_screen(150, 0, 100, 100, 200, 200),
+        make_screen((0, 0), (100, 100), (100, 100)),
+        make_screen((150, 0), (100, 100), (200, 200)),
     ];
     let positions = vec![Some(0), None];
     let result = fallback_physical_x(&inputs, &positions, 1);
@@ -73,8 +73,8 @@ fn fallback_physical_x_high_dpi_gap_scales_target_width() {
 #[test]
 fn fallback_physical_x_no_resolved_neighbors() {
     let inputs = vec![
-        make_screen(0, 0, 1920, 1080, 1920, 1080),
-        make_screen(2000, 0, 1920, 1080, 1920, 1080),
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),
+        make_screen((2000, 0), (1920, 1080), (1920, 1080)),
     ];
     let positions = vec![None, None];
     let result = fallback_physical_x(&inputs, &positions, 0);
@@ -83,7 +83,7 @@ fn fallback_physical_x_no_resolved_neighbors() {
 
 #[test]
 fn fallback_physical_x_out_of_bounds_index() {
-    let inputs = vec![make_screen(0, 0, 1920, 1080, 1920, 1080)];
+    let inputs = vec![make_screen((0, 0), (1920, 1080), (1920, 1080))];
     let positions = vec![Some(0)];
     let result = fallback_physical_x(&inputs, &positions, 5);
     assert_eq!(result, None);
@@ -94,8 +94,8 @@ fn fallback_physical_x_out_of_bounds_index() {
 #[test]
 fn fallback_physical_y_from_above_neighbor_with_gap() {
     let inputs = vec![
-        make_screen(0, 0, 1920, 1080, 1920, 1080),
-        make_screen(0, 1200, 1920, 1080, 1920, 1080), // 120px gap
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),
+        make_screen((0, 1200), (1920, 1080), (1920, 1080)), // 120px gap
     ];
     let positions = vec![Some(0), None];
     let result = fallback_physical_y(&inputs, &positions, 1);
@@ -105,8 +105,8 @@ fn fallback_physical_y_from_above_neighbor_with_gap() {
 #[test]
 fn fallback_physical_y_from_below_neighbor_with_gap() {
     let inputs = vec![
-        make_screen(0, 0, 1920, 1080, 1920, 1080),
-        make_screen(0, 1200, 1920, 1080, 1920, 1080),
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),
+        make_screen((0, 1200), (1920, 1080), (1920, 1080)),
     ];
     let positions = vec![None, Some(1200)];
     let result = fallback_physical_y(&inputs, &positions, 0);
@@ -116,8 +116,8 @@ fn fallback_physical_y_from_below_neighbor_with_gap() {
 #[test]
 fn fallback_physical_y_high_dpi_gap_scales_target_height() {
     let inputs = vec![
-        make_screen(0, 0, 100, 100, 100, 100),
-        make_screen(0, 150, 100, 100, 200, 200),
+        make_screen((0, 0), (100, 100), (100, 100)),
+        make_screen((0, 150), (100, 100), (200, 200)),
     ];
     let positions = vec![Some(0), None];
     let result = fallback_physical_y(&inputs, &positions, 1);
@@ -127,8 +127,8 @@ fn fallback_physical_y_high_dpi_gap_scales_target_height() {
 #[test]
 fn fallback_physical_y_no_resolved_neighbors() {
     let inputs = vec![
-        make_screen(0, 0, 1920, 1080, 1920, 1080),
-        make_screen(0, 2000, 1920, 1080, 1920, 1080),
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),
+        make_screen((0, 2000), (1920, 1080), (1920, 1080)),
     ];
     let positions = vec![None, None];
     let result = fallback_physical_y(&inputs, &positions, 1);
@@ -137,7 +137,7 @@ fn fallback_physical_y_no_resolved_neighbors() {
 
 #[test]
 fn fallback_physical_y_out_of_bounds_index() {
-    let inputs = vec![make_screen(0, 0, 1920, 1080, 1920, 1080)];
+    let inputs = vec![make_screen((0, 0), (1920, 1080), (1920, 1080))];
     let positions = vec![Some(0)];
     let result = fallback_physical_y(&inputs, &positions, 5);
     assert_eq!(result, None);
@@ -264,9 +264,9 @@ fn fallback_position_keeps_the_nearest_neighbor_found_first() {
     // gap comparison, not the scan order, decides which neighbour anchors the
     // target.
     let horizontal = vec![
-        make_screen(2000, 0, 1920, 1080, 1920, 1080), // nearest, scanned first
-        make_screen(0, 0, 1920, 1080, 1920, 1080),    // farther, scanned second
-        make_screen(5000, 0, 1920, 1080, 1920, 1080), // target
+        make_screen((2000, 0), (1920, 1080), (1920, 1080)), // nearest, scanned first
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),    // farther, scanned second
+        make_screen((5000, 0), (1920, 1080), (1920, 1080)), // target
     ];
     let positions = vec![Some(2000), Some(0), None];
     assert_eq!(
@@ -277,25 +277,25 @@ fn fallback_position_keeps_the_nearest_neighbor_found_first() {
 
     // Same on the other side: the target sits left of both references.
     let mirrored = vec![
-        make_screen(3000, 0, 1920, 1080, 1920, 1080), // nearest, scanned first
-        make_screen(5000, 0, 1920, 1080, 1920, 1080), // farther, scanned second
-        make_screen(0, 0, 1920, 1080, 1920, 1080),    // target
+        make_screen((3000, 0), (1920, 1080), (1920, 1080)), // nearest, scanned first
+        make_screen((5000, 0), (1920, 1080), (1920, 1080)), // farther, scanned second
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),    // target
     ];
     let positions = vec![Some(3000), Some(5000), None];
     assert_eq!(fallback_physical_x(&mirrored, &positions, 2), Some(0));
 
     let vertical = vec![
-        make_screen(0, 2000, 1920, 1080, 1920, 1080), // nearest above
-        make_screen(0, 0, 1920, 1080, 1920, 1080),    // farther above
-        make_screen(0, 5000, 1920, 1080, 1920, 1080), // target
+        make_screen((0, 2000), (1920, 1080), (1920, 1080)), // nearest above
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),    // farther above
+        make_screen((0, 5000), (1920, 1080), (1920, 1080)), // target
     ];
     let positions = vec![Some(2000), Some(0), None];
     assert_eq!(fallback_physical_y(&vertical, &positions, 2), Some(5000));
 
     let vertical_mirrored = vec![
-        make_screen(0, 3000, 1920, 1080, 1920, 1080), // nearest below
-        make_screen(0, 5000, 1920, 1080, 1920, 1080), // farther below
-        make_screen(0, 0, 1920, 1080, 1920, 1080),    // target
+        make_screen((0, 3000), (1920, 1080), (1920, 1080)), // nearest below
+        make_screen((0, 5000), (1920, 1080), (1920, 1080)), // farther below
+        make_screen((0, 0), (1920, 1080), (1920, 1080)),    // target
     ];
     let positions = vec![Some(3000), Some(5000), None];
     assert_eq!(

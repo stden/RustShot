@@ -1,6 +1,6 @@
 //! Interactive region selection overlay.
 //!
-//! When the user presses PrintScreen (or chooses "Capture" from the tray menu),
+//! When the user presses `PrintScreen` (or chooses "Capture" from the tray menu),
 //! a child process is spawned with `--select`.  This module:
 //!
 //! 1. Detects which monitor the mouse cursor is on ([`get_cursor_position`]).
@@ -26,13 +26,18 @@ pub use crate::domain::{
     LogicalSize, PhysicalPoint, PhysicalSize, Region, ScaleFactor,
 };
 pub use crate::platform::get_cursor_position;
-#[allow(unused_imports)]
 pub use bench::*;
 pub use desktop::*;
 // Internal geometry and overlay helpers stay private to consumers of this facade.
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "Existing child modules and private unit suites reach shared geometry through this facade."
+)]
 use crate::domain::{geometry::*, layout::*};
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "Private unit suites share the overlay facade; production uses only its entry points."
+)]
 use overlay::*;
 
 #[cfg(test)]

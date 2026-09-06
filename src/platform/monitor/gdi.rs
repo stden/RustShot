@@ -1,7 +1,7 @@
 //! Persistent legacy GDI fallback for systems without usable WGC.
 
-use crate::domain::Region;
-use crate::pixels::frame::copy_rgba_frame_bottom_up;
+use crate::domain::{PhysicalSize, Region};
+use crate::pixels::frame::{copy_rgba_frame_bottom_up, BgraFrameMut};
 
 pub(super) struct GdiRegionCapture {
     screen: screenshots::Screen,
@@ -44,6 +44,28 @@ impl GdiRegionCapture {
         self.region
     }
 
+    fn full_monitor_pixels(&mut self) -> Result<Vec<u8>, String> {
+        if let Some(pixels) = self.pending_full_frame.take() {
+            return Ok(pixels);
+        }
+        let captured = self
+            .screen
+            .capture()
+            .map_err(|error| format!("Failed to capture monitor with GDI fallback: {error}"))?;
+        if captured.width() != self.region.physical_width
+            || captured.height() != self.region.physical_height
+        {
+            return Err(format!(
+                "Monitor dimensions changed from {}x{} to {}x{}",
+                self.region.physical_width,
+                self.region.physical_height,
+                captured.width(),
+                captured.height()
+            ));
+        }
+        Ok(captured.into_raw())
+    }
+
     pub(super) fn capture_into(
         &mut self,
         output_width: u32,
@@ -51,33 +73,11 @@ impl GdiRegionCapture {
         output: &mut [u8],
     ) -> Result<(), String> {
         if self.full_monitor {
-            let pixels = match self.pending_full_frame.take() {
-                Some(pixels) => pixels,
-                None => {
-                    let captured = self.screen.capture().map_err(|error| {
-                        format!("Failed to capture monitor with GDI fallback: {error}")
-                    })?;
-                    if captured.width() != self.region.physical_width
-                        || captured.height() != self.region.physical_height
-                    {
-                        return Err(format!(
-                            "Monitor dimensions changed from {}x{} to {}x{}",
-                            self.region.physical_width,
-                            self.region.physical_height,
-                            captured.width(),
-                            captured.height()
-                        ));
-                    }
-                    captured.into_raw()
-                }
-            };
+            let pixels = self.full_monitor_pixels()?;
             return copy_rgba_frame_bottom_up(
                 &pixels,
-                self.region.physical_width,
-                self.region.physical_height,
-                output_width,
-                output_height,
-                output,
+                self.region.size(),
+                BgraFrameMut::new(output, PhysicalSize::new(output_width, output_height)),
             );
         }
 
@@ -103,11 +103,8 @@ impl GdiRegionCapture {
         }
         copy_rgba_frame_bottom_up(
             captured.as_raw(),
-            captured.width(),
-            captured.height(),
-            output_width,
-            output_height,
-            output,
+            PhysicalSize::new(captured.width(), captured.height()),
+            BgraFrameMut::new(output, PhysicalSize::new(output_width, output_height)),
         )
     }
 }

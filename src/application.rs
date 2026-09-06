@@ -8,7 +8,9 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     Tray[Tray controller] --> Capture[Capture output workflow]
+//!     Tray[Tray controller] --> Request[Typed capture request]
+//!     Selection[Selection child] --> Request
+//!     Request --> Capture[Capture output workflow]
 //!     Startup[Startup routing] --> Autorun[Auto-start workflow]
 //!     Settings[Settings dialog] --> Autorun
 //!     Capture --> CapturePort[Capture / clipboard / save handlers]

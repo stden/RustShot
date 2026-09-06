@@ -1,12 +1,12 @@
 //! Native Win32 settings dialog (Windows-only).
 //!
-//! Opens a modal window with controls for all
+//! Opens a resizable window with controls for all
 //! [`Settings`](crate::settings::Settings) fields.
 //! Called from the tray menu "Settings" item instead of opening
 //! `settings.json` in notepad.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
 use windows::core::{w, Error, PCWSTR};
 use windows::Win32::Foundation::{
@@ -36,6 +36,7 @@ const IDC_FPS_EDIT: i32 = 106;
 const IDC_AUTOSTART_CHECK: i32 = 107;
 const IDC_SAVE_BTN: i32 = 108;
 const IDC_CANCEL_BTN: i32 = 109;
+const MIN_DIALOG_SIZE: (i32, i32) = (610, 320);
 
 /// Geometry shared by top-level window creation and every child-control row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +90,10 @@ const FOS_PICKFOLDERS: u32 = 0x20;
 
 /// Re-entry guard — only one settings dialog at a time.
 static DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
+// The owning thread publishes the handle only after creation. Other threads
+// post activation requests instead of showing its window synchronously.
+static DIALOG_WINDOW: AtomicIsize = AtomicIsize::new(0);
+const WM_SHOW_SETTINGS: u32 = WM_APP + 1;
 
 /// RAII guard that resets [`DIALOG_OPEN`] on thread exit (including panics).
 ///
@@ -98,6 +103,7 @@ struct DialogGuard;
 
 impl Drop for DialogGuard {
     fn drop(&mut self) {
+        DIALOG_WINDOW.store(0, Ordering::SeqCst);
         DIALOG_OPEN.store(false, Ordering::SeqCst);
     }
 }
@@ -116,21 +122,60 @@ impl Drop for ComGuard {
 
 /// Show the native settings dialog.  Re-entry safe; spawns a dedicated thread.
 pub(crate) fn show_settings_dialog() {
-    claim_dialog_slot_with(|| {
+    let started = claim_dialog_slot_with(|| {
+        let timing = crate::timing::ActionTimer::new("settings.open");
         std::thread::Builder::new()
             .name("rustshot-settings-dialog".to_string())
-            .spawn(|| {
+            .spawn(move || {
                 let _guard = DialogGuard;
                 // SAFETY: `run_dialog` creates Win32 windows and runs a message
                 // loop. It is called on a dedicated thread (spawned here) with
                 // COM initialised inside the function. The `DialogGuard` RAII
                 // ensures `DIALOG_OPEN` is reset even if a panic occurs.
-                if let Err(error) = unsafe { run_dialog() } {
+                if let Err(error) = unsafe { run_dialog(timing) } {
                     log::error!("Failed to open the settings dialog: {error}");
                 }
             })
             .map(|_| ())
     });
+    if !started {
+        let raw = DIALOG_WINDOW.load(Ordering::SeqCst);
+        if raw != 0 {
+            // SAFETY: the handle was published by the dialog thread and this
+            // message carries no pointers. A concurrent close makes posting
+            // fail safely; only the owning thread performs the activation.
+            if let Err(error) = unsafe {
+                PostMessageW(
+                    Some(HWND(raw as *mut core::ffi::c_void)),
+                    WM_SHOW_SETTINGS,
+                    WPARAM(0),
+                    LPARAM(0),
+                )
+            } {
+                log::warn!("Failed to reactivate the settings dialog: {error}");
+            }
+        }
+    }
+}
+
+/// Show a user-requested dialog even when `RustShot` was started hidden.
+///
+/// # Safety
+/// `hwnd` must be a live dialog owned by the calling thread.
+unsafe fn activate_dialog(hwnd: HWND) {
+    // SAFETY: the caller keeps this window live on its owning thread. The
+    // first ShowWindow can obey STARTUPINFO's SW_HIDE instead of our command;
+    // an explicit second restore must override that background-launch state.
+    // ShowWindow returns previous visibility, not whether the call succeeded.
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        // Windows may deny foreground activation, but the dialog must still
+        // be visible and available from the taskbar in that case.
+        let _ = SetForegroundWindow(hwnd);
+    }
 }
 
 /// Claim the single dialog slot and hand it to `spawn_dialog`.
@@ -166,7 +211,7 @@ where
 ///
 /// Must be called on a dedicated thread with no prior COM initialisation.
 /// All Win32 handles are valid for the lifetime of the message loop.
-unsafe fn run_dialog() -> Result<(), String> {
+unsafe fn run_dialog(timing: crate::timing::ActionTimer) -> Result<(), String> {
     // SAFETY: the contract above requires a thread with no prior COM
     // initialisation, so requesting an STA cannot collide with an existing
     // apartment of a different model — a failed initialisation does not take a
@@ -175,6 +220,7 @@ unsafe fn run_dialog() -> Result<(), String> {
         .ok()
         .map_err(|error| format!("Failed to initialise COM: {error}"))?;
     let _com_guard = ComGuard;
+    timing.mark("com_ready");
 
     // SAFETY: a null module name asks for the file used to create this process;
     // it does not dereference a caller-provided pointer.
@@ -212,19 +258,19 @@ unsafe fn run_dialog() -> Result<(), String> {
         }
     }
 
+    let layout = settings_dialog_layout();
     // SAFETY: `class_name` was just registered above, so the class exists and
     // its `wnd_proc` will receive this window's messages on this thread. The
     // title is a static `w!` literal. `None` for parent/menu/param is the
     // documented way to create an unowned top-level window, while `instance`
     // is the same executable module that owns the class. The returned handle
     // remains live through the message loop and is destroyed by `wnd_proc`.
-    let layout = settings_dialog_layout();
     let hwnd = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             class_name,
             w!("RustShot Settings"),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+            WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             layout.dialog_width,
@@ -237,21 +283,21 @@ unsafe fn run_dialog() -> Result<(), String> {
     }
     .map_err(|error| format!("Failed to create the window: {error}"))?;
 
-    // SAFETY: `hwnd` was just created on this thread and remains live through
-    // the message loop below. `ShowWindow` reports the previous visibility
-    // state rather than success, so its return value is intentionally unused.
-    // Foreground activation can
-    // legitimately be denied by Windows focus-stealing rules; the window is
-    // still visible and available from the taskbar in that case.
-    let _ = unsafe { ShowWindow(hwnd, SW_SHOWNORMAL) };
-    let _ = unsafe { SetForegroundWindow(hwnd) };
+    timing.mark("window_and_controls_created");
+    DIALOG_WINDOW.store(hwnd.0 as isize, Ordering::SeqCst);
+    // SAFETY: `hwnd` was just created on this thread and stays live through
+    // the message loop below.
+    unsafe { activate_dialog(hwnd) };
+    timing.finish("window_shown");
+    // This is interaction time, not opening latency: the user may leave the
+    // settings window open while doing other work.
+    let interaction = crate::timing::ActionTimer::new("settings.user_interaction");
 
     let mut msg = MSG::default();
-    // SAFETY: `msg` is a live local that outlives every iteration, so the OS may
-    // write the next message into it. A `None` window filter drains this
-    // thread's own queue, and the loop ends on WM_QUIT, which `wnd_proc` posts
-    // from WM_DESTROY.
     loop {
+        // SAFETY: `msg` is a live local that outlives every iteration, so the OS
+        // may write the next message into it. A `None` filter drains this
+        // thread's queue; WM_DESTROY posts WM_QUIT to end the loop.
         let status = unsafe { GetMessageW(&mut msg, None, 0, 0) }.0;
         if status == -1 {
             let error = Error::from_thread();
@@ -273,6 +319,7 @@ unsafe fn run_dialog() -> Result<(), String> {
         unsafe { DispatchMessageW(&msg) };
     }
 
+    interaction.finish("closed");
     Ok(())
 }
 
@@ -293,6 +340,30 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        WM_SHOW_SETTINGS => {
+            let timing = crate::timing::ActionTimer::new("settings.reactivate");
+            // SAFETY: this message is dispatched on the live window's owner.
+            unsafe { activate_dialog(hwnd) };
+            timing.finish("window_shown");
+            LRESULT(0)
+        }
+        WM_GETMINMAXINFO => {
+            // The minimum keeps fixed rows and the bottom action buttons apart.
+            if lparam.0 != 0 {
+                // SAFETY: Win32 supplies a writable MINMAXINFO for this message.
+                let limits = unsafe { &mut *(lparam.0 as *mut MINMAXINFO) };
+                limits.ptMinTrackSize.x = MIN_DIALOG_SIZE.0;
+                limits.ptMinTrackSize.y = MIN_DIALOG_SIZE.1;
+            }
+            LRESULT(0)
+        }
+        WM_SIZE => {
+            if wparam.0 != SIZE_MINIMIZED as usize {
+                // SAFETY: WM_SIZE is dispatched on the dialog's owning thread.
+                unsafe { resize_controls(hwnd) };
+            }
+            LRESULT(0)
+        }
         WM_CREATE => {
             // SAFETY: WM_CREATE is delivered from inside `CreateWindowExW`, so
             // `hwnd` is a live window owned by this thread and has no children
@@ -326,6 +397,7 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_NCDESTROY => {
+            DIALOG_WINDOW.store(0, Ordering::SeqCst);
             // SAFETY: this is the final destruction message for the dialog;
             // `create_controls` stored only its owned custom HFONT, and the
             // child controls that used it no longer outlive this cleanup.
@@ -348,6 +420,7 @@ unsafe extern "system" fn wnd_proc(
 /// `hwnd` must be a valid window handle. `edit_id` must identify an existing
 /// child EDIT control.
 unsafe fn handle_browse(hwnd: HWND, edit_id: i32) {
+    let timing = crate::timing::ActionTimer::new("settings.folder_picker.user_interaction");
     // SAFETY: `hwnd` is a live window per this function's contract, so it can
     // own the modal picker. The only caller path is `handle_command` from
     // `wnd_proc`, which runs on the `run_dialog` thread, where COM is already
@@ -357,10 +430,34 @@ unsafe fn handle_browse(hwnd: HWND, edit_id: i32) {
         // created by `create_controls` on WM_CREATE, which necessarily preceded
         // the WM_COMMAND that got us here.
         unsafe { set_control_text(hwnd, edit_id, &path.display().to_string()) };
+        timing.finish("selected");
+    } else {
+        timing.finish("cancelled_or_error");
     }
 }
 
-/// Dispatch a WM_COMMAND message by control ID.
+/// Validate and persist edits before synchronizing the Windows startup entry.
+///
+/// # Safety
+///
+/// `hwnd` must be a live dialog on this thread with all expected child controls.
+unsafe fn persist_dialog_settings(hwnd: HWND) -> Result<(), String> {
+    let settings = crate::timing::time_result("settings.validate", || {
+        // SAFETY: the caller keeps the dialog and its controls alive throughout
+        // this synchronous read; no window is destroyed by this helper.
+        unsafe { read_controls(hwnd) }
+    })?;
+    crate::timing::time_result("settings.save_file", || save_settings(&settings))
+        .map_err(|error| format!("Failed to save: {error}"))?;
+    // Keep the file-first ordering: a startup-entry failure is reported while
+    // the dialog remains open, allowing the user to retry the saved settings.
+    crate::timing::time_result("settings.update_autorun", || {
+        crate::application::autorun::sync_current_exe_autorun(settings.auto_start)
+    })
+    .map_err(|error| format!("Failed to update Windows startup: {error}"))
+}
+
+/// Dispatch a `WM_COMMAND` message by control ID.
 ///
 /// # Safety
 ///
@@ -377,37 +474,15 @@ unsafe fn handle_command(hwnd: HWND, id: i32) {
             // SAFETY: `hwnd` is the live dialog window, and its child controls
             // still exist: this command comes from the Save button, which is
             // itself one of them, and the window is destroyed only below.
-            match unsafe { read_controls(hwnd) } {
-                Ok(settings) => {
-                    if let Err(e) = save_settings(&settings) {
-                        // SAFETY: `hwnd` is still alive — it is only destroyed on
-                        // the success path — so it can own the message box.
-                        unsafe { show_error(hwnd, &format!("Failed to save: {e}")) };
-                    } else {
-                        match crate::application::autorun::sync_current_exe_autorun(
-                            settings.auto_start,
-                        ) {
-                            Ok(()) => {
-                                // SAFETY: `hwnd` is the live window created on this
-                                // thread, the only thread allowed to destroy it, and
-                                // nothing uses the handle afterwards.
-                                let _ = unsafe { DestroyWindow(hwnd) };
-                            }
-                            // SAFETY: the settings were saved but the dialog is
-                            // still alive, so it can report the separate registry
-                            // failure and let the user retry.
-                            Err(error) => unsafe {
-                                show_error(
-                                    hwnd,
-                                    &format!("Failed to update Windows startup: {error}"),
-                                )
-                            },
-                        }
-                    }
+            match unsafe { persist_dialog_settings(hwnd) } {
+                Ok(()) => {
+                    // SAFETY: `hwnd` belongs to this thread, the only thread
+                    // allowed to destroy it; nothing uses the handle afterwards.
+                    let _ = unsafe { DestroyWindow(hwnd) };
                 }
-                // SAFETY: validation failed before anything was written, so the
-                // dialog window is untouched and still valid as the owner.
-                Err(e) => unsafe { show_error(hwnd, &e) },
+                // SAFETY: persistence never destroys the dialog, so it remains
+                // a valid owner for reporting any failed stage and retrying.
+                Err(error) => unsafe { show_error(hwnd, &error) },
             }
         }
         IDC_CANCEL_BTN => {
@@ -445,7 +520,7 @@ unsafe fn show_error(hwnd: HWND, message: &str) {
 // Folder picker (IFileOpenDialog + FOS_PICKFOLDERS)
 // ---------------------------------------------------------------------------
 
-/// Show a folder-picker dialog (IFileOpenDialog with FOS_PICKFOLDERS).
+/// Show a folder-picker dialog (`IFileOpenDialog` with `FOS_PICKFOLDERS`).
 ///
 /// # Safety
 ///

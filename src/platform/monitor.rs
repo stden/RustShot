@@ -1,3 +1,7 @@
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "worker owns receiver and recovery diagnostics"
+)]
 //! Persistent Windows monitor capture shared by screenshots and recording.
 
 mod gdi;

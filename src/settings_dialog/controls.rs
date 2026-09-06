@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateFontW, DeleteObject, GetStockObject, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
     DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_PITCH, FF_DONTCARE, FW_NORMAL, HGDIOBJ,
@@ -11,7 +11,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::capture::Format;
+use crate::domain::Format;
 use crate::settings::{wide, Fps, Settings};
 
 use super::{
@@ -34,6 +34,40 @@ const CB_GETCURSEL: u32 = 0x0147;
 const BM_SETCHECK: u32 = 0x00F1;
 const BM_GETCHECK: u32 = 0x00F0;
 const BST_CHECKED: usize = 1;
+
+/// Positions that follow the client edges; the remaining controls stay fixed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ResizedControlsLayout {
+    pub(super) path_edit_width: i32,
+    pub(super) browse_x: i32,
+    pub(super) save_x: i32,
+    pub(super) cancel_x: i32,
+    pub(super) button_y: i32,
+}
+
+/// Derive anchors from usable client space, not outer window dimensions whose
+/// non-client frame changes with the window style and desktop configuration.
+pub(super) fn resized_controls_layout(
+    client_width: i32,
+    client_height: i32,
+) -> ResizedControlsLayout {
+    let layout = settings_dialog_layout();
+    let margin = 20;
+    let gap = 10;
+    let button_width = 90;
+    // WM_GETMINMAXINFO normally prevents undersized windows, but defensive
+    // clamps also keep programmatic or transient sizing from creating negative
+    // child dimensions. The folder field retains at least one pixel.
+    let browse_x = (client_width - margin - layout.browse_width).max(layout.field_x + gap + 1);
+    let cancel_x = (client_width - margin - button_width).max(0);
+    ResizedControlsLayout {
+        path_edit_width: browse_x - layout.field_x - gap,
+        browse_x,
+        save_x: (cancel_x - gap - button_width).max(0),
+        cancel_x,
+        button_y: (client_height - margin - layout.button_height).max(0),
+    }
+}
 
 /// Create the dialog's larger font, falling back to the stock GUI font if GDI
 /// cannot allocate it. Only a custom font is stored on the parent for cleanup;
@@ -287,6 +321,91 @@ pub(super) unsafe fn create_controls(hwnd: HWND) {
         layout.button_height,
         IDC_CANCEL_BTN,
     );
+
+    // SAFETY: all child-creation attempts have completed for this live parent.
+    // Initial placement must use the same client-edge anchors as later WM_SIZE.
+    unsafe { resize_controls(hwnd) };
+}
+
+/// Stretch folder paths and anchor Browse and action buttons to the client edges.
+///
+/// # Safety
+///
+/// `hwnd` must be a live settings window and this must run on its owning thread.
+/// Missing children are skipped because native sizing can occur during creation
+/// or destruction, and an individual child-creation attempt can also fail.
+pub(super) unsafe fn resize_controls(hwnd: HWND) {
+    let mut client = RECT::default();
+    // SAFETY: hwnd is live by contract and client is writable for this call.
+    if let Err(error) = unsafe { GetClientRect(hwnd, &mut client) } {
+        log::error!("Failed to read the settings window's client size: {error}");
+        return;
+    }
+    let width = client.right - client.left;
+    let height = client.bottom - client.top;
+    if width <= 0 || height <= 0 {
+        return;
+    }
+
+    let layout = settings_dialog_layout();
+    let resized = resized_controls_layout(width, height);
+    let controls = [
+        (
+            IDC_SCREENSHOTS_EDIT,
+            layout.field_x,
+            14,
+            resized.path_edit_width,
+            layout.field_height,
+        ),
+        (
+            IDC_SCREENSHOTS_BROWSE,
+            resized.browse_x,
+            14,
+            layout.browse_width,
+            layout.field_height,
+        ),
+        (
+            IDC_RECORDINGS_EDIT,
+            layout.field_x,
+            52,
+            resized.path_edit_width,
+            layout.field_height,
+        ),
+        (
+            IDC_RECORDINGS_BROWSE,
+            resized.browse_x,
+            52,
+            layout.browse_width,
+            layout.field_height,
+        ),
+        (
+            IDC_SAVE_BTN,
+            resized.save_x,
+            resized.button_y,
+            90,
+            layout.button_height,
+        ),
+        (
+            IDC_CANCEL_BTN,
+            resized.cancel_x,
+            resized.button_y,
+            90,
+            layout.button_height,
+        ),
+    ];
+    for (index, (id, x, y, width, height)) in controls.into_iter().enumerate() {
+        // SAFETY: hwnd is the live parent and id names one of its controls.
+        if let Ok(child) = unsafe { GetDlgItem(Some(hwnd), id) } {
+            // SAFETY: child was just resolved on this window's owning thread;
+            // dimensions come from the non-negative layout above. Defer repaint
+            // until every control has moved so the buttons never render against
+            // an intermediate parent background during a resize.
+            let redraw = index + 1 == controls.len();
+            if let Err(error) = unsafe { MoveWindow(child, x, y, width, height, redraw) } {
+                log::error!("Failed to resize settings control {id}: {error}");
+            }
+        }
+    }
 }
 
 /// Fill all controls with the current settings values.

@@ -32,7 +32,6 @@ pub(crate) mod frame;
 /// bgra_to_rgba(&mut pixels);
 /// assert_eq!(pixels, vec![200, 100, 0, 255]); // R=200, G=100, B=0, A=255
 /// ```
-#[allow(dead_code)]
 pub fn bgra_to_rgba(pixels: &mut [u8]) {
     PixelSwizzle::detect().convert_in_place(pixels);
 }
@@ -228,7 +227,6 @@ pub(crate) fn checked_rgba_len(width: u32, height: u32) -> Result<usize, String>
         .ok_or_else(|| "Pixel buffer dimensions are too large".to_string())
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn validate_capture_region(
     region: Region,
     frame_width: u32,
@@ -287,7 +285,6 @@ pub(crate) fn validate_capture_region(
 /// // Single row, so bottom-up is the same order; R↔B swapped:
 /// assert_eq!(bgra, vec![30, 20, 10, 255, 60, 50, 40, 255]);
 /// ```
-#[allow(dead_code)]
 pub fn rgba_to_bgra_bottom_up(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     let required = checked_rgba_len(width, height)?;
     let mut out = vec![0u8; required];

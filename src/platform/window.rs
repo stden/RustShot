@@ -1,4 +1,8 @@
-//! Platform-specific active-window capture: WinAPI on Windows, an explicit error elsewhere.
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "native receiver ownership transfers to worker"
+)]
+//! Platform-specific active-window capture: `WinAPI` on Windows, an explicit error elsewhere.
 
 #[cfg(windows)]
 mod wgc;
@@ -660,7 +664,7 @@ fn get_window_bounds(hwnd: windows::Win32::Foundation::HWND) -> Result<WindowBou
 /// a window-capture request (an `HWND` chosen from the window
 /// list). Windows Graphics Capture is the primary backend, so compositor-owned
 /// window pixels remain available when another window overlaps the target.
-/// Older Windows versions and recoverable WGC failures use a PrintWindow GDI
+/// Older Windows versions and recoverable WGC failures use a `PrintWindow` GDI
 /// fallback.
 #[cfg(windows)]
 pub(crate) fn capture_hwnd(

@@ -8,7 +8,6 @@ use std::hint::black_box;
 // selection::build_physical_screen_layouts
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 pub(crate) fn bench_build_physical_screen_layouts(c: &mut Criterion) {
     let mut group = c.benchmark_group("build_physical_screen_layouts");
 
@@ -41,7 +40,6 @@ pub(crate) fn bench_build_physical_screen_layouts(c: &mut Criterion) {
 // selection::normalize_physical_screen_layouts
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 pub(crate) fn bench_normalize_physical_screen_layouts(c: &mut Criterion) {
     let mut group = c.benchmark_group("normalize_physical_screen_layouts");
 
@@ -65,7 +63,6 @@ pub(crate) fn bench_normalize_physical_screen_layouts(c: &mut Criterion) {
 // selection::resolve_recording_selection
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 pub(crate) fn bench_resolve_recording_selection(c: &mut Criterion) {
     let mut group = c.benchmark_group("resolve_recording_selection");
 
@@ -108,7 +105,6 @@ pub(crate) fn bench_resolve_recording_selection(c: &mut Criterion) {
 // selection::ranges_overlap
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 pub(crate) fn bench_ranges_overlap(c: &mut Criterion) {
     let mut group = c.benchmark_group("ranges_overlap");
 
@@ -163,7 +159,6 @@ pub(crate) fn bench_ranges_overlap(c: &mut Criterion) {
 // selection::monitor_scale_ratio
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 pub(crate) fn bench_monitor_scale_ratio(c: &mut Criterion) {
     let mut group = c.benchmark_group("monitor_scale_ratio");
 
@@ -186,7 +181,6 @@ pub(crate) fn bench_monitor_scale_ratio(c: &mut Criterion) {
 // selection::scaled_gap
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 pub(crate) fn bench_scaled_gap(c: &mut Criterion) {
     let mut group = c.benchmark_group("scaled_gap");
 

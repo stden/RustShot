@@ -15,7 +15,10 @@ pub enum Format {
 
 // The image-encoder method stays in the capture adapter, preserving the public
 // API without making domain policy depend on the image library.
-#[allow(clippy::multiple_inherent_impl)]
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "The image encoder adapter preserves the public API without adding image to the pure domain layer."
+)]
 impl Format {
     /// Every supported format, in settings/UI order. The first entry is the
     /// default used as the fallback for unrecognised input.

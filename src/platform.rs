@@ -23,12 +23,12 @@ pub(crate) fn wide(value: &str) -> Vec<u16> {
 /// Pin the process-wide COM multithreaded apartment for the lifetime of the
 /// process.
 ///
-/// The WGC backends initialize WinRT on short-lived worker threads and
+/// The WGC backends initialize `WinRT` on short-lived worker threads and
 /// uninitialize it when the thread exits. If that `RoUninitialize` closes the
 /// LAST thread in the MTA, the apartment is destroyed - and COM objects still
 /// cached elsewhere in the process (DXGI factories, the `screenshots` crate's
 /// internals, frame-pool callbacks) become dangling, so the next capture or
-/// the process teardown dies with STATUS_ACCESS_VIOLATION. This was observed
+/// the process teardown dies with `STATUS_ACCESS_VIOLATION`. This was observed
 /// as: CI test binaries crashing on the capture test AFTER a window-capture
 /// test passed, criterion crashing at exit, and the app crashing after
 /// --window-id captures.

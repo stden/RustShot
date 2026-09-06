@@ -18,7 +18,7 @@ fn display_available() -> bool {
 }
 
 /// The one live-capture error that says something about the *desktop* rather
-/// than about RustShot.
+/// than about `RustShot`.
 ///
 /// Windows Graphics Capture publishes a frame only when the compositor presents
 /// a new one, so `capture_monitor_image_on_worker` waits up to
@@ -420,7 +420,7 @@ fn screenshot_capture_png_file_size_is_reasonable() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// capture_screenshot with explicit screen index 0 should work.
+/// `capture_screenshot` with explicit screen index 0 should work.
 #[test]
 fn screenshot_capture_screen_index_0_ok() {
     require_display!();
@@ -435,7 +435,7 @@ fn screenshot_capture_screen_index_0_ok() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// capture_screenshot with out-of-range screen index should error.
+/// `capture_screenshot` with out-of-range screen index should error.
 #[test]
 fn screenshot_capture_invalid_screen_index_errors() {
     require_display!();
@@ -462,7 +462,7 @@ fn screenshot_capture_invalid_screen_index_errors() {
 // (consumed by benches/benchmarks/capture_live.rs)
 // ---------------------------------------------------------------------------
 
-/// capture_screenshot_in_dir with no explicit output must generate a
+/// `capture_screenshot_in_dir` with no explicit output must generate a
 /// timestamped file inside the provided directory.
 #[test]
 fn screenshot_capture_in_dir_generates_file_in_custom_dir() {
@@ -499,8 +499,8 @@ fn screenshot_capture_in_dir_generates_file_in_custom_dir() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// capture_active_window_image is probed and iterated by the
-/// capture_active_window benchmark. On Windows it returns either a non-empty
+/// `capture_active_window_image` is probed and iterated by the
+/// `capture_active_window` benchmark. On Windows it returns either a non-empty
 /// image or a human-readable error (e.g. no foreground window on a service
 /// session) - both are valid outcomes the benchmark handles.
 #[cfg(windows)]
@@ -530,7 +530,7 @@ fn capture_active_window_image_errors_on_non_windows() {
 ///
 /// The WGC backend used to RoInitialize/RoUninitialize on a short-lived worker
 /// thread; when that was the last MTA thread, the apartment died and the NEXT
-/// capture (or process exit) crashed with STATUS_ACCESS_VIOLATION - exactly
+/// capture (or process exit) crashed with `STATUS_ACCESS_VIOLATION` - exactly
 /// this sequence, observed on the CI Windows runner. The MTA is now pinned for
 /// the process lifetime.
 #[cfg(windows)]

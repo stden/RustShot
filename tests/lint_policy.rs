@@ -14,14 +14,14 @@ const CARGO_CONFIG: &str = include_str!("../.cargo/config.toml");
 const CLIPPY_CONFIG: &str = include_str!("../clippy.toml");
 const TOOLCHAIN: &str = include_str!("../rust-toolchain.toml");
 
-/// Every `key = "value"` pair under a `[section]` header, ignoring comments and blanks.
+/// Every key/value pair under a header (or the root for `""`), ignoring comments.
 ///
-/// A hand-rolled scan rather than a `toml` dependency: the shape needed here is two
-/// flat tables of string values, and this crate deliberately keeps its dependency list
+/// A hand-rolled scan rather than a `toml` dependency: only flat tables and root
+/// scalar values are needed, and this crate deliberately keeps its dependency list
 /// short (see the `serde_json` note in Cargo.toml).
 fn table_entries(source: &str, header: &str) -> Vec<(String, String)> {
     let mut entries = Vec::new();
-    let mut inside = false;
+    let mut inside = header.is_empty();
 
     for line in source.lines() {
         let line = line.trim();
@@ -67,9 +67,8 @@ fn cargo_lint_alias_still_denies_warnings() {
          violations."
     );
     assert!(
-        alias.contains("--all-targets"),
-        "the `lint` alias no longer passes `--all-targets`: {alias}\nTests, benches and \
-         examples would stop being linted, which is where most violations were found."
+        alias.contains("--lib") && alias.contains("--bins"),
+        "the `lint` alias must lint library and binary targets: {alias}"
     );
     assert!(
         alias.contains("--all-features"),
@@ -93,6 +92,52 @@ fn both_lint_tables_are_declared() {
         !clippy_lints().is_empty(),
         "[lints.clippy] is present but empty — this test would pass vacuously"
     );
+}
+
+#[test]
+fn readability_checks_are_explicitly_enabled() {
+    let lints = clippy_lints();
+    for name in [
+        "cognitive_complexity",
+        "excessive_nesting",
+        "too_many_arguments",
+        "type_complexity",
+        "allow_attributes_without_reason",
+        "fn_params_excessive_bools",
+        "undocumented_unsafe_blocks",
+        "needless_pass_by_value",
+        "doc_markdown",
+    ] {
+        assert!(
+            lints.iter().any(|(lint, level)| lint == name
+                && matches!(level.as_str(), "warn" | "deny" | "forbid")),
+            "clippy::{name} must be enforced by cargo lint"
+        );
+    }
+}
+
+#[test]
+fn readability_budgets_cannot_be_disabled_or_silently_relaxed() {
+    let configuration = table_entries(CLIPPY_CONFIG, "");
+    for (name, maximum) in [
+        ("cognitive-complexity-threshold", 25),
+        ("excessive-nesting-threshold", 4),
+        ("too-many-arguments-threshold", 5),
+        ("type-complexity-threshold", 250),
+        ("max-fn-params-bools", 1),
+    ] {
+        let value = configuration
+            .iter()
+            .find(|(key, _)| key == name)
+            .unwrap_or_else(|| panic!("clippy.toml must explicitly set {name}"))
+            .1
+            .parse::<u64>()
+            .unwrap_or_else(|_| panic!("{name} must be a positive integer"));
+        assert!(
+            value > 0 && value <= maximum,
+            "{name} must be between 1 and {maximum}, got {value}; zero disables nesting"
+        );
+    }
 }
 
 /// The table's premise is that a lint is only added once its violations are fixed, so
@@ -170,10 +215,9 @@ fn lints_fixed_to_be_enabled_are_still_enabled() {
     }
 }
 
-/// `unsafe_op_in_unsafe_fn` is the highest-value lint for this Win32-heavy crate and is
-/// off only because adopting it means touching 101 sites. It reports under `E0133`, so
-/// it does not show up in tallies that grep for lowercase lint names — which is exactly
-/// how it got recorded as "zero violations" once already. Keep the note that says so.
+/// Native functions must retain explicit unsafe-operation boundaries even when
+/// they are themselves unsafe to call. Unlike the Clippy checks, this compiler
+/// lint protects ordinary builds too.
 #[test]
 fn the_unsafe_fn_lint_stays_enabled() {
     // Flipped from "stays recorded" now that the 101 violations are fixed and the lint

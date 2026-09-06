@@ -5,6 +5,10 @@ use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::path::Path;
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "generic process status is consumed by the predicate"
+)]
 pub fn child_process_is_running<T, E>(try_wait_result: Result<Option<T>, E>) -> bool {
     matches!(try_wait_result, Ok(None))
 }
@@ -98,6 +102,13 @@ pub fn unsupported_output_extension(output: Option<&Path>) -> Option<String> {
         .then(|| extension.to_string())
 }
 
+/// Compatibility query for existing benchmark and library callers. Application
+/// routing uses the typed [`AppModeRequest`] through [`decide_app_mode`].
+#[expect(
+    clippy::too_many_arguments,
+    clippy::fn_params_excessive_bools,
+    reason = "Legacy public flag signature; the implementation delegates to typed AppModeRequest routing"
+)]
 pub fn should_run_cli_mode(
     cli: bool,
     list: bool,
@@ -106,7 +117,16 @@ pub fn should_run_cli_mode(
     has_screen: bool,
     format_explicit: bool,
 ) -> bool {
-    cli || list || window || has_output || has_screen || format_explicit
+    decide_app_mode(AppModeRequest {
+        select_record: false,
+        select: false,
+        cli,
+        list,
+        window,
+        has_output,
+        has_screen,
+        format_explicit,
+    }) == AppMode::Cli
 }
 
 pub fn format_screen_list_output<I, S>(screens: I) -> String
@@ -145,7 +165,7 @@ pub enum AppMode {
 }
 
 /// Request struct capturing the flags needed to decide the application mode.
-#[derive(Debug, Clone)]
+#[derive(Clone, Copy, Debug)]
 pub struct AppModeRequest {
     pub select_record: bool,
     pub select: bool,
@@ -159,7 +179,7 @@ pub struct AppModeRequest {
 
 /// Determines which application mode to run based on CLI flags.
 ///
-/// Priority: select_record > select > CLI indicators > tray (default).
+/// Priority: `select_record` > select > CLI indicators > tray (default).
 pub fn decide_app_mode(req: AppModeRequest) -> AppMode {
     if req.select_record {
         return AppMode::SelectRecord;
@@ -167,14 +187,8 @@ pub fn decide_app_mode(req: AppModeRequest) -> AppMode {
     if req.select {
         return AppMode::Selection;
     }
-    if should_run_cli_mode(
-        req.cli,
-        req.list,
-        req.window,
-        req.has_output,
-        req.has_screen,
-        req.format_explicit,
-    ) {
+    if req.cli || req.list || req.window || req.has_output || req.has_screen || req.format_explicit
+    {
         return AppMode::Cli;
     }
     AppMode::Tray

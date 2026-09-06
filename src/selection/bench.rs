@@ -1,8 +1,11 @@
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "benchmark fixture owns its pixel buffer"
+)]
 //! `#[doc(hidden)]` wrappers exposing private selection helpers to benchmarks.
 
 use super::*;
 
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_scaled_physical_dimension(
     logical_size: u32,
@@ -12,7 +15,6 @@ pub fn benchmark_scaled_physical_dimension(
 }
 
 /// Expose `build_physical_screen_layouts` for benchmarks.
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_build_physical_screen_layouts(
     inputs: &[(i32, i32, u32, u32, u32, u32, bool)],
@@ -63,7 +65,6 @@ type BenchmarkRegion = (i32, i32, u32, u32);
 type BenchmarkResolvedSelection = (usize, BenchmarkRegion);
 
 /// Expose `normalize_physical_screen_layouts` for benchmarks.
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_normalize_physical_screen_layouts(
     inputs: &[BenchmarkNormalizeLayoutInput],
@@ -115,7 +116,6 @@ pub fn benchmark_normalize_physical_screen_layouts(
 }
 
 /// Normalize already-resolved physical monitor rectangles for executable specs.
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_normalize_resolved_physical_layouts(
     inputs: &[BenchmarkResolveLayout],
@@ -166,7 +166,6 @@ pub fn benchmark_normalize_resolved_physical_layouts(
 }
 
 /// Expose `resolve_recording_selection` for benchmarks.
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_resolve_recording_selection(
     layouts: &[BenchmarkResolveLayout],
@@ -218,21 +217,18 @@ pub fn benchmark_resolve_recording_selection(
 }
 
 /// Expose `ranges_overlap` for benchmarks.
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_ranges_overlap(start_a: i32, size_a: u32, start_b: i32, size_b: u32) -> bool {
     ranges_overlap(start_a, size_a, start_b, size_b)
 }
 
 /// Expose `monitor_scale_ratio` for benchmarks.
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_monitor_scale_ratio(logical_size: u32, physical_size: u32) -> f32 {
     monitor_scale_ratio(logical_size, physical_size)
 }
 
 /// Expose `scaled_gap` for benchmarks.
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_scaled_gap(gap: i32, logical_size: u32, physical_size: u32) -> i32 {
     scaled_gap(gap, logical_size, physical_size)
@@ -242,7 +238,6 @@ pub fn benchmark_scaled_gap(gap: i32, logical_size: u32, physical_size: u32) -> 
 type BenchmarkMonitor = ((i32, i32), (u32, u32));
 
 /// Expose `target_overlay_monitor_index` for benchmarks and executable specs.
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_target_overlay_monitor_index(
     monitors: &[BenchmarkMonitor],
@@ -252,7 +247,6 @@ pub fn benchmark_target_overlay_monitor_index(
     overlay::target_overlay_monitor_index(monitors.iter().copied(), target_origin, target_size)
 }
 
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_build_screen_layout_inputs_physical_sizes<I>(
     screens: I,
@@ -277,7 +271,6 @@ where
 /// between the PrintScreen keypress and the overlay appearing. Returns the
 /// converted pixels so Criterion's `black_box` makes every write observable;
 /// returning only the length lets an optimised build discard the conversion.
-#[allow(dead_code)]
 #[doc(hidden)]
 pub fn benchmark_build_overlay_background(
     screenshot: &[u8],
@@ -378,8 +371,7 @@ impl OverlayRedrawBenchmark {
         overlay::redraw_overlay_frame(
             &self.pixel_map.background,
             &mut self.output,
-            self.overlay_width,
-            self.overlay_height,
+            (self.overlay_width, self.overlay_height),
             self.last_decoration,
             decoration,
         );

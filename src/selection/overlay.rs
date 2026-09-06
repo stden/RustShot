@@ -524,11 +524,11 @@ pub(super) fn compose_overlay_frame(
 pub(super) fn redraw_overlay_frame(
     background: &[u32],
     output: &mut [u32],
-    width: usize,
-    height: usize,
+    size: (usize, usize),
     previous: OverlayDecoration,
     decoration: OverlayDecoration,
 ) -> OverlayDamage {
+    let (width, height) = size;
     let mut damage = OverlayDamage::default();
     let Some(frame_len) = width.checked_mul(height) else {
         return damage;
@@ -557,7 +557,7 @@ pub(super) fn redraw_overlay_frame(
 
 /// Choose the native presentation regions independently of CPU composition.
 ///
-/// softbuffer's Win32 backend issues a separate BitBlt for each damage rectangle.
+/// softbuffer's Win32 backend issues a separate `BitBlt` for each damage rectangle.
 /// Sending the thin restore/paint spans individually exposes partially erased
 /// crosshairs and borders between blits. It also validates the entire window,
 /// so decoration bounds alone miss an OS repaint outside them. Present the full
@@ -621,12 +621,32 @@ pub(super) struct SelectionApp {
     /// reusable as the base for an incremental redraw. `None` forces a full
     /// recompose on the next draw.
     last_decoration: Option<OverlayDecoration>,
+    first_frame_presented: bool,
     /// Whether the error that skipped a frame has been reported already.
     /// Redraws follow cursor movement and one mismatch is permanent
     /// (a capture with a zero extent leaves the cached background empty for the
     /// whole session), so logging every occurrence would write one identical
     /// line per mouse motion and bury everything else in the log.
     frame_skip_logged: bool,
+}
+
+fn log_skipped_frame(
+    logged: &mut bool,
+    size: (usize, usize),
+    background_len: usize,
+    output_len: usize,
+) {
+    if *logged {
+        return;
+    }
+    *logged = true;
+    log::warn!(
+        "overlay frame {}x{} not presented: background {} px, surface buffer {} px",
+        size.0,
+        size.1,
+        background_len,
+        output_len,
+    );
 }
 
 impl SelectionApp {
@@ -653,6 +673,7 @@ impl SelectionApp {
             setup_error: None,
             pixel_map: OverlayPixelMapCache::default(),
             last_decoration: None,
+            first_frame_presented: false,
             frame_skip_logged: false,
         }
     }
@@ -733,8 +754,7 @@ impl SelectionApp {
                 let damage = redraw_overlay_frame(
                     &self.pixel_map.background,
                     &mut buffer,
-                    buf_w,
-                    buf_h,
+                    (buf_w, buf_h),
                     previous,
                     decoration,
                 );
@@ -758,14 +778,12 @@ impl SelectionApp {
                     // window reports its new size before `Resized` rebuilds the
                     // surface - so skip this frame rather than fail the whole
                     // selection.
-                    if !self.frame_skip_logged {
-                        self.frame_skip_logged = true;
-                        log::warn!(
-                            "overlay frame {buf_w}x{buf_h} not presented: background {} px, surface buffer {} px",
-                            self.pixel_map.background.len(),
-                            buffer.len(),
-                        );
-                    }
+                    log_skipped_frame(
+                        &mut self.frame_skip_logged,
+                        (buf_w, buf_h),
+                        self.pixel_map.background.len(),
+                        buffer.len(),
+                    );
                     self.last_decoration = None;
                     return;
                 }
@@ -774,6 +792,12 @@ impl SelectionApp {
         };
         match presentation {
             Ok(()) => {
+                // A skipped or failed startup draw is not a visible frame.
+                // Record readiness only after the first successful presentation.
+                if !self.first_frame_presented {
+                    self.first_frame_presented = true;
+                    crate::timing::mark(crate::timing::CaptureMilestone::OverlayFirstFrame);
+                }
                 self.last_decoration = Some(decoration);
                 self.frame_skip_logged = false;
             }
@@ -1001,9 +1025,6 @@ impl ApplicationHandler for SelectionApp {
         self.surface = Some(surface);
         crate::timing::mark(crate::timing::CaptureMilestone::OverlayWindowCreated);
         self.draw();
-        // The overlay is only useful to the user once a frame is on screen, so
-        // this is the milestone the <100 ms target is really about.
-        crate::timing::mark(crate::timing::CaptureMilestone::OverlayFirstFrame);
     }
 
     fn window_event(
@@ -1024,20 +1045,26 @@ impl ApplicationHandler for SelectionApp {
                 self.on_cancel();
                 event_loop.exit();
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                if button == MouseButton::Left {
-                    match state {
-                        ElementState::Pressed => self.on_press(),
-                        ElementState::Released => {
-                            if self.on_release() {
-                                event_loop.exit();
-                            }
-                        }
-                    }
-                } else if button == MouseButton::Right {
-                    self.on_cancel();
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => self.on_press(),
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if self.on_release() {
                     event_loop.exit();
                 }
+            }
+            WindowEvent::MouseInput {
+                button: MouseButton::Right,
+                ..
+            } => {
+                self.on_cancel();
+                event_loop.exit();
             }
             WindowEvent::Resized(new_size) => self.on_resize(new_size),
             WindowEvent::ScaleFactorChanged {

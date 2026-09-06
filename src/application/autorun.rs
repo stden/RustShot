@@ -37,61 +37,118 @@ fn same_windows_path(left: &Path, right: &Path) -> bool {
     left.as_os_str().eq_ignore_ascii_case(right.as_os_str())
 }
 
-fn install_executable_at_with_handlers<TargetExists, CreateDir, CopyExe>(
-    current_exe: &Path,
-    local_app_data: &Path,
+/// Prepare the stable per-user executable using filesystem effects supplied by
+/// the caller. Paths and copy operations belong together: registration must not
+/// start until this installation step has completed successfully.
+pub(crate) struct ExecutableInstaller<'a, TargetExists, CreateDir, CopyExe> {
+    current_exe: &'a Path,
+    local_app_data: &'a Path,
     target_exists: TargetExists,
     create_dir: CreateDir,
     copy_exe: CopyExe,
-) -> Result<(PathBuf, bool), String>
+}
+
+impl<'a, TargetExists, CreateDir, CopyExe> ExecutableInstaller<'a, TargetExists, CreateDir, CopyExe>
 where
     TargetExists: FnOnce(&Path) -> std::io::Result<bool>,
     CreateDir: FnOnce(&Path) -> std::io::Result<()>,
     CopyExe: FnOnce(&Path, &Path) -> std::io::Result<u64>,
 {
-    let installed_exe = installed_exe_path(local_app_data);
-    if same_windows_path(current_exe, &installed_exe) {
-        return Ok((installed_exe, false));
+    pub(crate) fn new(
+        current_exe: &'a Path,
+        local_app_data: &'a Path,
+        target_exists: TargetExists,
+        create_dir: CreateDir,
+        copy_exe: CopyExe,
+    ) -> Self {
+        Self {
+            current_exe,
+            local_app_data,
+            target_exists,
+            create_dir,
+            copy_exe,
+        }
     }
 
-    let already_installed = target_exists(&installed_exe).map_err(|error| {
-        format!(
-            "Failed to inspect RustShot install path {}: {error}",
-            installed_exe.display()
-        )
-    })?;
-    if already_installed {
-        return Ok((installed_exe, true));
+    fn install(self) -> Result<(PathBuf, bool), String> {
+        let Self {
+            current_exe,
+            local_app_data,
+            target_exists,
+            create_dir,
+            copy_exe,
+        } = self;
+        let installed_exe = installed_exe_path(local_app_data);
+        if same_windows_path(current_exe, &installed_exe) {
+            return Ok((installed_exe, false));
+        }
+
+        let already_installed = target_exists(&installed_exe).map_err(|error| {
+            format!(
+                "Failed to inspect RustShot install path {}: {error}",
+                installed_exe.display()
+            )
+        })?;
+        if already_installed {
+            return Ok((installed_exe, true));
+        }
+
+        let install_dir = installed_exe.parent().ok_or_else(|| {
+            format!(
+                "Installed executable has no parent: {}",
+                installed_exe.display()
+            )
+        })?;
+        create_dir(install_dir).map_err(|error| {
+            format!(
+                "Failed to create RustShot install directory {}: {error}",
+                install_dir.display()
+            )
+        })?;
+        copy_exe(current_exe, &installed_exe).map_err(|error| {
+            format!(
+                "Failed to copy RustShot from {} to {}: {error}",
+                current_exe.display(),
+                installed_exe.display()
+            )
+        })?;
+
+        Ok((installed_exe, true))
+    }
+}
+
+/// Registry effects form one port because disabling startup and rolling back a
+/// failed handoff must remove the same entry that enabling startup registers.
+pub(crate) struct AutorunRegistration<Register, Remove> {
+    register: Register,
+    remove: Remove,
+}
+
+impl<Register, Remove> AutorunRegistration<Register, Remove>
+where
+    Register: FnOnce(&Path) -> Result<(), String>,
+    Remove: FnOnce() -> Result<(), String>,
+{
+    pub(crate) fn new(register: Register, remove: Remove) -> Self {
+        Self { register, remove }
     }
 
-    let install_dir = installed_exe.parent().ok_or_else(|| {
-        format!(
-            "Installed executable has no parent: {}",
-            installed_exe.display()
-        )
-    })?;
-    create_dir(install_dir).map_err(|error| {
-        format!(
-            "Failed to create RustShot install directory {}: {error}",
-            install_dir.display()
-        )
-    })?;
-    copy_exe(current_exe, &installed_exe).map_err(|error| {
-        format!(
-            "Failed to copy RustShot from {} to {}: {error}",
-            current_exe.display(),
-            installed_exe.display()
-        )
-    })?;
+    fn disable(self) -> Result<(), String> {
+        (self.remove)()
+    }
 
-    Ok((installed_exe, true))
+    /// Successful registration hands its removal callback to the startup
+    /// workflow, which can roll back if launching the installed copy fails.
+    fn enable(self, executable: &Path) -> Result<Remove, String> {
+        (self.register)(executable)?;
+        Ok(self.remove)
+    }
 }
 
 /// Apply startup policy at explicit paths through injected side-effect handlers.
 ///
 /// Keeping the ordering here testable prevents a failed first-run copy from
 /// becoming the executable Windows tries to launch at the next sign-in.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_autorun_at_with_handlers<
     TargetExists,
     CreateDir,
@@ -101,13 +158,8 @@ pub(crate) fn sync_autorun_at_with_handlers<
     Launch,
 >(
     enabled: bool,
-    current_exe: &Path,
-    local_app_data: &Path,
-    target_exists: TargetExists,
-    create_dir: CreateDir,
-    copy_exe: CopyExe,
-    register_autorun: Register,
-    remove_autorun: Remove,
+    installer: ExecutableInstaller<'_, TargetExists, CreateDir, CopyExe>,
+    registration: AutorunRegistration<Register, Remove>,
     launch_exe: Launch,
 ) -> Result<StartupAction, String>
 where
@@ -119,18 +171,12 @@ where
     Launch: FnOnce(&Path) -> std::io::Result<()>,
 {
     if !enabled {
-        remove_autorun()?;
+        registration.disable()?;
         return Ok(StartupAction::Continue);
     }
 
-    let (installed_exe, hand_off) = install_executable_at_with_handlers(
-        current_exe,
-        local_app_data,
-        target_exists,
-        create_dir,
-        copy_exe,
-    )?;
-    register_autorun(&installed_exe)?;
+    let (installed_exe, hand_off) = installer.install()?;
+    let remove_autorun = registration.enable(&installed_exe)?;
     if !hand_off {
         return Ok(StartupAction::Continue);
     }
@@ -156,7 +202,10 @@ where
 /// filesystem, registry, and process effects. `true` means the source process
 /// should exit after successfully launching the installed copy.
 #[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "External Gherkin/benchmark compatibility signature; the workflow uses installer and registry ports"
+)]
 pub fn benchmark_sync_autorun_at_with_handlers<
     TargetExists,
     CreateDir,
@@ -185,13 +234,14 @@ where
 {
     sync_autorun_at_with_handlers(
         enabled,
-        current_exe,
-        local_app_data,
-        target_exists,
-        create_dir,
-        copy_exe,
-        register_autorun,
-        remove_autorun,
+        ExecutableInstaller::new(
+            current_exe,
+            local_app_data,
+            target_exists,
+            create_dir,
+            copy_exe,
+        ),
+        AutorunRegistration::new(register_autorun, remove_autorun),
         launch_exe,
     )
     .map(|action| action == StartupAction::Exit)
@@ -213,7 +263,6 @@ pub(crate) fn sync_autorun_with_handlers<Enable, Disable>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_current_exe_autorun_at_with_handlers<
     TargetExists,
     CreateDir,
@@ -222,13 +271,8 @@ pub(crate) fn sync_current_exe_autorun_at_with_handlers<
     Remove,
 >(
     enabled: bool,
-    current_exe: &Path,
-    local_app_data: &Path,
-    target_exists: TargetExists,
-    create_dir: CreateDir,
-    copy_exe: CopyExe,
-    register_autorun: Register,
-    remove_autorun: Remove,
+    installer: ExecutableInstaller<'_, TargetExists, CreateDir, CopyExe>,
+    registration: AutorunRegistration<Register, Remove>,
 ) -> Result<(), String>
 where
     TargetExists: FnOnce(&Path) -> std::io::Result<bool>,
@@ -238,17 +282,11 @@ where
     Remove: FnOnce() -> Result<(), String>,
 {
     if !enabled {
-        return remove_autorun();
+        return registration.disable();
     }
 
-    let (installed_exe, _hand_off) = install_executable_at_with_handlers(
-        current_exe,
-        local_app_data,
-        target_exists,
-        create_dir,
-        copy_exe,
-    )?;
-    register_autorun(&installed_exe)
+    let (installed_exe, _hand_off) = installer.install()?;
+    registration.enable(&installed_exe).map(|_rollback| ())
 }
 
 /// Exercise Settings auto-start synchronization without touching the host.
@@ -257,7 +295,10 @@ where
 /// startup synchronization, it never relaunches or asks the current process to
 /// exit.
 #[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "External Gherkin/benchmark compatibility signature; the workflow uses installer and registry ports"
+)]
 pub fn benchmark_sync_current_exe_autorun_at_with_handlers<
     TargetExists,
     CreateDir,
@@ -283,17 +324,18 @@ where
 {
     sync_current_exe_autorun_at_with_handlers(
         enabled,
-        current_exe,
-        local_app_data,
-        target_exists,
-        create_dir,
-        copy_exe,
-        register_autorun,
-        remove_autorun,
+        ExecutableInstaller::new(
+            current_exe,
+            local_app_data,
+            target_exists,
+            create_dir,
+            copy_exe,
+        ),
+        AutorunRegistration::new(register_autorun, remove_autorun),
     )
 }
 
-/// Install RustShot per-user and synchronise Windows auto-start with the setting.
+/// Install `RustShot` per-user and synchronise Windows auto-start with the setting.
 ///
 /// An enabled launch from outside the stable install directory uses the existing
 /// installed copy, or atomically creates it when absent. It registers and launches
@@ -305,7 +347,7 @@ where
 /// ever registered, so once auto-start was on the user could never turn it off.
 ///
 /// Two invariants worth keeping:
-/// - It writes to `HKCU` only, never `HKLM`. That is what keeps RustShot free of
+/// - It writes to `HKCU` only, never `HKLM`. That is what keeps `RustShot` free of
 ///   any elevation/admin requirement.
 /// - It is applied only in Tray mode, so the `--select` / `--select-record`
 ///   child processes never touch the registry.
@@ -322,13 +364,14 @@ pub(crate) fn sync_autorun(enabled: bool) -> Result<StartupAction, String> {
 
     sync_autorun_at_with_handlers(
         true,
-        &current_exe,
-        &local_app_data,
-        inspect_installed_executable,
-        |path| std::fs::create_dir_all(path),
-        copy_executable_atomically,
-        setup_autorun,
-        remove_autorun,
+        ExecutableInstaller::new(
+            &current_exe,
+            &local_app_data,
+            inspect_installed_executable,
+            |path| std::fs::create_dir_all(path),
+            copy_executable_atomically,
+        ),
+        AutorunRegistration::new(setup_autorun, remove_autorun),
         |path| std::process::Command::new(path).spawn().map(|_child| ()),
     )
 }
@@ -350,12 +393,13 @@ pub(crate) fn sync_current_exe_autorun(enabled: bool) -> Result<(), String> {
         .ok_or_else(|| "Failed to locate the current user's local application data".to_string())?;
     sync_current_exe_autorun_at_with_handlers(
         true,
-        &current_exe,
-        &local_app_data,
-        inspect_installed_executable,
-        |path| std::fs::create_dir_all(path),
-        copy_executable_atomically,
-        setup_autorun,
-        remove_autorun,
+        ExecutableInstaller::new(
+            &current_exe,
+            &local_app_data,
+            inspect_installed_executable,
+            |path| std::fs::create_dir_all(path),
+            copy_executable_atomically,
+        ),
+        AutorunRegistration::new(setup_autorun, remove_autorun),
     )
 }

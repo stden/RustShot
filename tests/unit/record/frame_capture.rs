@@ -1,5 +1,6 @@
 //! Regression tests for persistent native recording-frame conversion.
 
+use crate::domain::PhysicalSize;
 use crate::record::*;
 
 #[test]
@@ -16,7 +17,12 @@ fn bgra_region_copy_respects_source_pitch_and_flips_rows() {
     };
     let mut output = vec![0xcc; 2 * 2 * 4];
 
-    copy_bgra_region_bottom_up(&source, 16, 3, 2, region, 2, 2, &mut output).unwrap();
+    copy_bgra_region_bottom_up(
+        FrameView::new(&source, PhysicalSize::new(3, 2), 16),
+        region,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(2, 2)),
+    )
+    .unwrap();
 
     assert_eq!(
         output,
@@ -35,7 +41,12 @@ fn bgra_region_copy_zero_pads_even_output_dimensions() {
     };
     let mut output = vec![255; 4 * 2 * 4];
 
-    copy_bgra_region_bottom_up(&source, 12, 3, 1, region, 4, 2, &mut output).unwrap();
+    copy_bgra_region_bottom_up(
+        FrameView::new(&source, PhysicalSize::new(3, 1), 12),
+        region,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(4, 2)),
+    )
+    .unwrap();
 
     assert_eq!(&output[..16], &[0; 16]);
     assert_eq!(
@@ -56,7 +67,12 @@ fn padded_copies_into_a_reused_buffer_leave_no_stale_pixels() {
         physical_width: 3,
         physical_height: 1,
     };
-    copy_bgra_region_bottom_up(&[9; 12], 12, 3, 1, wide, 4, 2, &mut output).unwrap();
+    copy_bgra_region_bottom_up(
+        FrameView::new(&[9; 12], PhysicalSize::new(3, 1), 12),
+        wide,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(4, 2)),
+    )
+    .unwrap();
     assert_eq!(&output[16..28], &[9; 12], "the wide region is copied");
 
     let narrow = Region {
@@ -65,7 +81,12 @@ fn padded_copies_into_a_reused_buffer_leave_no_stale_pixels() {
         physical_width: 2,
         physical_height: 1,
     };
-    copy_bgra_region_bottom_up(&[1; 8], 8, 2, 1, narrow, 4, 2, &mut output).unwrap();
+    copy_bgra_region_bottom_up(
+        FrameView::new(&[1; 8], PhysicalSize::new(2, 1), 8),
+        narrow,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(4, 2)),
+    )
+    .unwrap();
 
     assert_eq!(&output[..16], &[0; 16], "the padding row stays cleared");
     assert_eq!(&output[16..24], &[1; 8], "the narrow region is copied");
@@ -81,7 +102,12 @@ fn rgba_fallback_copy_swaps_channels_and_zero_pads() {
     let source = vec![10, 20, 30, 40, 50, 60, 70, 80];
     let mut output = vec![255; 2 * 2 * 4];
 
-    copy_rgba_frame_bottom_up(&source, 2, 1, 2, 2, &mut output).unwrap();
+    copy_rgba_frame_bottom_up(
+        &source,
+        PhysicalSize::new(2, 1),
+        BgraFrameMut::new(&mut output, PhysicalSize::new(2, 2)),
+    )
+    .unwrap();
 
     assert_eq!(&output[..8], &[0; 8]);
     assert_eq!(&output[8..], &[30, 20, 10, 40, 70, 60, 50, 80]);
@@ -97,24 +123,29 @@ fn native_frame_copy_rejects_invalid_geometry_and_short_buffers() {
     };
     let mut output = vec![0; 8];
 
-    assert!(copy_bgra_region_bottom_up(&[0; 12], 12, 2, 1, region, 2, 1, &mut output).is_err());
     assert!(copy_bgra_region_bottom_up(
-        &[0; 8],
-        4,
-        2,
-        1,
+        FrameView::new(&[0; 12], PhysicalSize::new(2, 1), 12),
+        region,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(2, 1))
+    )
+    .is_err());
+    assert!(copy_bgra_region_bottom_up(
+        FrameView::new(&[0; 8], PhysicalSize::new(2, 1), 4),
         Region {
             physical_x: 0,
             physical_y: 0,
             physical_width: 2,
             physical_height: 1,
         },
-        2,
-        1,
-        &mut output
+        BgraFrameMut::new(&mut output, PhysicalSize::new(2, 1))
     )
     .is_err());
-    assert!(copy_rgba_frame_bottom_up(&[0; 8], 2, 1, 2, 2, &mut [0; 8]).is_err());
+    assert!(copy_rgba_frame_bottom_up(
+        &[0; 8],
+        PhysicalSize::new(2, 1),
+        BgraFrameMut::new(&mut [0; 8], PhysicalSize::new(2, 2))
+    )
+    .is_err());
 }
 
 #[test]
@@ -166,20 +197,15 @@ fn scrgb_copy_tone_maps_hdr_preserves_hue_and_flips_rows() {
     let mut output = vec![0xcc; 2 * 2 * 4];
 
     copy_scrgb_region_bottom_up(
-        &source,
-        24,
-        2,
-        2,
+        FrameView::new(&source, PhysicalSize::new(2, 2), 24),
         Region {
             physical_x: 0,
             physical_y: 0,
             physical_width: 2,
             physical_height: 2,
         },
-        2,
-        2,
         1_000.0,
-        &mut output,
+        BgraFrameMut::new(&mut output, PhysicalSize::new(2, 2)),
     )
     .unwrap();
 
@@ -461,15 +487,10 @@ fn batched_scrgb_conversion_matches_a_pixel_at_a_time_reference() {
 
     let mut actual = vec![0u8; width as usize * 4 * height as usize];
     copy_scrgb_region_bottom_up(
-        &source,
-        pitch,
-        width,
-        height,
+        FrameView::new(&source, PhysicalSize::new(width, height), pitch),
         region,
-        width,
-        height,
         1_000.0,
-        &mut actual,
+        BgraFrameMut::new(&mut actual, PhysicalSize::new(width, height)),
     )
     .unwrap();
 

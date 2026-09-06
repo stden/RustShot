@@ -2,6 +2,23 @@
 
 use super::*;
 
+fn pointwise_reference(
+    background: &[u32],
+    width: usize,
+    height: usize,
+    decoration: OverlayDecoration,
+) -> Vec<u32> {
+    let mut expected = background.to_vec();
+    for y in 0..height {
+        for x in 0..width {
+            if let Some((red, green, blue)) = decoration.color_at(x, y) {
+                expected[y * width + x] = (red << 16) | (green << 8) | blue;
+            }
+        }
+    }
+    expected
+}
+
 #[test]
 fn overlay_pixel_mapping_scales_into_the_captured_image() {
     assert_eq!(map_overlay_pixel_to_image(0, 1280, 1920), Some(0));
@@ -79,15 +96,7 @@ fn composed_overlay_decorations_match_the_pointwise_reference() {
         let mut actual = vec![u32::MAX; background.len()];
         compose_overlay_frame(&background, &mut actual, width, height, decoration);
 
-        let mut expected = background.clone();
-        for y in 0..height {
-            for x in 0..width {
-                if let Some((red, green, blue)) = decoration.color_at(x, y) {
-                    expected[y * width + x] = (red << 16) | (green << 8) | blue;
-                }
-            }
-        }
-
+        let expected = pointwise_reference(&background, width, height, decoration);
         assert_eq!(actual, expected);
     }
 }
@@ -117,8 +126,7 @@ fn incremental_redraw_matches_a_full_recompose() {
         redraw_overlay_frame(
             &background,
             &mut incremental,
-            width,
-            height,
+            (width, height),
             previous,
             decoration,
         );
@@ -147,8 +155,7 @@ fn incremental_redraw_reports_the_pixels_it_changed() {
     let damage = redraw_overlay_frame(
         &background,
         &mut frame,
-        width,
-        height,
+        (width, height),
         OverlayDecoration::None,
         first,
     );
@@ -171,7 +178,7 @@ fn incremental_redraw_reports_the_pixels_it_changed() {
     );
 
     let second = OverlayDecoration::new(None, Some((5, 4)), width, height);
-    let damage = redraw_overlay_frame(&background, &mut frame, width, height, first, second);
+    let damage = redraw_overlay_frame(&background, &mut frame, (width, height), first, second);
     assert_eq!(damage.as_slice().len(), 4, "two restored plus two painted");
 
     // Nothing outside the reported rectangles may change: every difference from
@@ -208,8 +215,7 @@ fn incremental_redraw_rejects_mismatched_buffers() {
     let damage = redraw_overlay_frame(
         &background,
         &mut short,
-        width,
-        height,
+        (width, height),
         OverlayDecoration::None,
         decoration,
     );
@@ -221,8 +227,7 @@ fn incremental_redraw_rejects_mismatched_buffers() {
     let damage = redraw_overlay_frame(
         &[1, 2, 3],
         &mut frame,
-        width,
-        height,
+        (width, height),
         OverlayDecoration::None,
         decoration,
     );
@@ -364,8 +369,7 @@ fn overlay_composition_rejects_dimensions_that_overflow() {
     let damage = redraw_overlay_frame(
         &background,
         &mut output,
-        usize::MAX,
-        2,
+        (usize::MAX, 2),
         OverlayDecoration::None,
         decoration,
     );
@@ -522,8 +526,7 @@ fn inverted_border_decoration_paints_nothing() {
     let damage = redraw_overlay_frame(
         &background,
         &mut frame,
-        width,
-        height,
+        (width, height),
         OverlayDecoration::None,
         inverted,
     );

@@ -8,6 +8,7 @@
 
 use super::*;
 
+mod catalog;
 mod icon_invariants;
 mod icon_pixels;
 mod menu_and_tray;

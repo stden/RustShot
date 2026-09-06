@@ -378,29 +378,33 @@ fn per_plan_phase_transitions_resolve() {
     for p in protocols() {
         let ids = p.phase_ids();
         for phase in p.phases() {
-            let id = phase["id"].as_str().unwrap_or("<unnamed>");
-            if phase["type"].as_str() != Some("per_plan_phase") {
-                continue;
-            }
-            let transition = &phase["transition"];
-            assert!(
-                transition.is_object(),
-                "{}: phase \"{id}\" is per_plan_phase but declares no `transition`, so the \
-                 engine cannot tell where to go after each plan phase",
-                p.dir
-            );
-            for key in ["on_complete", "on_all_phases_complete"] {
-                let target = transition[key].as_str().unwrap_or_else(|| {
-                    panic!("{}: phase \"{id}\" is missing transition.{key}", p.dir)
-                });
-                assert!(
-                    ids.contains(&target),
-                    "{}: phase \"{id}\" transition.{key} points at \"{target}\", which no \
-                     phase declares (declared: {ids:?})",
-                    p.dir
-                );
-            }
+            assert_per_plan_phase_transitions(&p, phase, &ids);
         }
+    }
+}
+
+fn assert_per_plan_phase_transitions(p: &Protocol, phase: &Value, ids: &[&str]) {
+    let id = phase["id"].as_str().unwrap_or("<unnamed>");
+    if phase["type"].as_str() != Some("per_plan_phase") {
+        return;
+    }
+    let transition = &phase["transition"];
+    assert!(
+        transition.is_object(),
+        "{}: phase \"{id}\" is per_plan_phase but declares no `transition`, so the \
+         engine cannot tell where to go after each plan phase",
+        p.dir
+    );
+    for key in ["on_complete", "on_all_phases_complete"] {
+        let target = transition[key]
+            .as_str()
+            .unwrap_or_else(|| panic!("{}: phase \"{id}\" is missing transition.{key}", p.dir));
+        assert!(
+            ids.contains(&target),
+            "{}: phase \"{id}\" transition.{key} points at \"{target}\", which no \
+             phase declares (declared: {ids:?})",
+            p.dir
+        );
     }
 }
 
@@ -538,7 +542,7 @@ fn build_blocks_declare_both_prompt_and_artifact() {
 
 /// SPIR's `protocol.json` carries `npm run build` and `npm test`, inherited from the
 /// JavaScript project it came from. Those commands do not run here, so a protocol
-/// authored for RustShot must not copy them.
+/// authored for `RustShot` must not copy them.
 #[test]
 fn aidlc_checks_use_cargo_not_npm() {
     let protocols = protocols();
@@ -798,49 +802,52 @@ fn protocols_do_not_silently_accept_each_others_artifacts() {
             if a.dir == b.dir {
                 continue;
             }
-            let required = required_headings(a);
-            if required.is_empty() {
-                continue;
-            }
-            // Grouped PER TEMPLATE, not across the whole protocol. Phases gate their
-            // own artifact independently, so "some gate somewhere rejects" is not
-            // enough: if A's review gates all pass against B's review template, a
-            // project that switched protocols sails through the Operations gate even
-            // though its spec would have been caught earlier.
-            let mut templates: Vec<&'static str> =
-                required.iter().map(|(template, _)| *template).collect();
-            templates.sort_unstable();
-            templates.dedup();
-
-            for template_name in templates {
-                let path = b.dir_path.join("templates").join(template_name);
-                // A missing template is itself a rejection.
-                let Ok(template) = fs::read_to_string(&path) else {
-                    continue;
-                };
-                let gates: Vec<&String> = required
-                    .iter()
-                    .filter(|(name, _)| *name == template_name)
-                    .map(|(_, literal)| literal)
-                    .collect();
-                let rejected = gates
-                    .iter()
-                    .filter(|literal| !template_satisfies(&template, literal))
-                    .count();
-                assert!(
-                    rejected > 0,
-                    "every `{}` gate on the {} artifact ({gates:?}) is satisfied by `{}`'s \
-                     {template_name}, so a project that switched from `{}` to `{}` would clear \
-                     that phase's gate unnoticed. Either the protocols have converged and the \
-                     \"do not mix\" warning in aidlc/protocol.md is stale, or a required \
-                     section was added to the wrong template.",
-                    a.dir,
-                    template_name.trim_end_matches(".md"),
-                    b.dir,
-                    b.dir,
-                    a.dir
-                );
-            }
+            assert_foreign_protocol_artifacts_rejected(a, b);
         }
+    }
+}
+
+fn assert_foreign_protocol_artifacts_rejected(a: &Protocol, b: &Protocol) {
+    let required = required_headings(a);
+    if required.is_empty() {
+        return;
+    }
+    // Grouped PER TEMPLATE, not across the whole protocol. Phases gate their
+    // own artifact independently, so "some gate somewhere rejects" is not
+    // enough: if A's review gates all pass against B's review template, a
+    // project that switched protocols sails through the Operations gate even
+    // though its spec would have been caught earlier.
+    let mut templates: Vec<&'static str> = required.iter().map(|(template, _)| *template).collect();
+    templates.sort_unstable();
+    templates.dedup();
+
+    for template_name in templates {
+        let path = b.dir_path.join("templates").join(template_name);
+        // A missing template is itself a rejection.
+        let Ok(template) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let gates: Vec<&String> = required
+            .iter()
+            .filter(|(name, _)| *name == template_name)
+            .map(|(_, literal)| literal)
+            .collect();
+        let rejected = gates
+            .iter()
+            .filter(|literal| !template_satisfies(&template, literal))
+            .count();
+        assert!(
+            rejected > 0,
+            "every `{}` gate on the {} artifact ({gates:?}) is satisfied by `{}`'s \
+             {template_name}, so a project that switched from `{}` to `{}` would clear \
+             that phase's gate unnoticed. Either the protocols have converged and the \
+             \"do not mix\" warning in aidlc/protocol.md is stale, or a required \
+             section was added to the wrong template.",
+            a.dir,
+            template_name.trim_end_matches(".md"),
+            b.dir,
+            b.dir,
+            a.dir
+        );
     }
 }

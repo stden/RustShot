@@ -103,7 +103,6 @@ pub fn settings_path() -> PathBuf {
 }
 
 /// Return the path to the log file (`%APPDATA%/RustShot/rustshot.log` on Windows).
-#[allow(dead_code)]
 pub fn log_file_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -123,7 +122,7 @@ pub fn load_settings() -> Settings {
 /// Save settings to disk as JSON, atomically.
 ///
 /// Writes a scratch file beside the target and renames it into place rather than
-/// truncating the target and writing into it. RustShot runs several processes
+/// truncating the target and writing into it. `RustShot` runs several processes
 /// that read this file — the `--select` and `--select-record` children and the
 /// MCP server — while the settings dialog may be writing it. A truncate-then-
 /// write leaves a window where a reader sees an empty or partial file, and
@@ -154,7 +153,6 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
 }
 
 /// Open the settings file in the default editor (or create it with defaults first).
-#[cfg_attr(windows, allow(dead_code))]
 pub fn open_settings_dialog() {
     let settings = load_settings();
     if save_settings(&settings).is_err() {
@@ -164,7 +162,6 @@ pub fn open_settings_dialog() {
     open_file_in_editor(&path);
 }
 
-#[cfg_attr(windows, allow(dead_code))]
 fn open_file_in_editor(path: &std::path::Path) {
     #[cfg(windows)]
     {

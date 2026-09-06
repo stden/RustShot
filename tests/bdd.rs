@@ -1,7 +1,7 @@
-//! Executable BDD specifications for RustShot.
+//! Executable BDD specifications for `RustShot`.
 //!
 //! The Gherkin feature files under `tests/features/` are the specification;
-//! the step definitions below drive RustShot's public pure-logic API and
+//! the step definitions below drive `RustShot`'s public pure-logic API and
 //! assert the documented behavior. Run with `cargo test --test bdd`.
 
 use cucumber::gherkin::Step;

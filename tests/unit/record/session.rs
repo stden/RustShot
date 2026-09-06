@@ -248,11 +248,12 @@ fn record_loop_returns_error_on_non_windows() {
     let dimensions = RecordingDimensions::try_from(region).unwrap();
     let result = record_loop(
         PathBuf::from("/tmp/test.mp4"),
-        0,
-        0,
-        region,
-        dimensions,
-        Fps::new(30).unwrap(),
+        RecordingParameters {
+            monitor_origin: crate::domain::LogicalPoint::new(0, 0),
+            region,
+            dimensions,
+            fps: Fps::new(30).unwrap(),
+        },
         rx,
     );
     assert!(result.is_err());

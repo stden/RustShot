@@ -245,7 +245,6 @@ impl Bitrate {
 /// // The single input that comes back SMALLER: 2^32 is not representable.
 /// assert_eq!(round_to_even(u32::MAX), u32::MAX - 1);
 /// ```
-#[allow(dead_code)]
 pub fn round_to_even(value: u32) -> u32 {
     value.saturating_add(1) & !1
 }

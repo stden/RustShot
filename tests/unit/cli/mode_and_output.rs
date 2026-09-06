@@ -1,7 +1,5 @@
 //! Tests for app-mode policy and output/error-reporting helpers.
 
-#[allow(unused_imports)]
-use super::*;
 use crate::cli::*;
 use std::io::{self, Write};
 

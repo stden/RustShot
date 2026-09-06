@@ -1,3 +1,7 @@
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "owned capture descriptors cross worker boundaries"
+)]
 //! Process-level runtime plumbing: logging setup, child-process error
 //! reporting, and the selection/recording child-process modes.
 
@@ -7,7 +11,10 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::{cli, record, selection, settings};
+use crate::application::capture::{
+    execute_capture_with, CaptureFile, CaptureOutcome, CaptureRequest, CaptureSource,
+};
+use crate::{capture, cli, record, selection, settings};
 
 /// Stop-flag file path for the recording child process with the given pid.
 ///
@@ -33,10 +40,19 @@ pub(crate) fn run_select_record() {
 
     use crate::selection::select_region_for_recording;
 
+    let selection_timer =
+        crate::timing::ActionTimer::new("recording.region_selection_includes_user_wait");
     let (screen, region) = match select_region_for_recording() {
-        Ok(r) => r,
-        Err(e) if e == "Selection cancelled" => return,
+        Ok(r) => {
+            selection_timer.finish("selected");
+            r
+        }
+        Err(e) if e == "Selection cancelled" => {
+            selection_timer.finish("cancelled");
+            return;
+        }
         Err(e) => {
+            selection_timer.finish("error");
             report_child_process_error(&format!("Selection error: {}", e));
             return;
         }
@@ -49,13 +65,15 @@ pub(crate) fn run_select_record() {
         "Starting recording at ({}, {}), region: {:?}",
         screen_x, screen_y, region
     );
-    let session = match RecordingSession::start_in_dir(
-        screen_x,
-        screen_y,
-        region,
-        settings.recording_fps,
-        settings.recordings_dir,
-    ) {
+    let session = match crate::timing::time_result("recording.worker_launch", || {
+        RecordingSession::start_in_dir(
+            screen_x,
+            screen_y,
+            region,
+            settings.recording_fps,
+            settings.recordings_dir,
+        )
+    }) {
         Ok(s) => s,
         Err(e) => {
             report_child_process_error(&format!("Failed to start recording: {}", e));
@@ -78,7 +96,7 @@ pub(crate) fn run_select_record() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    match session.stop() {
+    match crate::timing::time_result("recording.finalize_and_save", || session.stop()) {
         Ok(path) => info!("Recording saved to: {}", path.display()),
         Err(e) => report_child_process_error(&format!("Recording error: {}", e)),
     }
@@ -86,15 +104,56 @@ pub(crate) fn run_select_record() {
 
 /// Run the selection overlay sub-process and copy the cropped image to clipboard.
 pub(crate) fn run_selection() {
-    match run_selection_with_clipboard(selection::select_region, |cropped| {
-        copy_image_to_clipboard(&cropped)
-    }) {
-        Ok(()) => {}
+    let timing = crate::timing::ActionTimer::new("selection.includes_user_wait");
+    match run_selection_with_clipboard(capture_requested_source, copy_image_to_clipboard) {
+        Ok(()) => timing.finish("clipboard_written"),
         Err(error) => {
+            timing.finish(if error == "Selection cancelled" {
+                "cancelled"
+            } else {
+                "error"
+            });
             if let Some(message) = selection_stderr_message(&error) {
                 report_child_process_error(&message);
             }
         }
+    }
+}
+
+/// Resolve a request without sampling the foreground again in the worker.
+pub(crate) fn capture_requested_source(source: CaptureSource) -> Result<image::RgbaImage, String> {
+    match source {
+        CaptureSource::Selection => selection::select_region(),
+        CaptureSource::Window(snapshot) => {
+            capture_window_target_with(snapshot, capture::capture_window_target)
+        }
+    }
+}
+
+pub(crate) fn capture_window_target_with<Capture>(
+    target: Result<capture::WindowTarget, String>,
+    capture_target: Capture,
+) -> Result<image::RgbaImage, String>
+where
+    Capture: FnOnce(capture::WindowTarget) -> Result<image::RgbaImage, String>,
+{
+    target.and_then(capture_target)
+}
+
+pub(crate) fn save_capture_file(
+    image: &image::RgbaImage,
+    file: CaptureFile,
+) -> Result<PathBuf, String> {
+    capture::save_active_window_image_in_dir(image, None, file.format, &file.directory)
+}
+
+pub(crate) fn log_capture_outcome(outcome: CaptureOutcome) {
+    match outcome {
+        CaptureOutcome::Clipboard => info!("Screenshot copied to clipboard!"),
+        CaptureOutcome::ClipboardAndFile(path) => info!(
+            "Window screenshot copied to clipboard and saved to: {}",
+            path.display()
+        ),
     }
 }
 
@@ -122,18 +181,17 @@ pub(crate) fn run_selection_with_clipboard<FSelect, FClipboard>(
     copy_to_clipboard_fn: FClipboard,
 ) -> Result<(), String>
 where
-    FSelect: Fn() -> Result<image::RgbaImage, String>,
-    FClipboard: Fn(image::RgbaImage) -> Result<(), String>,
+    FSelect: FnOnce(CaptureSource) -> Result<image::RgbaImage, String>,
+    FClipboard: FnOnce(&image::RgbaImage) -> Result<(), String>,
 {
-    let cropped = match select_region_fn() {
-        Ok(cropped) => cropped,
-        Err(e) if e == "Selection cancelled" => return Err(e),
-        Err(e) => return Err(format!("Selection error: {}", e)),
-    };
-
-    copy_to_clipboard_fn(cropped)?;
+    let outcome = execute_capture_with(
+        CaptureRequest::selection(),
+        select_region_fn,
+        |image| crate::timing::time_result("selection.clipboard", || copy_to_clipboard_fn(image)),
+        save_capture_file,
+    )?;
     crate::timing::mark(crate::timing::CaptureMilestone::ClipboardWritten);
-    info!("Screenshot copied to clipboard!");
+    log_capture_outcome(outcome);
     Ok(())
 }
 
