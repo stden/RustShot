@@ -396,11 +396,11 @@ pub(super) unsafe fn resize_controls(hwnd: HWND) {
     for (index, (id, x, y, width, height)) in controls.into_iter().enumerate() {
         // SAFETY: hwnd is the live parent and id names one of its controls.
         if let Ok(child) = unsafe { GetDlgItem(Some(hwnd), id) } {
+            let redraw = index + 1 == controls.len();
             // SAFETY: child was just resolved on this window's owning thread;
             // dimensions come from the non-negative layout above. Defer repaint
             // until every control has moved so the buttons never render against
             // an intermediate parent background during a resize.
-            let redraw = index + 1 == controls.len();
             if let Err(error) = unsafe { MoveWindow(child, x, y, width, height, redraw) } {
                 log::error!("Failed to resize settings control {id}: {error}");
             }
