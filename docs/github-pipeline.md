@@ -177,9 +177,11 @@ sequentially on the same runner and target directory.
     pwsh -File scripts/benchmark_guard.ps1 -CriterionRoot target/criterion -RegressionThreshold 0.10
 
 The guard uses the median confidence interval rather than one timing sample. A
-relative failure requires the lower confidence bound to exceed 10%, which
-filters out inconclusive runner noise. New benchmarks without a base result use generous absolute budgets until they
-have history, which is what `--baseline-lenient` buys: the strict `--baseline`
+relative failure uses a 10% lower-bound threshold by default, with wider
+per-benchmark thresholds only for the Windows allocation-heavy entries that
+proved noisy even on unchanged code. New benchmarks without a base result use
+generous absolute budgets until they have history, which is what
+`--baseline-lenient` buys: the strict `--baseline`
 panics on an id the base branch never measured, so a pull request that adds a
 benchmark used to fail before any budget was checked. The Criterion HTML and JSON
 reports are retained as a workflow artifact for 14 days.

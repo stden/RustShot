@@ -408,8 +408,9 @@ Pull requests run `cargo bench --bench performance_gate` on Windows. Once the be
 branch, CI measures base and head on the same runner. `scripts/benchmark_guard.ps1` can then fail a pull request two
 ways:
 an **absolute** per-benchmark budget is exceeded when the *upper* bound of the median's confidence interval crosses its
-ceiling, and a **relative** regression is confirmed when the *lower* bound of the median change exceeds 10%. Absolute
-budgets are checked on every run; a newly added benchmark has no base result, so
+ceiling, and a **relative** regression is confirmed when the *lower* bound of the median change exceeds the benchmark's
+threshold (10% by default, wider only for the Windows allocation-heavy entries that proved noisy on unchanged code).
+Absolute budgets are checked on every run; a newly added benchmark has no base result, so
 `--baseline-lenient` skips its relative check for one run and the budget is all that applies. The Criterion HTML and
 JSON for the `performance_gate` group is uploaded as a workflow artifact, kept for 14 days.
 

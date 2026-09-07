@@ -90,22 +90,37 @@ $Budgets = @(
         Benchmark = "performance_gate/selection_overlay_background_1080p"
         MaximumNanoseconds = 6000000.0
     }
+    # This one rewrites a monitor-sized buffer in place, and an unchanged base/head
+    # comparison on windows-latest still widened to a +30.2% lower confidence bound
+    # on run 34090403921. Keep the relative gate here, but give it enough headroom
+    # that same-code allocator noise does not fail the job before a real reuse-loss
+    # regression does.
     [pscustomobject]@{
         Benchmark = "performance_gate/selection_overlay_background_rebuild_1080p"
         MaximumNanoseconds = 4000000.0
+        RelativeRegressionThreshold = 0.40
     }
     # Three Criterion runs on 2026-08-31 on a Windows development machine with
     # an Intel Core i7-12850HX put the median upper confidence bounds at
     # 0.370-0.421 ms for the pitched crop and 9.21-10.18 ms for the 4K cold
     # overlay build. These ceilings are 3.6x and 3.4x the slowest observed upper
     # bounds: consistent with the established gate while leaving CI headroom.
+    # The Windows runner still gave the unchanged cropped-copy benchmark a +35.4%
+    # lower bound on run 34090403921, so its relative gate needs wider headroom
+    # than the 10% default while the absolute ceiling still protects the hot path.
     [pscustomobject]@{
         Benchmark = "performance_gate/recording_region_copy_1080p_from_4k"
         MaximumNanoseconds = 1500000.0
+        RelativeRegressionThreshold = 0.40
     }
+    # The 4K cold build allocates and touches a full monitor-sized frame, and the
+    # same-code base/head comparison on windows-latest reported an +18.1% lower
+    # bound on run 34090403921. A 30% relative threshold still catches a repeatable
+    # slowdown without treating that runner noise as a regression.
     [pscustomobject]@{
         Benchmark = "performance_gate/selection_overlay_background_4k"
         MaximumNanoseconds = 35000000.0
+        RelativeRegressionThreshold = 0.30
     }
 )
 
@@ -168,6 +183,30 @@ function Get-RelativeMeasurement {
     }
 }
 
+function Get-RelativeRegressionThreshold {
+    param(
+        [Parameter(Mandatory = $true)]$Budget,
+        [Parameter(Mandatory = $true)][double]$DefaultThreshold
+    )
+
+    $override = $Budget.PSObject.Properties["RelativeRegressionThreshold"]
+    if ($null -eq $override) {
+        return $DefaultThreshold
+    }
+
+    try {
+        $threshold = [double]$override.Value
+    } catch {
+        throw "RelativeRegressionThreshold for $($Budget.Benchmark) is not a number"
+    }
+
+    if ($threshold -lt 0.0 -or $threshold -gt 1.0) {
+        throw "RelativeRegressionThreshold for $($Budget.Benchmark) must be between 0.0 and 1.0"
+    }
+
+    return $threshold
+}
+
 function Get-BenchmarkEstimatePath {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -226,6 +265,15 @@ function Invoke-SelfTest {
     $noisy = Get-RelativeMeasurement -Json $noisyJson -Threshold 0.10
     Assert-Equal $confirmed.ConfirmedRegression $true "Confirmed regression decision"
     Assert-Equal $noisy.ConfirmedRegression $false "Noisy regression decision"
+    Assert-Equal (
+        Get-RelativeRegressionThreshold -Budget ([pscustomobject]@{}) -DefaultThreshold 0.10
+    ) 0.10 "Default relative threshold"
+    Assert-Equal (
+        Get-RelativeRegressionThreshold -Budget ([pscustomobject]@{
+                Benchmark = "performance_gate/example"
+                RelativeRegressionThreshold = 0.25
+            }) -DefaultThreshold 0.10
+    ) 0.25 "Overridden relative threshold"
 
     $malformedFailed = $false
     try {
@@ -245,7 +293,7 @@ if ($SelfTest) {
 
 $lines = [System.Collections.Generic.List[string]]::new()
 $lines.Add(
-    "Performance gate (confirmed regression threshold: {0:F1}%)" -f
+    "Performance gate (default confirmed regression threshold: {0:F1}%)" -f
         ($RegressionThreshold * 100.0)
 )
 $failures = 0
@@ -273,7 +321,8 @@ foreach ($budget in $Budgets) {
     $changePath = Get-BenchmarkEstimatePath -Root $CriterionRoot -Benchmark $budget.Benchmark -Baseline "change"
     if (Test-Path -LiteralPath $changePath) {
         $comparisonCount++
-        $change = Get-RelativeMeasurement -Json (Get-Content -Raw -LiteralPath $changePath) -Threshold $RegressionThreshold
+        $threshold = Get-RelativeRegressionThreshold -Budget $budget -DefaultThreshold $RegressionThreshold
+        $change = Get-RelativeMeasurement -Json (Get-Content -Raw -LiteralPath $changePath) -Threshold $threshold
         $status = if ($change.ConfirmedRegression) {
             $failures++
             "FAIL"
@@ -284,7 +333,8 @@ foreach ($budget in $Budgets) {
             "$status $($budget.Benchmark): median change " +
             ("{0:+0.0;-0.0;0.0}%, lower confidence bound " -f
                 ($change.Estimate * 100.0)) +
-            ("{0:+0.0;-0.0;0.0}%" -f ($change.LowerBound * 100.0))
+            ("{0:+0.0;-0.0;0.0}%, threshold +{1:F1}%" -f
+                ($change.LowerBound * 100.0), ($threshold * 100.0))
         )
     }
 }
