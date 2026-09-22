@@ -1,0 +1,10 @@
+# Pinned: newer stables hard-error on a const assert in `pulp` 0.22 (pulled
+# transitively via screenshots -> image 0.24 -> exr, none of which we can
+# override from here). Drop this pin when the `screenshots` crate is replaced
+# by the in-house capture backends (planned - also removes the image-0.24
+# bridge copy).
+[toolchain]
+channel = "1.93"
+# CI installs components for the action's toolchain only; the pin makes cargo
+# use 1.93, so clippy/rustfmt must be requested here to be auto-installed.
+components = ["clippy", "rustfmt"]

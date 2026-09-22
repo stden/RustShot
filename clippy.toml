@@ -1,0 +1,25 @@
+# Clippy configuration. The lint selection itself lives in Cargo.toml's `[lints]`
+# table, not here — this file only holds values lints read at runtime.
+
+# Keeps suggestions inside what the pinned toolchain guarantees. Several enabled
+# lints (manual_clamp, from_iter_instead_of_collect, iter_on_empty_collections)
+# suggest APIs gated on a minimum version, and without an msrv clippy assumes the
+# latest stable and can propose something that will not compile on the floor this
+# project actually builds against.
+#
+# Tracks the `channel` in rust-toolchain.toml. There is deliberately no
+# `rust-version` in Cargo.toml: the pin exists to work around a const-assert
+# failure in a transitive dependency, not to advertise a support floor to
+# consumers, and the two would then have to be kept in step for no gain.
+msrv = "1.93"
+
+# Bound branch-heavy functions, signatures and nested types. Cognitive complexity
+# is a heuristic, not a readability score; naming operations remains a review task.
+cognitive-complexity-threshold = 25
+too-many-arguments-threshold = 5
+type-complexity-threshold = 250
+max-fn-params-bools = 1
+
+# Zero (Clippy's default) disables this check. Four source-block levels keep
+# additional responsibilities visible instead of burying them in nested branches.
+excessive-nesting-threshold = 4

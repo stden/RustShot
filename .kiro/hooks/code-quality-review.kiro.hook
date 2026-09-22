@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Code Quality Review",
+  "description": "Analyzes modified source code for potential improvements including code smells, design patterns, and best practices. Generates suggestions for improving readability, maintainability, and performance while preserving existing functionality.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*.rs"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review the changed code for potential improvements. Focus on:\n1. Code smells (long functions, deep nesting, duplicated logic, magic numbers)\n2. Design patterns (missing or misapplied patterns, opportunities for better abstractions)\n3. Rust best practices (idiomatic error handling, proper use of Option/Result, ownership patterns, lifetime usage)\n4. Readability (naming clarity, function length, comment quality)\n5. Maintainability (modularity, separation of concerns, testability)\n6. Performance (unnecessary allocations, redundant clones, iterator vs loop efficiency)\n\nProvide concise, actionable suggestions. Do not suggest changes that alter existing behavior. Respect the project convention of using Result<_, String> for error handling."
+  }
+}

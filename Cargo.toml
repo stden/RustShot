@@ -1,0 +1,295 @@
+[package]
+name = "rustshot"
+version = "0.1.0"
+edition = "2021"
+authors = ["RustShot Contributors"]
+description = "A screenshot and screen recording utility written in Rust"
+license = "MIT OR Apache-2.0"
+
+[lib]
+bench = false
+
+[[bin]]
+name = "RustShot"
+path = "src/main.rs"
+bench = false
+# `doc = false` is what makes `cargo doc` produce library HTML on Windows at all.
+# rustdoc writes each target to `target/doc/<target name>` and CLEARS that directory
+# first, and on a case-insensitive filesystem the bin's `RustShot` and the lib's
+# `rustshot` are the same directory. The bin is documented second, so it used to delete
+# the entire 123-file library tree and leave 4 files behind: no `record` module page, no
+# `fn.round_to_even.html`. The failure was invisible because intra-doc links are resolved
+# while each target compiles, independently of who wins the output directory — so CI's
+# `Rustdoc warnings` job (windows-latest) passed while publishing nothing.
+#
+# Nothing is lost: src/main.rs is a 33-line launcher whose doc header has no intra-doc
+# links and no Rust code blocks, and bins have `doctest = false` by default, so neither
+# link checking nor `cargo test --doc` changes. `doc` does not affect `cargo build` or
+# `cargo lint --all-targets`; the bin is still compiled and still linted.
+# Guarded by tests/lint_policy.rs::bin_target_cannot_clobber_the_library_doc_output.
+doc = false
+
+# Lint policy. `cargo lint` (see .cargo/config.toml) runs clippy with
+# `-D warnings`, so everything set to "warn" here is effectively an error in CI.
+#
+# This is a CURATED set, not a group. `clippy::pedantic` was measured against
+# this codebase and rejected: 529 warnings, dominated by lints that would cost a
+# large mechanical refactor and return little — must_use_candidate (139),
+# doc_markdown (61), needless_pass_by_value (75), uninlined_format_args (75) —
+# plus ~250 in the cast_* family. The cast lints are the ones worth revisiting;
+# truncation is a real bug class in the pixel paths, but 250 sites is its own
+# project, not a lint tweak.
+#
+# Everything below was measured at zero violations, or had its violations fixed
+# in the commit that added it. Adding a lint that already fires is what turns a
+# lint table into a wall of `allow`s nobody reads.
+[lints.rust]
+# `&mut x as *mut T` is a coercion written as a cast. Removing the cast keeps the
+# real pointer conversions (the ones that change provenance or width) visible.
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+# Both hits were genuinely crate-internal items marked `pub` behind a private
+# module, where `pub` reads as public API and is not.
+unreachable_pub = "warn"
+unused_lifetimes = "warn"
+single_use_lifetimes = "warn"
+unused_macro_rules = "warn"
+elided_lifetimes_in_paths = "warn"
+explicit_outlives_requirements = "warn"
+meta_variable_misuse = "warn"
+macro_use_extern_crate = "warn"
+non_ascii_idents = "warn"
+# An unwind escaping across an `extern "C"` boundary is undefined behaviour, and
+# this crate hands Rust callbacks to EnumWindows and the media pipeline.
+ffi_unwind_calls = "warn"
+# The one that matters most for this crate, and now enabled. In edition 2021 the
+# body of an `unsafe fn` is implicitly an unsafe block, so an unsafe operation can
+# be added inside one with no marker whatsoever; `deny` forces an inner block, which
+# is what gives the SAFETY comment above it something to attach to. This was
+# measured at 101 violations and recorded as "not worth it"; the violations have
+# since been fixed, so the note moved from the reject list up to here. Edition 2024
+# would turn it on regardless.
+#
+# `deny`, not `warn`: everything else in this table is `warn` because `cargo lint`
+# supplies `-D warnings`, but this one must also bite for anyone who runs a bare
+# `cargo build`, since the failure it prevents is invisible by construction.
+unsafe_op_in_unsafe_fn = "deny"
+
+# Deliberately NOT enabled, with the violation count that decided it. Recorded so
+# the next person does not re-measure:
+#   unsafe_op_in_unsafe_fn            - NO LONGER REJECTED: it is enabled above.
+#                                       Was 101 violations, all since fixed. Kept
+#                                       named here because it reports under E0133
+#                                       and hides from tallies that grep for
+#                                       lowercase lint names, which is how it once
+#                                       got recorded as "zero violations".
+#   let_underscore_drop (138)         - fires on every `let _ = ...` used to
+#                                       discard a Win32 BOOL, which is the
+#                                       idiom this codebase uses on purpose.
+#   unused_qualifications (104)       - mechanical, and the explicit `std::`
+#                                       paths in FFI code aid readability.
+#   missing_debug_implementations (6) - low value for a binary crate.
+#   missing_copy_implementations (2)  - same.
+
+[lints.clippy]
+# Readability budgets live in clippy.toml. These are review tripwires, not a
+# claim that a numeric score can prove code is understandable. Explicit budgets
+# survive toolchain changes; nesting otherwise stays off.
+cognitive_complexity = "warn"
+excessive_nesting = "warn"
+too_many_arguments = "warn"
+type_complexity = "warn"
+allow_attributes_without_reason = "warn"
+fn_params_excessive_bools = "warn"
+# Unsafe operations require a local explanation of their pointer, lifetime, or
+# ownership contract, including examples and tests covered by --all-targets.
+undocumented_unsafe_blocks = "warn"
+# A raw line-count gate was evaluated at Clippy's default 100: nine functions
+# failed, mostly native initialization and benchmark/test setup. Splitting those
+# solely by length obscures their sequence; branching/nesting are checked instead.
+# Bug classes, not style.
+or_fun_call = "warn"           # eager allocation inside unwrap_or/and: 4 fixed
+redundant_clone = "warn"       # 3 fixed, all clones dropped without use
+mem_forget = "warn"
+fn_to_numeric_cast_any = "warn"
+path_buf_push_overwrite = "warn"
+lossy_float_literal = "warn"
+debug_assert_with_mut_call = "warn"
+suspicious_operation_groupings = "warn"
+mutex_atomic = "warn"
+needless_pass_by_value = "warn"
+doc_markdown = "warn"
+# API and ownership hygiene. These are warnings because platform adapters and
+# tests may need a narrow, documented exception at a boundary.
+return_self_not_must_use = "warn"
+large_enum_variant = "warn"
+# Placeholders and debug aids must not reach a release. The project uses
+# `Result<_, String>` everywhere, so a `todo!()` is always the wrong answer.
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+# Correctness/clarity with zero current violations.
+same_name_method = "warn"
+multiple_inherent_impl = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+empty_drop = "warn"
+empty_structs_with_brackets = "warn"
+trailing_empty_array = "warn"
+verbose_file_reads = "warn"
+unnecessary_self_imports = "warn"
+from_iter_instead_of_collect = "warn"
+needless_collect = "warn"
+manual_clamp = "warn"
+iter_on_empty_collections = "warn"
+unused_peekable = "warn"
+unused_rounding = "warn"
+useless_let_if_seq = "warn"
+equatable_if_let = "warn"
+branches_sharing_code = "warn"
+derive_partial_eq_without_eq = "warn"
+trait_duplication_in_bounds = "warn"
+type_repetition_in_bounds = "warn"
+# Manifest hygiene. The full `clippy::cargo` group is not used because
+# multiple_crate_versions fires on the dependency graph, which this crate cannot
+# fix from here.
+negative_feature_names = "warn"
+redundant_feature_names = "warn"
+wildcard_dependencies = "warn"
+
+# Several of the above (branches_sharing_code, redundant_clone,
+# derive_partial_eq_without_eq, equatable_if_let, suspicious_operation_groupings,
+# trait_duplication_in_bounds, type_repetition_in_bounds, unused_peekable,
+# useless_let_if_seq, needless_collect, iter_on_empty_collections,
+# debug_assert_with_mut_call, path_buf_push_overwrite, trailing_empty_array) are
+# clippy *nursery* lints: allowed by default because they can produce false
+# positives and change between releases. They are safe to pin here because
+# rust-toolchain.toml pins the toolchain at 1.93, which freezes their behaviour.
+# WHEN THAT PIN IS DROPPED, expect new findings from this block specifically —
+# triage them, and move any that prove noisy down into the list below rather than
+# deleting the whole block.
+#
+# Deliberately NOT enabled, with the count that decided it:
+#   str_to_string (316)              - prefers `.to_owned()` over `.to_string()`
+#                                      on &str. Pure style, enormous diff.
+#   use_self (69)                    - style.
+#   significant_drop_tightening (6)  - nursery, and its suggestions here move
+#                                      lock scopes in recording code; too risky
+#                                      to take on a lint's word.
+#   exit (6)                         - a CLI legitimately calls process::exit.
+
+[dependencies]
+screenshots = "0.8"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+tray-icon = "0.25.1"
+global-hotkey = "0.8"
+winit = { version = "0.30", features = ["rwh_06"] }
+dirs = "7.0.0"
+arboard = "3"
+softbuffer = "0.4"
+log = "0.4"
+simplelog = "0.12"
+# Used only by the MCP server (src/mcp.rs) to parse arbitrary JSON-RPC from
+# clients. Settings deliberately stay serde-free (see src/settings.rs) — that
+# schema is tiny and fixed; MCP request payloads are neither.
+serde_json = "1"
+
+[dev-dependencies]
+# Parse production imports in architecture tests, including grouped Rust use trees.
+syn = { version = "3.0.6", features = ["full", "visit"] }
+criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1"
+cucumber = "0.23"
+futures = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Graphics_Capture",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_MediaFoundation",
+    "Win32_Storage_FileSystem",
+    "Win32_Storage_Xps",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# GTK on Linux only, to initialize the tray and dispatch its native events.
+# This adds NO crate to the build graph -- `tray-icon`'s default features already
+# enable `gtk` -> `muda/gtk` -> `dep:gtk`, so gtk 0.18 is compiled for this target
+# either way. The `0.18` range deliberately matches muda's so both resolve to the
+# SAME crate instance; two gtk crates would mean two `INITIALIZED` statics and one
+# `gtk::init()` would not satisfy the assertions inside muda.
+#
+# The thinner `gtk-sys` will not do. The assertion that took the Linux CI job down
+# reads gtk-rs's own `INITIALIZED`/`IS_MAIN_THREAD` state, which only the `gtk`
+# crate sets; calling `gtk_init_check` through the sys bindings leaves that state
+# false and `gtk::Menu::new()` still panics.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[[bench]]
+name = "performance_gate"
+harness = false
+
+# Executable BDD specifications: Gherkin features under tests/features/ drive
+# the public API. harness = false because the binary supplies its own main()
+# that runs the Cucumber runner.
+[[test]]
+name = "bdd"
+harness = false
+
+# `line-tables-only` rather than `debug = 1`: panic backtraces keep file and
+# line numbers, which is all this project reads them for, without paying for
+# variable and type records. `strip = "debuginfo"` is gone from both dev
+# profiles — generating debug info and then discarding it is the one combination
+# that costs time and returns nothing.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Dependencies are ~95% of a clean build and nobody steps through them. Dropping
+# their debug info is most of the win from `debug = 0` while our own frames keep
+# their line numbers.
+[profile.dev.package."*"]
+debug = false
+
+# Incremental stays on (the cargo default). It was previously forced off here,
+# which made every `cargo test` after a one-line edit recompile the test targets
+# from scratch. CI still disables it where sccache needs `CARGO_INCREMENTAL=0`;
+# that environment variable overrides this profile.
+[profile.test]
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false
+
+# Tuned for runtime speed, not build speed: fat LTO across the whole graph plus a
+# single codegen unit is the slowest way to build and the fastest thing to run,
+# which is the right trade for a binary users install. Deliberately NOT
+# `panic = "abort"`: `RecordingSession::stop` reports a panicked recording thread
+# through `JoinHandle::join`, and aborting would turn that recoverable report
+# into a dead process.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+split-debuginfo = "unpacked"
