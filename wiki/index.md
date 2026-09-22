@@ -1,32 +1,44 @@
-# RustShot Wiki Index
+# RustShot Retrieval Index
 
-Map of the persistent knowledge base for the RustShot project.
+`wiki/pages/` is the compact retrieval layer for RustShot. Canonical facts remain in the linked code, executable
+specifications, articles, and project documentation. Use a page summary and tags to find a relevant chunk, then follow
+its `source_paths` before changing code or making a time-sensitive claim.
 
-## 📚 Concepts
+Only `wiki/pages/*.md` belongs in the retrieval corpus. Every page has YAML front matter with a stable `id`, `kind`,
+searchable `tags`, canonical `source_paths`, and `related` page IDs. Headings divide the body into useful retrieval
+chunks. Run `python wiki/lint.py` after changing the corpus; CI runs the same command.
 
-* [DPI and Coordinate Systems](pages/dpi-coordinate-systems.md) - Understanding logical vs physical pixels.
-* [Architecture Overview](pages/architecture-overview.md) - The modular design of RustShot.
-* [Screen Recording](pages/screen-recording.md) - Pipeline and pitfalls of video capture.
-* [Release and Distribution](pages/release-distribution.md) - Release engineering and delivery.
-* [Rust Development Practices](pages/rust-development-practices.md) - Coding standards, performance, and testing.
+## Capture, geometry, and recording
 
-## 🏢 Entities
+| Page | Kind | Retrieve for |
+|---|---|---|
+| [DPI and Coordinate Systems](pages/dpi-coordinate-systems.md) | Concept | Logical and physical monitor geometry, mixed DPI, overlay placement, recording selection. |
+| [Screen Recording](pages/screen-recording.md) | Concept | Recording lifecycle, timing, frame conversion, native encoder boundaries. |
+| [screenshots Crate](pages/entity-screenshots-crate.md) | Entity | Monitor enumeration and one-shot screen capture dependency. |
+| [Windows Media Foundation](pages/entity-media-foundation.md) | Entity | Windows H.264 and MP4 encoding through `IMFSinkWriter`. |
+| [Why Pixels Lie](pages/source-pixels-lie.md) | Source | Narrative source about DPI scaling and multi-monitor coordinates. |
+| [Why Screen Recording Breaks](pages/source-recording-pitfalls.md) | Source | Narrative source about frame-to-MP4 failure modes. |
 
-* [Windows Media Foundation](pages/entity-media-foundation.md) - Windows multimedia framework used for H.264 recording.
-* [screenshots Crate](pages/entity-screenshots-crate.md) - Cross-platform screen capture and monitor enumeration.
+## Architecture and engineering workflow
 
-## 📄 Sources
+| Page | Kind | Retrieve for |
+|---|---|---|
+| [Architecture Overview](pages/architecture-overview.md) | Concept | Canonical architecture entry points and dependency boundaries. |
+| [Development and Validation](pages/development-and-validation.md) | Concept | RustShot-specific test, lint, documentation, and benchmark rules. |
+| [Screenshot Utility Architecture](pages/source-architecture.md) | Source | Narrative source about the utility's hidden state and boundaries. |
+| [GitHub Actions CI/CD](pages/source-github-pipeline.md) | Source | Technical source describing CI and release workflows. |
 
-* [Pixels Lie](pages/source-pixels-lie.md) - DPI and scaling challenges.
-* [Screenshot Architecture](pages/source-architecture.md) - Modular design principles.
-* [Screen Recording Pitfalls](pages/source-recording-pitfalls.md) - Video encoding complexities.
-* [Release is a Feature](pages/source-release-feature.md) - Release engineering and CI/CD.
-* [Inno Setup Pipeline](pages/source-inno-pipeline.md) - Technical details of the Windows installer and CI.
-* [GitHub Actions CI/CD](pages/source-github-pipeline.md) - Workflow structure and parallel jobs.
-* [Rust Best Practices](pages/source-rust-practices.md) - Performance and project structure guidelines.
+## Release and distribution
 
-## 🗺️ Meta
+| Page | Kind | Retrieve for |
+|---|---|---|
+| [Release and Distribution](pages/release-distribution.md) | Concept | Portable binary, installer, versioning, autorun, and release automation. |
+| [Release as a Product](pages/source-release-feature.md) | Source | Narrative source about delivery as product behavior. |
+| [Inno Setup Pipeline](pages/source-inno-pipeline.md) | Source | Technical source for Windows installer construction. |
 
-* [Index](index.md) - This page.
-* [Log](log.md) - Chronological history of changes.
-* [Templates](templates/) - Structural templates for new wiki pages.
+## Corpus maintenance
+
+- Start new pages from [`templates/`](templates/).
+- Keep each claim scoped to RustShot and list the repository files that ground it.
+- Use stable metadata IDs for relationships; use Markdown links for human navigation.
+- Update a synthesis page when its canonical source changes, then run `python wiki/lint.py`.

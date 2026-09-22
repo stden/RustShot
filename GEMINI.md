@@ -69,19 +69,19 @@ Use this order:
 - Verify that examples in `README.md` match the application's actual behavior.
 - Update this file when development rules change.
 
-## 🧠 LLM Wiki
+## 🧠 Retrieval knowledge base
 
 A persistent knowledge base for RustShot, located in `wiki/`.
 
 ### Structure
 
-- Raw source documents live in their canonical homes: `articles/` for long-form essays and `docs/` for technical and pipeline documentation. The wiki no longer keeps a duplicate `wiki/raw/` copy; each `wiki/pages/source-*.md` page links to its origin.
-- `wiki/pages/`: Synthesized wiki pages containing concepts, entities, and summaries.
-- `wiki/index.md`: Content-oriented catalog of all pages.
-- `wiki/log.md`: Chronological log of wiki operations.
+- Canonical sources stay in code, `tests/features/`, `articles/`, and `docs/`; the corpus does not duplicate raw files.
+- `wiki/pages/`: Retrieval chunks with stable IDs, tags, canonical source paths, and related-page IDs.
+- `wiki/index.md`: Task-oriented catalog of every corpus page.
+- `wiki/templates/`: Metadata and section contracts for concepts, entities, and source summaries.
 
 ### Operations
 
-- **Ingest**: Process a source file from `articles/` or `docs/`. Read, discuss, and summarize it in `wiki/pages/`, then update `index.md` and `log.md`.
-- **Query**: Search `index.md`, read relevant pages, synthesize an answer, and optionally save it as a new page.
-- **Lint**: Check for contradictions, stale claims, orphan pages, and missing cross-references.
+- **Ingest**: Start from a template, summarize only RustShot-specific facts, list every canonical source in `source_paths`, and add the page once to `index.md`.
+- **Query**: Match the question to index descriptions and page tags, read the relevant chunks, then verify claims in their canonical sources.
+- **Lint**: Run `python wiki/lint.py`; CI rejects malformed metadata, duplicate IDs, missing sources, broken links, invalid relationships, and unindexed pages.

@@ -1,40 +1,50 @@
-[← Back to Index](../index.md)
+---
+id: entity.screenshots-crate
+kind: entity
+title: screenshots Crate
+summary: Defines where RustShot uses the screenshots crate for monitor enumeration and one-shot full-screen capture.
+tags:
+  - capture
+  - dependency
+  - monitors
+  - screenshots
+source_paths:
+  - Cargo.toml
+  - src/capture.rs
+  - src/selection/desktop.rs
+  - src/platform/monitor/gdi.rs
+related:
+  - concept.dpi-coordinate-systems
+  - concept.screen-recording
+---
+# screenshots Crate
 
-# Entity: screenshots Crate
+## Role in RustShot
 
-The `screenshots` crate is the core library used by RustShot for cross-platform screen capture and monitor enumeration.
+The `screenshots` crate supplies `Screen::all()`, display metadata, and one-shot `Screen::capture()`. RustShot uses
+it to list monitors, choose the capture target, save static full-screen images, and obtain monitor geometry for the
+selection overlay.
 
-## Role in Project
+The Windows recording hot loop does not call full-screen `Screen::capture()`. Its primary backend is a persistent
+Windows Graphics Capture session, with region-scoped GDI capture as the fallback.
 
-* **Monitor Enumeration**: Uses `Screen::all()` to detect all connected monitors and their properties (resolution,
-  position, primary status).
-* **Static Capture**: Used in `src/capture.rs` to take full-screen snapshots.
-* **Recording Source**: Used in `src/record.rs` as the source of frames for the video pipeline.
-* **Selection Geometry**: Provides the monitor rects used by `src/selection/desktop.rs` to build the overlay over the
-  **cursor's monitor only**. The spanning virtual-desktop overlay was abandoned — a single window across mixed-DPI
-  monitors gets stretched — and `capture_virtual_desktop` survives only as dead code.
+## Contract and constraints
 
-## Key Types & Methods
+- Display metadata includes desktop origin, size, scale, and primary-monitor status.
+- Static captures cross an `image` crate version boundary: `screenshots` 0.8 uses `image` 0.24 while RustShot uses
+  0.25, so `src/capture.rs` transfers the raw RGBA buffer.
+- Selection deliberately captures only the monitor under the cursor.
+- The GDI fallback uses the crate's region capture API rather than capturing and cropping the whole screen.
 
-* **`Screen`**: Represents a physical monitor.
-    * `Screen::all()`: Returns a list of all detected screens.
-    * `screen.display_info`: Contains `x`, `y`, `width`, `height`, and `is_primary` flags.
-    * `screen.capture()`: Captures the full screen. Returns a `screenshots::Image`.
-* **`Image`**: A wrapper around raw pixel data. RustShot typically converts this to `image::RgbaImage` for further
-  processing.
+## Grounding
 
-## Constraints & Notes
+- [Dependency declaration and version rationale](../../Cargo.toml)
+- [Monitor enumeration and static capture](../../src/capture.rs)
+- [Cursor-monitor selection](../../src/selection/desktop.rs)
+- [Region-scoped GDI fallback](../../src/platform/monitor/gdi.rs)
 
-* **Coordinate Systems**: Returns coordinates in the system's global virtual desktop space.
-* **Pixel Format**: Returns raw RGBA bytes.
-* **Performance**: The recording path no longer routes frames through this crate's full-screen `capture()`. Windows
-  Graphics Capture is the primary backend (`src/capture/platform/wgc.rs`), with a GDI fallback that calls
-  `capture_area_ignore_area_check` — so capture is region-scoped, and the "future optimization" has landed. This crate
-  is still used for monitor enumeration (`Screen::all()`) and for one-shot screenshots.
-* **Platform Support**: Handles the underlying platform-specific capture APIs (X11 on Linux, DXGI/GDI on Windows).
+## Related
 
-## Links
-
-* [Crates.io: screenshots](https://crates.io/crates/screenshots)
-* [DPI and Coordinate Systems](dpi-coordinate-systems.md)
-* [Architecture Overview](architecture-overview.md)
+- [DPI and Coordinate Systems](dpi-coordinate-systems.md)
+- [Screen Recording](screen-recording.md)
+- [screenshots on crates.io](https://crates.io/crates/screenshots)

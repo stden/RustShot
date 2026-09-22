@@ -1,28 +1,37 @@
-[← Back to Index](../index.md)
+---
+id: source.github-actions-pipeline
+kind: source
+title: GitHub Actions CI/CD
+summary: Summarizes the technical guide to RustShot's cross-platform CI checks, release job, caching, and failure modes.
+tags:
+  - ci
+  - github-actions
+  - release
+source_paths:
+  - docs/github-pipeline.md
+  - .github/workflows/ci.yml
+  - .github/workflows/release.yml
+related:
+  - concept.development-and-validation
+  - concept.release-distribution
+---
+# GitHub Actions CI/CD
 
-# Source: GitHub Actions CI/CD
+## Canonical source
 
-* **Type**: Technical Documentation / Tutorial
-* **Original Title**: GitHub Actions: A CI/CD Pipeline for Rust
-* **File**: `docs/github-pipeline.md`
-* **Topic**: CI/CD, GitHub Actions, Rust automation.
+- [GitHub Actions: A CI/CD Pipeline for Rust](../../docs/github-pipeline.md)
+- [Current CI workflow](../../.github/workflows/ci.yml)
+- [Current release workflow](../../.github/workflows/release.yml)
 
-## Key Takeaways
+## Retrieval summary
 
-1. **CI vs CD**: CI handles code quality (fmt, clippy, tests) on every push/PR. CD handles automated releases on tags.
-2. **Parallel Jobs**: Jobs like `fmt`, `clippy`, and `tests` run in parallel by default to save time.
-3. **Platform-Specific Testing**:
-    - **Windows**: Primary platform, used for clippy and main tests.
-    - **Linux**: Requires specific X11/GTK dev libraries (`libxcb1-dev`, etc.) to compile GUI-related code.
-4. **Caching**: `actions/cache` is used in release builds for `~/.cargo/registry` and `target` to speed up compilation.
-5. **Release Workflow**:
-    - Triggered by `v*` tags.
-    - Uses `softprops/action-gh-release` to attach binaries and installers to GitHub Releases.
-    - Automatically generates release notes.
-6. **Common Issues**: Version drift between `Cargo.toml` and workflows, missing Linux dependencies, and rustfmt version
-   mismatches.
+- CI separates formatting, Rust lints and rustdoc, dependency policy, platform tests, Linux coverage, and pull-request
+  performance checks.
+- Tests run on Windows, Linux, and macOS; the Linux job installs the native display and tray dependencies and uses Xvfb.
+- Release automation builds the Windows MSVC target and publishes both the portable executable and Inno Setup installer.
+- Workflow files are canonical when the guide and automation differ.
 
-## Linked Concepts
+## Related
 
-* [Release and Distribution](release-distribution.md)
-* [Rust Development Practices](rust-development-practices.md)
+- [Development and Validation](development-and-validation.md)
+- [Release and Distribution](release-distribution.md)

@@ -1,31 +1,48 @@
-[← Back to Index](../index.md)
-
+---
+id: concept.architecture-overview
+kind: concept
+title: Architecture Overview
+summary: Routes architecture questions to the canonical RustShot module map, boundary rationale, and executable behavior.
+tags:
+  - architecture
+  - boundaries
+  - modules
+source_paths:
+  - src/lib.rs
+  - docs/README.md
+  - tests/architecture.rs
+related:
+  - concept.development-and-validation
+  - concept.dpi-coordinate-systems
+  - source.screenshot-architecture
+---
 # Architecture Overview
 
-RustShot keeps its architecture and design rationale in rustdoc, starting at
-[`src/lib.rs`](../../src/lib.rs). See [`docs/README.md`](../../docs/README.md) for
-the pointer table of non-obvious constraints and the reason there is no separate
-architecture document. **This page intentionally holds no module list** — the one
-it used to carry had already drifted (it omitted `mcp`, `window`, the split
-`app/` modules, `settings_dialog` and `timing`, and still credited `main.rs` with
-CLI parsing and the tray event loop, which is now a 33-line launcher).
+## Answer
 
-What remains here is only the shape of the problem, which the code cannot state
-for itself:
+[`src/lib.rs`](../../src/lib.rs) is the canonical architecture map. Its rustdoc describes the dependency layers,
+interactive capture sequence, and code-to-test boundaries. The executable is a thin launcher; mode routing lives in
+`src/app/`, shared workflows in `src/application/`, operating-system adapters in `src/platform/`, reusable pixel
+operations in `src/pixels/`, and validated shared values in `src/domain/`.
 
-## Key Principles
+This page is a retrieval pointer. It does not duplicate the module map or design rationale because those details must
+change beside the code they constrain.
 
-* **Narrow Responsibility**: Each function and module has a clear, specific role.
-* **Pure Logic vs. Platform Specific**: Separation of cross-platform logic from OS-dependent paths.
-* **Explicit Boundary Checks**: Validating coordinates, file paths, and system states at module boundaries.
-* **Testable Helpers**: Complex logic is extracted into small, testable helper functions.
+## Grounding
 
-## Hidden Complexity
+- [Library architecture and Mermaid diagrams](../../src/lib.rs)
+- [Documentation map and rationale locations](../../docs/README.md)
+- [Dependency-direction checks](../../tests/architecture.rs)
+- [Executable behavior specifications](../../tests/features/)
 
-The application must balance multiple states (tray active, selection ongoing, recording in progress) and navigate
-external factors like display configurations and filesystem permissions.
+## Constraints
 
-## See Also
+- Architecture rationale stays in rustdoc beside the implementation.
+- User-visible behavior is specified in Gherkin under `tests/features/`.
+- Shared domain and application layers must not depend on platform adapters; the architecture test enforces this.
 
-* [Source: Screenshot Architecture](../pages/source-architecture.md)
-* [DPI and Coordinate Systems](dpi-coordinate-systems.md)
+## Related
+
+- [Development and Validation](development-and-validation.md)
+- [DPI and Coordinate Systems](dpi-coordinate-systems.md)
+- [Screenshot Utility Architecture](source-architecture.md)

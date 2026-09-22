@@ -1,35 +1,55 @@
-[← Back to Index](../index.md)
-
+---
+id: concept.screen-recording
+kind: concept
+title: Screen Recording
+summary: Describes RustShot's validated recording lifecycle from region capture through Media Foundation finalization.
+tags:
+  - h264
+  - media-foundation
+  - recording
+  - timing
+source_paths:
+  - src/record.rs
+  - src/record/domain.rs
+  - src/record/encoder.rs
+  - tests/features/recording_domain.feature
+  - tests/features/in_process/recording_lifecycle.feature
+  - tests/features/windows_recording.feature
+related:
+  - concept.dpi-coordinate-systems
+  - entity.media-foundation
+  - source.screen-recording-pitfalls
+---
 # Screen Recording
 
-Screen recording is a complex pipeline that coordinates time, memory, and specialized codecs.
+## Answer
 
-## The Recording Pipeline
+A recording session validates its dimensions and frame rate, starts a worker, and returns control to the caller. The
+worker keeps one Windows Graphics Capture session with a GDI fallback, converts captured pixels to bottom-up BGRA, and
+submits timestamped samples to a Media Foundation sink writer. Stopping or dropping the owner signals the worker and
+joins it so MP4 finalization completes before the result is returned.
 
-Unlike static screenshots, recording requires continuous frame acquisition and synchronization.
+Frame timestamps use 100-nanosecond units and are derived from the frame index, which avoids accumulated rounding drift.
+H.264 dimensions are non-zero and even; an unroundable maximum dimension is rejected instead of silently reduced.
 
-1. **Frame Capture**: Regular polling of screen data.
-2. **Buffer Conversion**: Transforming raw pixels to codec-compatible formats (e.g., RGB32 to YUV).
-3. **Encoding**: Feeding frames into an encoder (e.g., H.264 via Media Foundation).
-4. **Muxing**: Writing encoded data into a container (MP4).
-5. **Finalization**: Gracefully closing the writer to ensure the file is valid.
+## Grounding
 
-## Common Pitfalls
+- [Recording API, lifecycle, and pixel format](../../src/record.rs)
+- [Validated dimensions, FPS, timing, and bitrate](../../src/record/domain.rs)
+- [COM, Media Foundation, and sink-writer boundary](../../src/record/encoder.rs)
+- [Executable recording-domain examples](../../tests/features/recording_domain.feature)
+- [Executable stop, drop, error, and panic lifecycle](../../tests/features/in_process/recording_lifecycle.feature)
+- [Native Windows MP4 scenarios](../../tests/features/windows_recording.feature)
 
-* **Odd Dimensions**: H.264 encoders often fail or produce artifacts with non-even widths/heights.
-* **Timestamp Drifts**: Inaccurate timing leads to desynchronized video.
-* **Resource Leaks**: Improper COM/MF initialization or failed finalization.
-* **Race Conditions**: Signals to stop recording must be coordinated with the final frame processing.
+## Constraints
 
-## Windows Implementation
+- Native MP4 encoding is available only on Windows.
+- The selected desktop rectangle must belong to one monitor.
+- COM and Media Foundation guards must outlive every native object they initialize.
+- Finalization errors and worker panics are surfaced to the caller.
 
-Uses **Windows Media Foundation** (`IMFSinkWriter`) for H.264 encoding. Requires careful management of 100-ns unit
-timestamps.
+## Related
 
-## 📋 Project Specifications (Codev)
-
-* [Spec 0002: Test Plan Screenshots & Recording](../../codev/specs/0002-test-plan-screenshots-recording.md)
-
-## See Also
-
-* [Source: Screen Recording Pitfalls](../pages/source-recording-pitfalls.md)
+- [DPI and Coordinate Systems](dpi-coordinate-systems.md)
+- [Windows Media Foundation](entity-media-foundation.md)
+- [Why Screen Recording Breaks](source-recording-pitfalls.md)

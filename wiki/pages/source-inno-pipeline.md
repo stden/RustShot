@@ -1,24 +1,31 @@
-[← Back to Index](../index.md)
+---
+id: source.inno-setup-pipeline
+kind: source
+title: Inno Setup Pipeline
+summary: Summarizes the technical guide for building RustShot's per-user Windows installer locally and in GitHub Actions.
+tags:
+  - inno-setup
+  - installer
+  - windows
+source_paths:
+  - docs/INNO_SETUP_PIPELINE.md
+related:
+  - concept.release-distribution
+---
+# Inno Setup Pipeline
 
-# Source: Inno Setup Pipeline
+## Canonical source
 
-* **Type**: Technical Documentation / Lesson
-* **Original Title**: Inno Setup And Release Pipeline Lesson
-* **File**: `docs/INNO_SETUP_PIPELINE.md`
-* **Topic**: Installer creation, CI/CD pipeline, Windows deployment.
+- [Inno Setup and Release Pipeline](../../docs/INNO_SETUP_PIPELINE.md)
 
-## Key Takeaways
+## Retrieval summary
 
-1. **Deliverables**: Project produces both a portable `rustshot.exe` and a `RustShotSetup.exe` installer.
-2. **Inno Setup Role**: Handles file copying, Start Menu shortcuts, registry-based autorun, and uninstallation.
-3. **Privilege Model**: Uses `PrivilegesRequired=lowest` (per-user install), which avoids admin prompts and allows clean
-   `HKCU` autorun registration.
-4. **Path Normalization**: CI and local flows must copy the binary from the target-specific directory
-   (`target\x86_64-pc-windows-msvc\release\`) to a flat `target\release\` directory expected by `installer.iss`.
-5. **CI Trigger**: Triggered by `v*` tags or manual dispatch; uses GitHub Actions to build MSVC targets.
-6. **Maintenance Risks**: Hardcoded version in `installer.iss` creates risk of version drift with `Cargo.toml`.
+- The installer consumes a flat `target\release\rustshot.exe`, so target-specific builds must copy the executable
+  before invoking Inno Setup.
+- The build replaces `{{VERSION}}` in a temporary installer script using the version from `Cargo.toml`.
+- The per-user installer avoids elevation, owns the `HKCU` autorun entry, creates shortcuts, and cleans up on uninstall.
+- The guide documents equivalent local and CI commands for producing the portable executable and installer.
 
-## Linked Concepts
+## Related
 
-* [Release and Distribution](release-distribution.md)
-* [Architecture Overview](architecture-overview.md)
+- [Release and Distribution](release-distribution.md)

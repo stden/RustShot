@@ -1,18 +1,34 @@
-[← Back to Index](../index.md)
+---
+id: source.screen-recording-pitfalls
+kind: source
+title: Why Screen Recording Breaks
+summary: Summarizes the project essay about timing, formats, native APIs, lifecycle control, and valid MP4 finalization.
+tags:
+  - encoding
+  - lifecycle
+  - recording
+source_paths:
+  - articles/003-screen-recording-pitfalls.md
+related:
+  - concept.screen-recording
+  - entity.media-foundation
+---
+# Why Screen Recording Breaks
 
-# Source: Screen Recording Pitfalls
+## Canonical source
 
-* **Original Title**: Why Screen Recording Breaks: The Path from Frame to MP4
-* **File**: `articles/003-screen-recording-pitfalls.md`
-* **Topic**: Video Encoding, Media Foundation, Pipeline Design.
+- [Why Screen Recording Breaks: The Path from Frame to MP4](../../articles/003-screen-recording-pitfalls.md)
 
-## Key Takeaways
+## Retrieval summary
 
-1. **Time Coordination**: Recording is a temporal system, not just a graphics task.
-2. **Native Boundary Risks**: Errors in Media Foundation often manifest as crashes, not clean `Err` results.
-3. **Pipeline Stability**: Resilience requires handling dropped frames, dimension constraints, and clean stop semantics.
-4. **Happy Path Fallacy**: Recording quickly exposes missing edge-case handling in the capture pipeline.
+- Recording is a time-coordination pipeline across capture, pixel conversion, codecs, containers, files, and UI
+  lifecycle control.
+- Wrong dimensions, frame format, frame rate, timestamps, COM setup, or stop ordering can fail across a native boundary
+  or leave a corrupt MP4.
+- Robustness depends on explicit ownership, finalization, dropped-frame decisions, and validation at every transition.
+- The essay describes failure classes; the recording concept page points to current code and executable scenarios.
 
-## Linked Concepts
+## Related
 
-* [Screen Recording](screen-recording.md)
+- [Screen Recording](screen-recording.md)
+- [Windows Media Foundation](entity-media-foundation.md)

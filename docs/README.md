@@ -78,8 +78,9 @@ Other test targets guard structure and regressions:
 |------|----------|
 | [`codev/protocols/spir/`](../codev/protocols/spir/) | **SPIR** — the active protocol. Specify → Plan → Implement → Review, human-driven with models as reviewers. |
 | [`codev/protocols/aidlc/`](../codev/protocols/aidlc/) | **AIDLC** — AI Development Life Cycle. Inception → Construction → Operations, worked in bolts; AI proposes and the team validates. |
-| [`codev/plans/`](../codev/plans/) | Three landed plans: `0001-split-oversized-modules`, `0002-enums-and-newtypes`, `0003-split-test-and-bench-crates`. |
-| `codev/specs/`, `codev/reviews/` | Currently empty. Both protocols share these paths with `plans/` but require different sections. |
+| [`codev/plans/`](../codev/plans/) | Implementation plans produced by the selected protocol. |
+| [`codev/specs/`](../codev/specs/) | Specifications produced by the selected protocol. |
+| [`codev/reviews/`](../codev/reviews/) | Reviews produced by the selected protocol. |
 
 Protocol definitions are validated structurally by `tests/codev_protocols.rs`: phase
 transitions must resolve, gates may only require checks their phase declares, and a
@@ -100,7 +101,11 @@ has. Pick a protocol per project, not per commit — see
 
 [`articles/`](../articles/) holds four long-form essays on the engineering
 themes behind RustShot (indexed by [`ARTICLES.md`](../ARTICLES.md)).
-[`wiki/`](../wiki/) is a synthesized knowledge base over them.
+[`wiki/`](../wiki/) is the retrieval layer over those essays, project docs,
+executable specifications, and code. Each page has stable metadata, tags,
+canonical source paths, and related-page IDs. `python wiki/lint.py` rejects
+missing sources, broken local links, duplicate IDs, and pages absent from the
+retrieval index; CI runs the same validation.
 
 ## 6. Not here — the central `iopm` repo
 

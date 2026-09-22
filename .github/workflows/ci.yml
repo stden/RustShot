@@ -18,6 +18,19 @@ env:
   RUSTSHOT_LIVE_CAPTURE_STRICT: "1"
 
 jobs:
+  rag-knowledge:
+    name: RAG knowledge base
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Test knowledge validator
+        run: python -B -m unittest wiki.test_lint
+      - name: Validate indexed knowledge
+        run: python -B wiki/lint.py
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

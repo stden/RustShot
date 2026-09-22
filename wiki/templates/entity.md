@@ -1,19 +1,31 @@
-[← Back to Index](../index.md)
+---
+id: entity.page-slug
+kind: entity
+title: Entity Name
+summary: One sentence explaining the entity's exact role and boundary inside RustShot.
+tags:
+  - first-tag
+  - second-tag
+source_paths:
+  - Cargo.toml
+  - src/path.rs
+related:
+  - concept.related-page
+---
+# Entity Name
 
-# Entity: [Name]
+## Role in RustShot
 
-[Description of the entity - e.g., a specific library, API, or system component]
+Describe where the dependency, API, or system component enters the application.
 
-## Role in Project
+## Contract and constraints
 
-[How it is used in RustShot]
+- State the project-specific API contract and known limits.
 
-## Constraints & Notes
+## Grounding
 
-* [Known issues]
-* [Configuration requirements]
+- Link to canonical declarations and uses.
 
-## Links
+## Related
 
-* [Official Documentation]
-* [Related Wiki Pages]
+- Link to related corpus pages and authoritative external documentation when useful.

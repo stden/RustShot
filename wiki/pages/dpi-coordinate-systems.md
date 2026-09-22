@@ -1,28 +1,55 @@
-[← Back to Index](../index.md)
-
+---
+id: concept.dpi-coordinate-systems
+kind: concept
+title: DPI and Coordinate Systems
+summary: Explains how RustShot converts logical monitor geometry into physical capture coordinates under mixed DPI.
+tags:
+  - coordinates
+  - dpi
+  - multi-monitor
+  - selection
+source_paths:
+  - src/domain/layout.rs
+  - src/selection/desktop.rs
+  - tests/features/multi_monitor_layout.feature
+  - tests/features/overlay_targeting.feature
+  - tests/features/recording_selection.feature
+related:
+  - concept.screen-recording
+  - entity.screenshots-crate
+  - source.pixels-lie
+---
 # DPI and Coordinate Systems
 
-Modern desktop environments distinguish between logical coordinates and physical pixels. This is a critical distinction
-for screenshot utilities.
+## Answer
 
-## Core Problem
+Desktop APIs can report monitor positions in logical, DPI-scaled coordinates while captured frames use physical pixels.
+RustShot builds an explicit physical layout instead of applying one global scale factor. The primary monitor anchors
+physical origin `(0, 0)`; neighbouring monitors are placed iteratively and logical gaps are scaled using the relevant
+monitor geometry.
 
-When scaling is not 100% (e.g., 125%, 150%), logical coordinates used for UI layout do not match physical pixels in the
-framebuffer.
+Selection covers only the monitor under the cursor. A single overlay spanning mixed-DPI monitors was abandoned because
+the compositor can stretch and displace it. A recording selection must fit inside one physical monitor because RustShot
+has no cross-monitor video compositing path.
 
-## Multi-monitor Challenges
+## Grounding
 
-* **Mixed DPI**: Different monitors can have different scaling factors.
-* **Coordinate Mapping**: Monitors can be positioned anywhere in a virtual desktop, leading to negative coordinates
-  (e.g., if a monitor is to the left of the primary one).
-* **Overlay vs. Capture**: UI overlays might be drawn in logical coordinates, while screen capture data is often in
-  physical pixels.
+- [Physical layout reconstruction](../../src/domain/layout.rs)
+- [Cursor-monitor capture and overlay placement](../../src/selection/desktop.rs)
+- [Executable multi-monitor examples](../../tests/features/multi_monitor_layout.feature)
+- [Executable overlay matching examples](../../tests/features/overlay_targeting.feature)
+- [Executable single-monitor recording constraint](../../tests/features/recording_selection.feature)
 
-## Best Practices
+## Constraints
 
-* **Explicit Naming**: Use prefixes like `logical_` and `physical_` (or `framebuffer_`) for all geometric variables.
-* **API Awareness**: Be careful with APIs that might return pre-scaled or unscaled values.
+- Monitor bounds are half-open when locating a point.
+- Negative desktop coordinates are valid.
+- Overlay targeting prefers an exact origin-and-size match, then an origin match when DPI virtualization changes the
+  reported size.
+- Recording coordinates are translated from desktop space into the selected monitor's local physical space.
 
-## See Also
+## Related
 
-* [Source: Pixels Lie](../pages/source-pixels-lie.md)
+- [Screen Recording](screen-recording.md)
+- [screenshots Crate](entity-screenshots-crate.md)
+- [Why Pixels Lie](source-pixels-lie.md)

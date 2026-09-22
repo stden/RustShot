@@ -1,18 +1,31 @@
-[← Back to Index](../index.md)
+---
+id: source.pixels-lie
+kind: source
+title: Why Pixels Lie
+summary: Summarizes the project essay about logical coordinates, physical pixels, scaling, and multi-monitor drift.
+tags:
+  - coordinates
+  - dpi
+  - multi-monitor
+source_paths:
+  - articles/001-pixels-lie.md
+related:
+  - concept.dpi-coordinate-systems
+---
+# Why Pixels Lie
 
-# Source: Pixels Lie
+## Canonical source
 
-* **Original Title**: Why Pixels Lie: DPI, Scaling, and Multi-Monitor Chaos
-* **File**: `articles/001-pixels-lie.md`
-* **Topic**: DPI, Scaling, Multi-monitor coordinates.
+- [Why Pixels Lie: DPI, Scaling, and Multi-Monitor Chaos](../../articles/001-pixels-lie.md)
 
-## Key Takeaways
+## Retrieval summary
 
-1. **Geometric Illusion**: Screen is not a simple grid of pixels when scaling is involved.
-2. **Coordinate Confusion**: Mismatch between UI overlays (logical) and screen capture (physical).
-3. **Multi-monitor Setup**: Most bugs appear here due to negative coordinates and mixed DPI.
-4. **Engineering Discipline**: Strict naming of coordinate systems is mandatory to avoid "mystery bugs".
+- Logical UI coordinates and physical framebuffer pixels coincide at 100 percent scaling and diverge at other scales.
+- Mixed-DPI layouts combine scaling differences with negative monitor origins and API-specific coordinate conventions.
+- These defects often produce plausible but shifted captures, so explicit coordinate-system naming and boundary
+  conversion matter more than apparently simple rectangle arithmetic.
+- The essay explains the problem shape; the linked concept page records RustShot's current implementation.
 
-## Linked Concepts
+## Related
 
-* [DPI and Coordinate Systems](dpi-coordinate-systems.md)
+- [DPI and Coordinate Systems](dpi-coordinate-systems.md)

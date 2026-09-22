@@ -1,17 +1,26 @@
-[← Back to Index](../index.md)
+---
+id: source.page-slug
+kind: source
+title: Source Title
+summary: One sentence explaining which RustShot questions this canonical source helps answer.
+tags:
+  - first-tag
+  - second-tag
+source_paths:
+  - articles/or-docs/source.md
+related:
+  - concept.related-page
+---
+# Source Title
 
-# Source: [Title]
+## Canonical source
 
-* **Type**: [Article/Paper/Clipping/Data]
-* **Original Title**: [Title]
-* **File**: `[source path in articles/ or docs/]`
-* **Topic**: [Topic]
+- [Source title](../../articles/or-docs/source.md)
 
-## Key Takeaways
+## Retrieval summary
 
-1. [Insight 1]
-2. [Insight 2]
+- Summarize only the project-relevant claims in the canonical source.
 
-## Linked Concepts
+## Related
 
-* [Link to concept pages]
+- Link to the synthesis pages that use this source.

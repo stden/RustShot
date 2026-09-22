@@ -86,6 +86,8 @@ reason. Unsafe blocks need a local `SAFETY` proof.
 - **Behaviour is executable**: Gherkin in `tests/features/` *is* the spec.
 - Users: `README.md` (tutorial part 1) → `docs/TUTORIAL.md`. Map: `docs/README.md`.
   Generic Rust/testing guidance lives in the `iopm` repo, not here.
+- Retrieval: `wiki/index.md` → metadata-tagged chunks in `wiki/pages/` → their
+  canonical `source_paths`. Run `python wiki/lint.py` after changing the corpus.
 
 ## Codev
 

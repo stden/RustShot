@@ -1,20 +1,30 @@
-[← Back to Index](../index.md)
+---
+id: concept.page-slug
+kind: concept
+title: Page Title
+summary: One sentence explaining which RustShot question this page answers for retrieval.
+tags:
+  - first-tag
+  - second-tag
+source_paths:
+  - src/path.rs
+related:
+  - entity.related-page
+---
+# Page Title
 
-# Concept: [Title]
+## Answer
 
-[Brief definition of the concept]
+State the project-specific facts a retrieved chunk should answer.
 
-## Details
+## Grounding
 
-* [Key point 1]
-* [Key point 2]
+- Link each fact to canonical code, executable specifications, or project documentation.
 
-## Implementation in RustShot
+## Constraints
 
-* [File/Module reference]
-* [Specific logic details]
+- Record only constraints that materially affect implementation or operation.
 
-## See Also
+## Related
 
-* [Link to related pages]
-* [Link to source summaries]
+- Link to related corpus pages.
