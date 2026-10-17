@@ -1,0 +1,128 @@
+default:
+  # Verified Docker Official Image manifest; custom registry tags are not trusted.
+  image: "rust:1.95.0-slim-trixie@sha256:e14e87345b4d5964ddcc3491d27ee046a0f23820f340c3c1e24da6880141f7c0"
+  timeout: 5 minutes
+  cache: []
+
+variables:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: "10"
+  # Override the local .cargo/config.toml wrapper in every CI Rust command.
+  RUSTC_WRAPPER: ""
+  SECRET_DETECTION_ENABLED: 'true'
+
+# Pipeline rules: run for MRs and for branch pushes. Skip the branch pipeline
+# when an MR is already open for the branch so jobs run exactly once per change.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+# Pipeline stages
+stages:
+  - prepare
+  - test
+  - secret-detection
+
+# Security scan templates
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+
+# Optional convenience image. Rust jobs below never consume these mutable tags.
+# Only reviewed commits on the protected default branch may publish it.
+build:ci-image:
+  stage: prepare
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  timeout: 15 minutes
+  cache: []
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf '%s:%s' "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor
+        --context "${CI_PROJECT_DIR}"
+        --dockerfile "${CI_PROJECT_DIR}/Dockerfile.ci"
+        --destination "${CI_REGISTRY_IMAGE}/ci:1.95.0-sccache"
+        --destination "${CI_REGISTRY_IMAGE}/ci:latest"
+        --cache=false
+  allow_failure: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      changes:
+        - Dockerfile.ci
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+
+# Cargo configuration, extracted sources, and compiler outputs are fresh for
+# each job. A writable runner host mount is not a cache trust boundary.
+.rust-base:
+  timeout: 30 minutes
+  before_script:
+    - . ci/rust-job-env.sh
+    - apt-get update
+    - >-
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends
+      ca-certificates pkg-config libxcb1-dev libxcb-render0-dev
+      libxcb-shape0-dev libxcb-xfixes0-dev libglib2.0-dev libgtk-3-dev
+      libxdo-dev libatk1.0-dev libgdk-pixbuf-2.0-dev libcairo2-dev libpango1.0-dev
+
+# Formatting and CI policy checks need no GTK/X11 packages.
+fmt:
+  stage: test
+  before_script:
+    - . ci/rust-job-env.sh
+  script:
+    - sh tests/ci_security.sh
+    - rustup component add rustfmt
+    - cargo fmt --all -- --check
+
+# Clippy lint check. Use --tests (lib + bins + tests + examples) instead of
+# --all-targets so the 1900-line criterion bench file is not compiled just
+# for linting. Disable debug info generation — clippy is lint-only, it never
+# needs a debuggable binary, and debuginfo codegen is a sizeable fraction of
+# compile time.
+clippy:
+  stage: test
+  extends: .rust-base
+  variables:
+    CARGO_PROFILE_DEV_DEBUG: "0"
+  script:
+    - rustup component add clippy
+    - cargo clippy --tests -- -D warnings
+
+# Unit and integration tests. `line-tables-only` keeps source lines in panic
+# backtraces but skips the expensive full debug-info generation, shaving
+# compile time without losing useful failure output.
+test:
+  stage: test
+  extends: .rust-base
+  variables:
+    CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  script:
+    - cargo test --verbose
+
+# Install a locked tool release into this job's private Cargo home. The llvm
+# engine avoids ASLR EPERM in sandboxed CI containers.
+coverage:
+  stage: test
+  extends: .rust-base
+  timeout: 60 minutes
+  script:
+    - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libssl-dev
+    - cargo install cargo-tarpaulin --locked --version 0.37.5
+    - cargo tarpaulin --engine llvm --out Xml --skip-clean --fail-under 40
+  coverage: '/^\d+\.\d+% coverage/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: cobertura.xml
+
+# Override Secret Detection to run in its own stage
+secret_detection:
+  stage: secret-detection

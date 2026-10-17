@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    branches: ["main"]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: ""
+
+jobs:
+  build-windows:
+    name: Build Windows Release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = (Get-Content Cargo.toml | Select-String '^version = "(.*)"').Matches.Groups[1].Value
+          if ("${{ github.ref }}" -like "refs/tags/*") {
+            $tag = "${{ github.ref_name }}"
+          } else {
+            $tag = "v$version"
+          }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build release binary
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Prepare installer source
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path target\release | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\RustShot.exe target\release\rustshot.exe
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          (Get-Content installer.iss).Replace('{{VERSION}}', $env:VERSION) | Set-Content installer.iss
+          iscc installer.iss
+
+      - name: Upload portable exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustshot-windows-x64-portable
+          path: target/release/rustshot.exe
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustshot-windows-x64-installer
+          path: Output/RustShotSetup.exe
+
+      - name: Update release tag
+        shell: pwsh
+        run: |
+          git push --force origin "HEAD:refs/tags/$($env:RELEASE_TAG)"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: RustShot ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            target/release/rustshot.exe
+            Output/RustShotSetup.exe
+          generate_release_notes: true

@@ -1,0 +1,46 @@
+# Optional convenience image; GitLab Rust jobs use the upstream digest directly.
+# Preinstalls system dependencies (X11/GTK), Rust components, and local tools.
+FROM rust:1.95.0-slim-trixie@sha256:e14e87345b4d5964ddcc3491d27ee046a0f23820f340c3c1e24da6880141f7c0
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CARGO_TERM_COLOR=always \
+    CARGO_INCREMENTAL=0 \
+    CARGO_NET_RETRY=10
+
+# System dev libraries required by screenshot/capture/GTK crates.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        pkg-config \
+        libxcb1-dev \
+        libxcb-render0-dev \
+        libxcb-shape0-dev \
+        libxcb-xfixes0-dev \
+        libglib2.0-dev \
+        libgtk-3-dev \
+        libxdo-dev \
+        libatk1.0-dev \
+        libgdk-pixbuf-2.0-dev \
+        libcairo2-dev \
+        libpango1.0-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# rustfmt and clippy are typically in the official rust image; ensure presence.
+RUN rustup component add rustfmt clippy
+
+# cargo-binstall downloads prebuilt binaries for Rust tools (no compilation).
+RUN curl -fsSL https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz \
+    | tar -xz -C /usr/local/cargo/bin/ \
+ && chmod +x /usr/local/cargo/bin/cargo-binstall
+
+# Preinstall cargo-tarpaulin for manual users of this convenience image.
+RUN cargo binstall -y cargo-tarpaulin
+
+# sccache remains available for local use of this optional image. CI disables
+# rustc wrappers and does not share writable compiler or Cargo state.
+RUN cargo binstall -y sccache
+
+LABEL org.opencontainers.image.source="https://gitlab.com/stden/RustShot"
+LABEL org.opencontainers.image.description="RustShot CI base image (Rust + GTK/X11 deps + tarpaulin + sccache)"
+LABEL org.opencontainers.image.licenses="MIT"
