@@ -1,0 +1,75 @@
+[package]
+name = "rustshot"
+version = "0.1.0"
+edition = "2021"
+authors = ["RustShot Contributors"]
+description = "A screenshot and screen recording utility written in Rust"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "RustShot"
+path = "src/main.rs"
+
+[dependencies]
+screenshots = "0.8"
+image = "0.25"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+tray-icon = "0.22"
+global-hotkey = "0.7"
+winit = { version = "0.30", features = ["rwh_06"] }
+dirs = "6"
+arboard = "3"
+softbuffer = "0.4"
+log = "0.4"
+simplelog = "0.12"
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1"
+screenshots = "0.8"
+cucumber = "0.21"
+futures = "0.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.51.1", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+# Executable BDD specifications: Gherkin features under tests/features/ drive
+# the public API. harness = false because the binary supplies its own main()
+# that runs the Cucumber runner.
+[[test]]
+name = "bdd"
+harness = false
+
+[profile.dev]
+debug = 1
+strip = "debuginfo"
+split-debuginfo = "unpacked"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+split-debuginfo = "unpacked"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage, coverage_nightly)'] }
+
+

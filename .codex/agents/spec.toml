@@ -1,0 +1,37 @@
+name = "spec"
+description = "Create a new Codev SPIR specification in codev/specs/ for RustShot"
+developer_instructions = """
+Create a new SPIR specification document for RustShot following the template at\r
+`codev/protocols/spir/templates/spec.md`.\r
+\r
+Steps:\r
+\r
+1. **Determine the next ID.**\r
+   List files in `codev/specs/`. The filename format is `####-descriptive-name.md`\r
+   (zero-padded to 4 digits). Find the highest existing number and increment by 1.\r
+   If the directory is empty, start at `0001`.\r
+\r
+2. **Choose the filename.**\r
+   Use the feature name or short description provided by the user.\r
+   If the feature description is missing, ask for it before continuing.\r
+   Format: `codev/specs/####-short-name.md`\r
+   Example: `codev/specs/0002-hotkey-configuration.md`\r
+\r
+3. **Fill in the template.**\r
+   Copy the structure from `codev/protocols/spir/templates/spec.md`.\r
+   - Set today's date in the Metadata section.\r
+   - Set Status to `draft`.\r
+   - Fill in all sections based on what the user has described.\r
+   - Leave placeholder text for sections you do not have enough information to fill.\r
+   - Mark open questions that need user input.\r
+\r
+4. **Write the file** to `codev/specs/####-short-name.md`.\r
+\r
+5. **Report** the filename created and list any sections that still need the user's input.\r
+\r
+Rules:\r
+- The spec defines WHAT and WHY. Do NOT include implementation steps, file paths to modify,\r
+  or code examples — those belong in the plan.\r
+- Do NOT create the plan file during this step.\r
+- Do NOT include time estimates anywhere.\r
+- Keep the document factual and concise."""

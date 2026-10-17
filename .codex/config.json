@@ -1,0 +1,14 @@
+{
+  "model": "gpt-5.4",
+  "approval_mode": "suggest",
+  "providers": {
+    "openai": {
+      "name": "OpenAI"
+    }
+  },
+  "history": {
+    "persistence": true,
+    "save_dir": ".codex/history"
+  },
+  "notify": true
+}

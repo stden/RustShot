@@ -1,0 +1,515 @@
+//! Detect exact clones of complete Rust statements, with a five-code-line minimum.
+//!
+//! Comments, punctuation-only lines, item signatures and partial argument lists
+//! are not executable blocks. Statement sequences never cross block/item
+//! boundaries. Test code and every cfg branch are parsed without exclusions.
+//!
+//! Usage: cargo run --manifest-path tools/check_duplicates/Cargo.toml -- src
+//! Exit codes: 0 = clean, 1 = duplicates, 2 = invalid input or scan failure.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::{env, fs, io, process};
+
+use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use quote::ToTokens;
+use syn::spanned::Spanned;
+use syn::visit::{self, Visit};
+
+/// Keep the original five-line threshold, counting lines containing code tokens.
+const MIN_LINES: usize = 5;
+const SKIP_DIRS: &[&str] = &["target", ".git"];
+
+struct Statement {
+    key: String,
+    lines: BTreeSet<usize>,
+    start: usize,
+    end: usize,
+}
+
+struct Block {
+    path: PathBuf,
+    statements: Vec<Statement>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct Location {
+    path: PathBuf,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Clone, Copy)]
+struct Seed {
+    block: usize,
+    start: usize,
+    end: usize,
+}
+
+struct Duplicate {
+    locations: Vec<Location>,
+    code: Vec<String>,
+}
+
+struct Collector<'a> {
+    path: &'a Path,
+    blocks: &'a mut Vec<Block>,
+}
+
+impl Collector<'_> {
+    fn macro_blocks(&mut self, tokens: TokenStream) {
+        for token in tokens {
+            if let TokenTree::Group(group) = token {
+                if group.delimiter() == Delimiter::Brace {
+                    let stream = TokenStream::from(TokenTree::Group(group.clone()));
+                    if let Ok(block) = syn::parse2::<syn::Block>(stream) {
+                        self.visit_block(&block);
+                        continue;
+                    }
+                }
+                self.macro_blocks(group.stream());
+            }
+        }
+    }
+
+    fn push(&mut self, statements: &mut Vec<Statement>) {
+        if !statements.is_empty() {
+            self.blocks.push(Block {
+                path: self.path.to_owned(),
+                statements: std::mem::take(statements),
+            });
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for Collector<'_> {
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        // Macro DSLs may contain ordinary Rust bodies (for example proptest).
+        // Recover those blocks without evaluating cfgs or expanding macros.
+        self.macro_blocks(node.tokens.clone());
+    }
+
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        let mut statements = Vec::new();
+        for statement in &block.stmts {
+            if matches!(statement, syn::Stmt::Item(_)) {
+                // A nested item is a boundary, not part of its parent's logic.
+                self.push(&mut statements);
+                continue;
+            }
+            let tokens = statement.to_token_stream();
+            let mut lines = BTreeSet::new();
+            let expression = match statement {
+                syn::Stmt::Expr(expression, _) => Some(expression),
+                syn::Stmt::Local(local) => local.init.as_ref().map(|init| &*init.expr),
+                _ => None,
+            };
+            if expression.is_some_and(is_simple_call) {
+                // Reusing a helper is the goal of deduplication. Wrapped
+                // arguments must not turn one invocation into five code lines.
+                lines.insert(statement.span().start().line);
+            } else {
+                code_lines(tokens.clone(), &mut lines);
+            }
+            statements.push(Statement {
+                key: tokens.to_string(),
+                lines,
+                start: statement.span().start().line,
+                end: statement.span().end().line,
+            });
+        }
+        self.push(&mut statements);
+        visit::visit_block(self, block);
+    }
+}
+
+fn is_simple_call(expression: &syn::Expr) -> bool {
+    matches!(expression, syn::Expr::Call(call) if call.args.iter().all(is_simple_argument))
+}
+
+fn is_simple_argument(expression: &syn::Expr) -> bool {
+    match expression {
+        syn::Expr::Path(_) | syn::Expr::Lit(_) => true,
+        syn::Expr::Field(field) => is_simple_argument(&field.base),
+        syn::Expr::Reference(reference) => is_simple_argument(&reference.expr),
+        syn::Expr::Paren(paren) => is_simple_argument(&paren.expr),
+        syn::Expr::Unary(unary) => is_simple_argument(&unary.expr),
+        syn::Expr::Tuple(tuple) => tuple.elems.iter().all(is_simple_argument),
+        _ => false,
+    }
+}
+
+/// Count identifier/literal-bearing source lines. Preserve string literals as
+/// tokens: comment markers or newlines inside a string are data, not comments.
+fn code_lines(tokens: TokenStream, lines: &mut BTreeSet<usize>) {
+    let mut tokens = tokens.into_iter().peekable();
+    while let Some(token) = tokens.next() {
+        match token {
+            TokenTree::Punct(ref punct) if punct.as_char() == '#' => {
+                if matches!(tokens.peek(), Some(TokenTree::Punct(p)) if p.as_char() == '!') {
+                    tokens.next();
+                }
+                if matches!(tokens.peek(), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Bracket)
+                {
+                    tokens.next();
+                }
+            }
+            TokenTree::Ident(_) | TokenTree::Literal(_) => {
+                lines.insert(token.span().start().line);
+            }
+            TokenTree::Group(group) => code_lines(group.stream(), lines),
+            TokenTree::Punct(_) => {}
+        }
+    }
+}
+
+fn collect_rs_files(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    let mut entries = fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_unstable_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            if !SKIP_DIRS.iter().any(|name| entry.file_name() == *name) {
+                collect_rs_files(&path, files)?;
+            }
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn load_blocks(dir: &Path) -> Result<Vec<Block>, String> {
+    let mut files = Vec::new();
+    collect_rs_files(dir, &mut files).map_err(|error| format!("{}: {error}", dir.display()))?;
+    if files.is_empty() {
+        return Err(format!("{}: no Rust source files found", dir.display()));
+    }
+    let mut blocks = Vec::new();
+    for path in files {
+        let source =
+            fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let syntax =
+            syn::parse_file(&source).map_err(|error| format!("{}: {error}", path.display()))?;
+        Collector {
+            path: &path,
+            blocks: &mut blocks,
+        }
+        .visit_file(&syntax);
+    }
+    Ok(blocks)
+}
+
+fn location(blocks: &[Block], seed: Seed) -> Location {
+    let block = &blocks[seed.block];
+    Location {
+        path: block.path.clone(),
+        start: block.statements[seed.start].start,
+        end: block.statements[seed.end - 1].end,
+    }
+}
+
+fn find_duplicates(blocks: &[Block]) -> Vec<Duplicate> {
+    let mut seen: BTreeMap<Vec<String>, Vec<Seed>> = BTreeMap::new();
+    for (block_index, block) in blocks.iter().enumerate() {
+        for start in 0..block.statements.len() {
+            let mut lines = BTreeSet::new();
+            let mut key = Vec::new();
+            for (offset, statement) in block.statements[start..].iter().enumerate() {
+                lines.extend(statement.lines.iter().copied());
+                key.push(statement.key.clone());
+                if lines.len() >= MIN_LINES {
+                    seen.entry(key).or_default().push(Seed {
+                        block: block_index,
+                        start,
+                        end: start + offset + 1,
+                    });
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut duplicates = Vec::new();
+    for mut seeds in seen.into_values().filter(|seeds| seeds.len() > 1) {
+        // Expand equal windows to maximal statement sequences before reporting.
+        loop {
+            let first = seeds[0];
+            let Some(next) = blocks[first.block].statements.get(first.end) else {
+                break;
+            };
+            if !seeds.iter().all(|seed| {
+                blocks[seed.block]
+                    .statements
+                    .get(seed.end)
+                    .is_some_and(|statement| statement.key == next.key)
+            }) {
+                break;
+            }
+            for seed in &mut seeds {
+                seed.end += 1;
+            }
+        }
+        let mut locations: Vec<_> = seeds.iter().map(|seed| location(blocks, *seed)).collect();
+        locations.sort_unstable();
+        locations.dedup();
+        // A nested block can be visited through a larger statement too. One
+        // source occurrence must never be reported as a clone of itself.
+        if locations.len() < 2 {
+            continue;
+        }
+        let first = seeds[0];
+        duplicates.push(Duplicate {
+            locations,
+            code: blocks[first.block].statements[first.start..first.end]
+                .iter()
+                .map(|statement| statement.key.clone())
+                .collect(),
+        });
+    }
+
+    // Remove a report only if every occurrence is contained in a larger report.
+    // Subsets with additional occurrences are retained.
+    duplicates.sort_by_key(|duplicate| {
+        std::cmp::Reverse(
+            duplicate
+                .locations
+                .iter()
+                .map(|location| location.end - location.start + 1)
+                .sum::<usize>(),
+        )
+    });
+    let mut maximal: Vec<Duplicate> = Vec::new();
+    for duplicate in duplicates {
+        let contained = maximal.iter().any(|other| {
+            duplicate.locations.iter().all(|location| {
+                other.locations.iter().any(|outer| {
+                    outer.path == location.path
+                        && outer.start <= location.start
+                        && outer.end >= location.end
+                })
+            })
+        });
+        if !contained {
+            maximal.push(duplicate);
+        }
+    }
+    maximal.sort_by(|a, b| a.locations.cmp(&b.locations));
+    maximal
+}
+
+fn run() -> Result<bool, String> {
+    let mut args = env::args_os().skip(1);
+    let src_dir = PathBuf::from(args.next().unwrap_or_else(|| "src".into()));
+    if args.next().is_some() {
+        return Err("usage: check_duplicates [directory]".into());
+    }
+    let blocks = load_blocks(&src_dir)?;
+    let duplicates = find_duplicates(&blocks);
+    if duplicates.is_empty() {
+        println!("Duplication check passed.");
+        return Ok(false);
+    }
+    for duplicate in duplicates {
+        println!(
+            "Duplicated block ({MIN_LINES}+ code lines) in {} locations:",
+            duplicate.locations.len()
+        );
+        for location in duplicate.locations {
+            println!(
+                "  {}:{}-{}",
+                location.path.display(),
+                location.start,
+                location.end
+            );
+        }
+        for statement in duplicate.code {
+            println!("  {statement}");
+        }
+        println!();
+    }
+    Ok(true)
+}
+
+fn main() {
+    match run() {
+        Ok(false) => {}
+        Ok(true) => {
+            eprintln!("Duplication check FAILED.");
+            process::exit(1);
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            process::exit(2);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn make_test_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "rustshot_dup_test_{tag}_{pid}",
+            pid = std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn collect_all(dir: &std::path::Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        collect_rs_files(dir, &mut files).unwrap();
+        files
+    }
+
+    // -----------------------------------------------------------------------
+    // is_simple_call
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_simple_call_accepts_identifier_and_literal_arguments() {
+        let expr: syn::Expr = syn::parse_str("foo(x, 42)").unwrap();
+        assert!(is_simple_call(&expr));
+    }
+
+    #[test]
+    fn is_simple_call_accepts_reference_argument() {
+        let expr: syn::Expr = syn::parse_str("foo(&x)").unwrap();
+        assert!(is_simple_call(&expr));
+    }
+
+    #[test]
+    fn is_simple_call_rejects_closure_argument() {
+        let expr: syn::Expr = syn::parse_str("foo(|x| x + 1)").unwrap();
+        assert!(!is_simple_call(&expr));
+    }
+
+    #[test]
+    fn is_simple_call_rejects_method_call() {
+        // MethodCall is not Call; must return false
+        let expr: syn::Expr = syn::parse_str("x.foo()").unwrap();
+        assert!(!is_simple_call(&expr));
+    }
+
+    // -----------------------------------------------------------------------
+    // code_lines
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_lines_counts_zero_for_punctuation_only() {
+        use proc_macro2::TokenStream;
+        let tokens: TokenStream = "{ ; , }".parse().unwrap();
+        let mut lines = BTreeSet::new();
+        code_lines(tokens, &mut lines);
+        assert!(
+            lines.is_empty(),
+            "punctuation-only tokens produce no code lines"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_rs_files
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn collect_rs_files_includes_only_rs_extensions() {
+        let dir = make_test_dir("collect");
+        fs::write(dir.join("a.rs"), "").unwrap();
+        fs::write(dir.join("b.py"), "").unwrap();
+        fs::write(dir.join("c.txt"), "").unwrap();
+
+        let files = collect_all(&dir);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_name().unwrap(), "a.rs");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn collect_rs_files_skips_target_and_git_directories() {
+        let dir = make_test_dir("skip_dirs");
+        fs::write(dir.join("root.rs"), "").unwrap();
+        for skip in SKIP_DIRS {
+            let sub = dir.join(skip);
+            fs::create_dir_all(&sub).unwrap();
+            fs::write(sub.join("hidden.rs"), "").unwrap();
+        }
+
+        let files = collect_all(&dir);
+        assert_eq!(files.len(), 1, "only root.rs should be collected");
+        assert_eq!(files[0].file_name().unwrap(), "root.rs");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn collect_rs_files_recurses_into_subdirectories() {
+        let dir = make_test_dir("recurse");
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(dir.join("a.rs"), "").unwrap();
+        fs::write(sub.join("b.rs"), "").unwrap();
+
+        let files = collect_all(&dir);
+        assert_eq!(files.len(), 2);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // find_duplicates (integration)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn find_duplicates_returns_empty_for_unique_code() {
+        let dir = make_test_dir("no_dup");
+        fs::write(dir.join("a.rs"), "fn unique_a() { let x: i32 = 1; }\n").unwrap();
+        fs::write(dir.join("b.rs"), "fn unique_b() { let y: i32 = 2; }\n").unwrap();
+
+        let blocks = load_blocks(&dir).unwrap();
+        let dups = find_duplicates(&blocks);
+        assert!(dups.is_empty(), "unique code must produce no duplicates");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn find_duplicates_detects_identical_five_statement_bodies() {
+        // Two functions with different names but identical 5-statement bodies.
+        // Each statement occupies one source line, so each contributes 1 code
+        // line; the 5-code-line threshold is met after all five statements.
+        let shared_body = "
+    let dup_one: i32 = 10;
+    let dup_two: i32 = dup_one + 20;
+    let dup_three: i32 = dup_two * 3;
+    let dup_four: i32 = dup_three - 4;
+    let dup_five: i32 = dup_four / 5;
+";
+        let dir = make_test_dir("dup_bodies");
+        fs::write(
+            dir.join("a.rs"),
+            format!("fn function_alpha() {{{shared_body}}}\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("b.rs"),
+            format!("fn function_beta() {{{shared_body}}}\n"),
+        )
+        .unwrap();
+
+        let blocks = load_blocks(&dir).unwrap();
+        let dups = find_duplicates(&blocks);
+        assert!(
+            !dups.is_empty(),
+            "identical 5-statement function bodies must be flagged"
+        );
+        // The duplicate must point at both files.
+        let locs = &dups[0].locations;
+        let paths: Vec<_> = locs.iter().map(|l| l.path.file_name().unwrap()).collect();
+        assert!(paths.contains(&std::ffi::OsStr::new("a.rs")));
+        assert!(paths.contains(&std::ffi::OsStr::new("b.rs")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}
