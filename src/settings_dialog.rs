@@ -134,7 +134,7 @@ unsafe fn run_dialog() {
     };
     RegisterClassExW(&wc);
 
-    let _ = CreateWindowExW(
+    let hwnd = CreateWindowExW(
         WINDOW_EX_STYLE::default(),
         class_name,
         w!("RustShot Settings"),
@@ -148,9 +148,13 @@ unsafe fn run_dialog() {
         None,
         None,
     );
+    if hwnd.0 == 0 {
+        CoUninitialize();
+        return;
+    }
 
     let mut msg = MSG::default();
-    while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+    while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
         let _ = TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
@@ -596,12 +600,12 @@ unsafe fn get_control_text(parent: HWND, id: i32) -> String {
         return String::new();
     }
     let len = GetWindowTextLengthW(ctrl);
-    if len == 0 {
+    if len <= 0 {
         return String::new();
     }
     let mut buf = vec![0u16; (len + 1) as usize];
-    GetWindowTextW(ctrl, &mut buf);
-    String::from_utf16_lossy(&buf[..len as usize])
+    let copied = GetWindowTextW(ctrl, &mut buf).max(0) as usize;
+    String::from_utf16_lossy(&buf[..copied.min(len as usize)])
 }
 
 // ---------------------------------------------------------------------------

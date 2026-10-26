@@ -192,6 +192,8 @@ fn escape_json_string(value: &str) -> String {
         match ch {
             '\\' => escaped.push_str("\\\\"),
             '"' => escaped.push_str("\\\""),
+            '\u{0008}' => escaped.push_str("\\b"),
+            '\u{000C}' => escaped.push_str("\\f"),
             '\n' => escaped.push_str("\\n"),
             '\r' => escaped.push_str("\\r"),
             '\t' => escaped.push_str("\\t"),
@@ -214,6 +216,9 @@ fn unescape_json_string(value: &str) -> String {
         match chars.next() {
             Some('"') => unescaped.push('"'),
             Some('\\') => unescaped.push('\\'),
+            Some('/') => unescaped.push('/'),
+            Some('b') => unescaped.push('\u{0008}'),
+            Some('f') => unescaped.push('\u{000C}'),
             Some('n') => unescaped.push('\n'),
             Some('r') => unescaped.push('\r'),
             Some('t') => unescaped.push('\t'),
@@ -267,31 +272,128 @@ pub fn format_settings_json(settings: &Settings) -> String {
 /// - Move to a real JSON parser if the format grows beyond the current small
 ///   flat schema.
 pub fn parse_settings_json(json: &str) -> Settings {
-    let mut settings = Settings::default();
+    const SEEN_SCREENSHOTS_DIR: u8 = 1 << 0;
+    const SEEN_RECORDINGS_DIR: u8 = 1 << 1;
+    const SEEN_DEFAULT_FORMAT: u8 = 1 << 2;
+    const SEEN_RECORDING_FPS: u8 = 1 << 3;
+    const SEEN_AUTO_START: u8 = 1 << 4;
+    const SEEN_ALL: u8 = SEEN_SCREENSHOTS_DIR
+        | SEEN_RECORDINGS_DIR
+        | SEEN_DEFAULT_FORMAT
+        | SEEN_RECORDING_FPS
+        | SEEN_AUTO_START;
 
-    // Manual field-by-field parse:
-    // try each known key independently, keep defaults for anything missing or
-    // malformed, then normalize the resulting values once at the end.
-    if let Some(val) = extract_json_string(json, "screenshots_dir") {
-        settings.screenshots_dir = PathBuf::from(val);
-    }
-    if let Some(val) = extract_json_string(json, "recordings_dir") {
-        settings.recordings_dir = PathBuf::from(val);
-    }
-    if let Some(val) = extract_json_string(json, "default_format") {
-        settings.default_format = val;
-    }
-    if let Some(val) = extract_json_number(json, "recording_fps") {
-        settings.recording_fps = val;
-    }
-    if let Some(val) = extract_json_bool(json, "auto_start") {
-        settings.auto_start = val;
+    let mut screenshots_dir: Option<PathBuf> = None;
+    let mut recordings_dir: Option<PathBuf> = None;
+    let mut default_format: Option<String> = None;
+    let mut recording_fps: u32 = 30;
+    let mut auto_start: bool = true;
+    let mut seen_mask: u8 = 0;
+
+    let bytes = json.as_bytes();
+    let mut index = 0;
+    let mut depth = 0usize;
+
+    while index < bytes.len() && seen_mask != SEEN_ALL {
+        match bytes[index] {
+            b'{' | b'[' => {
+                depth += 1;
+                index += 1;
+            }
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                index += 1;
+            }
+            b'"' => {
+                let Some((token_end, _)) = scan_json_string_end(bytes, index + 1) else {
+                    break;
+                };
+                let key = &json[index + 1..token_end];
+                index = token_end + 1;
+
+                if depth != 1 {
+                    continue;
+                }
+
+                let key_bit = match key {
+                    "screenshots_dir" => SEEN_SCREENSHOTS_DIR,
+                    "recordings_dir" => SEEN_RECORDINGS_DIR,
+                    "default_format" => SEEN_DEFAULT_FORMAT,
+                    "recording_fps" => SEEN_RECORDING_FPS,
+                    "auto_start" => SEEN_AUTO_START,
+                    _ => 0,
+                };
+
+                while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+                    index += 1;
+                }
+                if bytes.get(index) != Some(&b':') {
+                    continue;
+                }
+                index += 1;
+                while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+                    index += 1;
+                }
+
+                let is_new_known_key = key_bit != 0 && (seen_mask & key_bit) == 0;
+                seen_mask |= key_bit;
+                let after_colon = &json[index..];
+
+                if is_new_known_key
+                    && (key_bit
+                        & (SEEN_SCREENSHOTS_DIR | SEEN_RECORDINGS_DIR | SEEN_DEFAULT_FORMAT))
+                        != 0
+                {
+                    if let Some((val, consumed)) = parse_json_string_value(after_colon) {
+                        index += consumed;
+                        match key_bit {
+                            SEEN_SCREENSHOTS_DIR if !val.is_empty() => {
+                                screenshots_dir = Some(PathBuf::from(val));
+                            }
+                            SEEN_RECORDINGS_DIR if !val.is_empty() => {
+                                recordings_dir = Some(PathBuf::from(val));
+                            }
+                            SEEN_DEFAULT_FORMAT => default_format = Some(val),
+                            _ => {}
+                        }
+                    }
+                } else if bytes.get(index) == Some(&b'"') {
+                    if let Some((val_end, _)) = scan_json_string_end(bytes, index + 1) {
+                        index = val_end + 1;
+                    }
+                } else if is_new_known_key {
+                    if key_bit == SEEN_RECORDING_FPS {
+                        if let Some(val) = parse_json_number_value(after_colon) {
+                            recording_fps = val;
+                        }
+                    } else if let Some(val) = parse_json_bool_value(after_colon) {
+                        auto_start = val;
+                    }
+                }
+            }
+            _ => index += 1,
+        }
     }
 
-    settings.default_format = normalize_default_format(&settings.default_format).to_string();
-    settings.recording_fps = normalize_recording_fps(settings.recording_fps);
+    let (screenshots_dir, recordings_dir) = match (screenshots_dir, recordings_dir) {
+        (Some(shots), Some(recs)) => (shots, recs),
+        (shots, recs) => {
+            let pictures = dir_or_current(dirs::picture_dir());
+            let default_shots = pictures.join("RustShot");
+            let final_recs = recs.unwrap_or_else(|| default_shots.join("recordings"));
+            let final_shots = shots.unwrap_or(default_shots);
+            (final_shots, final_recs)
+        }
+    };
 
-    settings
+    Settings {
+        screenshots_dir,
+        recordings_dir,
+        default_format: normalize_default_format(default_format.as_deref().unwrap_or("png"))
+            .to_string(),
+        recording_fps: normalize_recording_fps(recording_fps),
+        auto_start,
+    }
 }
 
 #[allow(dead_code)]
@@ -351,6 +453,29 @@ pub fn benchmark_extract_json_string(json: &str, key: &str) -> Option<String> {
     extract_json_string(json, key)
 }
 
+/// Scan forward from `start` (the byte immediately after an opening `"`) until
+/// the matching unescaped closing `"`, returning `(closing_quote_idx, saw_escape)`.
+#[inline]
+fn scan_json_string_end(bytes: &[u8], start: usize) -> Option<(usize, bool)> {
+    let mut index = start;
+    let mut escaped = false;
+    let mut saw_escape = false;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if !escaped => {
+                escaped = true;
+                saw_escape = true;
+            }
+            b'"' if !escaped => return Some((index, saw_escape)),
+            _ => escaped = false,
+        }
+        index += 1;
+    }
+
+    None
+}
+
 /// Find a top-level JSON key and return the trimmed text after the colon.
 ///
 /// Algorithm:
@@ -382,24 +507,8 @@ fn find_json_value<'a>(json: &'a str, key: &str) -> Option<&'a str> {
             }
             b'"' => {
                 let string_start = index + 1;
-                index += 1;
-                let mut escaped = false;
-
-                while index < bytes.len() {
-                    match bytes[index] {
-                        b'\\' if !escaped => escaped = true,
-                        b'"' if !escaped => break,
-                        _ => escaped = false,
-                    }
-                    index += 1;
-                }
-
-                if index >= bytes.len() {
-                    return None;
-                }
-
-                let string_end = index;
-                index += 1;
+                let (string_end, _) = scan_json_string_end(bytes, string_start)?;
+                index = string_end + 1;
 
                 if depth != 1 || &json[string_start..string_end] != key {
                     continue;
@@ -428,47 +537,55 @@ fn find_json_value<'a>(json: &'a str, key: &str) -> Option<&'a str> {
 }
 
 fn has_json_value_boundary(rest: &str) -> bool {
-    rest.chars()
-        .next()
-        .is_none_or(|ch| ch.is_whitespace() || ch == ',' || ch == '}' || ch == ']')
+    rest.as_bytes()
+        .first()
+        .is_none_or(|&b| b.is_ascii_whitespace() || b == b',' || b == b'}' || b == b']')
+}
+
+fn parse_json_string_value(after_colon: &str) -> Option<(String, usize)> {
+    let bytes = after_colon.as_bytes();
+    if bytes.first() != Some(&b'"') {
+        return None;
+    }
+    let (end_idx, saw_escape) = scan_json_string_end(bytes, 1)?;
+    let raw = &after_colon[1..end_idx];
+    let parsed = if saw_escape {
+        unescape_json_string(raw)
+    } else {
+        raw.to_string()
+    };
+    Some((parsed, end_idx + 1))
+}
+
+fn parse_json_number_value(after_colon: &str) -> Option<u32> {
+    let bytes = after_colon.as_bytes();
+    let mut end = 0;
+    while end < bytes.len() && bytes[end].is_ascii_digit() {
+        end += 1;
+    }
+    if end == 0 || !has_json_value_boundary(&after_colon[end..]) {
+        return None;
+    }
+    after_colon[..end].parse().ok()
+}
+
+fn parse_json_bool_value(after_colon: &str) -> Option<bool> {
+    if let Some(rest) = after_colon.strip_prefix("true") {
+        if has_json_value_boundary(rest) {
+            return Some(true);
+        }
+    } else if let Some(rest) = after_colon.strip_prefix("false") {
+        if has_json_value_boundary(rest) {
+            return Some(false);
+        }
+    }
+    None
 }
 
 /// Extract a JSON string value for `key` using a minimal escape-aware scan.
-///
-/// Algorithm:
-/// 1. Locate the candidate value text with [`find_json_value`].
-/// 2. Ensure the value starts with a double quote.
-/// 3. Scan forward until an unescaped closing quote is found.
-/// 4. Unescape the captured slice and return it.
-///
-/// This parser is intentionally narrow: it understands the subset of JSON that
-/// RustShot writes itself and treats anything malformed as "missing".
-///
-/// Possible improvements:
-/// - Support the full JSON escape set, including unicode escape sequences.
-/// - Replace the ad-hoc parser with `serde_json` if dependency policy changes.
 fn extract_json_string(json: &str, key: &str) -> Option<String> {
     let after_colon = find_json_value(json, key)?;
-    if !after_colon.starts_with('"') {
-        return None;
-    }
-    let content = &after_colon[1..];
-    let mut escaped = false;
-
-    for (idx, ch) in content.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-
-        match ch {
-            '\\' => escaped = true,
-            '"' => return Some(unescape_json_string(&content[..idx])),
-            _ => {}
-        }
-    }
-
-    None
+    parse_json_string_value(after_colon).map(|(val, _)| val)
 }
 
 #[allow(dead_code)]
@@ -478,25 +595,9 @@ pub fn benchmark_extract_json_number(json: &str, key: &str) -> Option<u32> {
 }
 
 /// Extract a positive integer value by consuming consecutive ASCII digits.
-///
-/// Algorithm:
-/// 1. Locate the candidate value text with [`find_json_value`].
-/// 2. Read digits until the first non-digit.
-/// 3. Require a valid JSON value boundary after the digit sequence.
-/// 4. Parse the digit slice as `u32`.
-/// 5. Return `None` on empty, invalid, overflowing, or junk-suffixed input.
-///
-/// Possible improvements:
-/// - Support signed or wider numeric types if the settings schema expands.
 fn extract_json_number(json: &str, key: &str) -> Option<u32> {
     let after_colon = find_json_value(json, key)?;
-    let end = after_colon
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(after_colon.len());
-    if end == 0 || !has_json_value_boundary(&after_colon[end..]) {
-        return None;
-    }
-    after_colon[..end].parse().ok()
+    parse_json_number_value(after_colon)
 }
 
 #[allow(dead_code)]
@@ -506,30 +607,9 @@ pub fn benchmark_extract_json_bool(json: &str, key: &str) -> Option<bool> {
 }
 
 /// Extract a JSON boolean while enforcing a token boundary after the literal.
-///
-/// Algorithm:
-/// 1. Locate the candidate value text with [`find_json_value`].
-/// 2. Check for the `true` literal followed by a valid JSON boundary.
-/// 3. Otherwise check for the `false` literal followed by a valid boundary.
-/// 4. Reject lookalikes such as `trueish`, `falsehood`, or numeric values.
-///
-/// Possible improvements:
-/// - Share tokenization with the string/number extractors so all scalar parsing
-///   follows one consistent scanning path.
-/// - Return a richer parse error in debug tooling to make malformed user edits
-///   easier to diagnose.
 fn extract_json_bool(json: &str, key: &str) -> Option<bool> {
     let after_colon = find_json_value(json, key)?;
-
-    if after_colon.starts_with("true") && has_json_value_boundary(&after_colon["true".len()..]) {
-        Some(true)
-    } else if after_colon.starts_with("false")
-        && has_json_value_boundary(&after_colon["false".len()..])
-    {
-        Some(false)
-    } else {
-        None
-    }
+    parse_json_bool_value(after_colon)
 }
 
 #[cfg(test)]
@@ -2570,6 +2650,9 @@ mod tests {
             dir_or_current(Some(PathBuf::from("custom_dir"))),
             PathBuf::from("custom_dir")
         );
+        let spaced = parse_settings_json(r#"{ "screenshots_dir" , "default_format" : "bmp" }"#);
+        assert_eq!(spaced.default_format, "bmp");
+        assert_eq!(find_json_value("{\"unterminated", "k"), None);
 
         let temp_dir = std::env::temp_dir().join(format!(
             "rustshot_settings_write_err_{}",
@@ -2590,5 +2673,32 @@ mod tests {
 
         set_settings_path_for_tests(None);
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn json_escapes_and_duplicate_or_value_keys_are_handled_correctly() {
+        let escaped = escape_json_string("a\u{0008}b\u{000C}c");
+        assert_eq!(escaped, "a\\bb\\fc");
+        assert_eq!(
+            unescape_json_string("a\\/b\\bc\\fd"),
+            "a/b\u{0008}c\u{000C}d"
+        );
+
+        let default_shots = Settings::default().screenshots_dir;
+        let default_recs = Settings::default().recordings_dir;
+        let parsed_empty_dirs = parse_settings_json(
+            r#"{ "screenshots_dir": "", "screenshots_dir": "/override", "recordings_dir": "", "recordings_dir": "/override_rec" }"#,
+        );
+        assert_eq!(parsed_empty_dirs.screenshots_dir, default_shots);
+        assert_eq!(parsed_empty_dirs.recordings_dir, default_recs);
+
+        // String values that look like keys must be skipped rather than treated as keys
+        let malformed = r#"{ "other": "default_format": "bmp", "recording_fps": "default_format": "bmp", "auto_start": "default_format": "bmp", "default_format": "jpg", "default_format": "bmp" }"#;
+        assert_eq!(parse_settings_json(malformed).default_format, "jpg");
+
+        // Unterminated value string after unknown key
+        let unterminated_val = r#"{ "other": "unterminated"#;
+        assert_eq!(parse_settings_json(unterminated_val).default_format, "png");
+        assert_eq!(find_json_value(unterminated_val, "default_format"), None);
     }
 }

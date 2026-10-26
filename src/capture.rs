@@ -409,32 +409,52 @@ fn capture_window_hwnd(hwnd: windows::Win32::Foundation::HWND) -> Result<image::
         if right <= left || bottom <= top {
             return Err("Window has zero or negative size".to_string());
         }
-        let width = (right - left) as u32;
-        let height = (bottom - top) as u32;
+        let width = left.abs_diff(right);
+        let height = top.abs_diff(bottom);
+        let Ok(width_i32) = i32::try_from(width) else {
+            return Err("Window dimensions exceed GDI limits".to_string());
+        };
+        let Ok(height_i32) = i32::try_from(height) else {
+            return Err("Window dimensions exceed GDI limits".to_string());
+        };
+        let byte_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|px| px.checked_mul(4))
+            .ok_or_else(|| "Window frame size overflow".to_string())?;
 
         let hdc_screen = GetDC(None);
+        if hdc_screen.is_invalid() {
+            return Err("Failed to acquire screen DC".to_string());
+        }
         let hdc_mem = CreateCompatibleDC(hdc_screen);
-        let hbm = CreateCompatibleBitmap(hdc_screen, width as i32, height as i32);
+        if hdc_mem.is_invalid() {
+            let _ = ReleaseDC(None, hdc_screen);
+            return Err("Failed to create compatible DC".to_string());
+        }
+        let hbm = CreateCompatibleBitmap(hdc_screen, width_i32, height_i32);
+        if hbm.is_invalid() {
+            let _ = DeleteDC(hdc_mem);
+            let _ = ReleaseDC(None, hdc_screen);
+            return Err("Failed to create compatible bitmap".to_string());
+        }
         let old_obj = SelectObject(hdc_mem, hbm);
+        if old_obj.is_invalid() {
+            let _ = DeleteObject(hbm);
+            let _ = DeleteDC(hdc_mem);
+            let _ = ReleaseDC(None, hdc_screen);
+            return Err("Failed to select bitmap into DC".to_string());
+        }
 
         let _ = BitBlt(
-            hdc_mem,
-            0,
-            0,
-            width as i32,
-            height as i32,
-            hdc_screen,
-            left,
-            top,
-            SRCCOPY,
+            hdc_mem, 0, 0, width_i32, height_i32, hdc_screen, left, top, SRCCOPY,
         );
 
         // Read pixels via GetDIBits
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width as i32,
-                biHeight: -(height as i32), // top-down
+                biWidth: width_i32,
+                biHeight: -height_i32, // top-down
                 biPlanes: 1,
                 biBitCount: 32,
                 biCompression: BI_RGB.0,
@@ -443,7 +463,7 @@ fn capture_window_hwnd(hwnd: windows::Win32::Foundation::HWND) -> Result<image::
             ..Default::default()
         };
 
-        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        let mut pixels = vec![0u8; byte_len];
         let scan_lines = GetDIBits(
             hdc_mem,
             hbm,
@@ -464,8 +484,11 @@ fn capture_window_hwnd(hwnd: windows::Win32::Foundation::HWND) -> Result<image::
             return Err("GetDIBits failed to read window pixels".to_string());
         }
 
-        // Convert BGRA → RGBA
+        // Convert BGRA → RGBA and force opaque alpha (GDI 32-bpp BitBlt can leave alpha=0)
         bgra_to_rgba(&mut pixels);
+        for chunk in pixels.as_chunks_mut::<4>().0 {
+            chunk[3] = 255;
+        }
 
         image::RgbaImage::from_raw(width, height, pixels)
             .ok_or_else(|| "Failed to create image from captured pixels".to_string())
@@ -3435,8 +3458,12 @@ mod tests {
         let err = capture_screenshot(Some(temp_dir.join("never.png")), Format::Png, Some(999));
         assert!(err.is_err());
 
-        // Default screen (None) via capture_screenshot_in_dir when a display is available
-        if Screen::all().map(|s| !s.is_empty()).unwrap_or(false) {
+        // Default screen (None) via capture_screenshot_in_dir when a display is capturable
+        if Screen::all()
+            .ok()
+            .and_then(|s| s.first().and_then(|first| first.capture().ok()))
+            .is_some()
+        {
             let out_path = temp_dir.join("default_screen.png");
             let saved =
                 capture_screenshot_in_dir(Some(out_path.clone()), Format::Png, None, &temp_dir)

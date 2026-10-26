@@ -23,42 +23,45 @@ pub const MENU_STOP_RECORD: &str = "stop_record";
 const DEFAULT_ICON_SIZE: u32 = 32;
 const TOGGLE_RECORD_LABEL: &str = "Start or Stop Recording (Ctrl+Shift+R)";
 
-/// Generate a 32×32 RGBA pixel buffer for the tray icon (blue camera with white lens).
-fn build_default_icon_pixels() -> Vec<u8> {
-    let size = DEFAULT_ICON_SIZE;
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
-    // Pre-compute lens threshold as squared distance to avoid sqrt per pixel
+const DEFAULT_ICON_BYTE_LEN: usize = (DEFAULT_ICON_SIZE * DEFAULT_ICON_SIZE * 4) as usize;
+const DEFAULT_ICON_PIXELS: [u8; DEFAULT_ICON_BYTE_LEN] = compute_default_icon_pixels();
+
+/// Rasterize the 32×32 tray icon at compile time by iterating only over the
+/// non-transparent camera body bounding box (`y in 6..=26`, `x in 4..=28`).
+const fn compute_default_icon_pixels() -> [u8; DEFAULT_ICON_BYTE_LEN] {
+    let mut rgba = [0u8; DEFAULT_ICON_BYTE_LEN];
     const LENS_RADIUS_SQ: i32 = 6 * 6; // 36
 
-    for y in 0..size {
+    let mut y = 6u32;
+    while y <= 26 {
         let dist_y = (y as i32 - 16).abs();
-        let in_body_y = dist_y <= 10;
         let dist_y_sq = dist_y * dist_y;
-
-        for x in 0..size {
-            let idx = ((y * size + x) * 4) as usize;
+        let mut x = 4u32;
+        while x <= 28 {
+            let idx = ((y * DEFAULT_ICON_SIZE + x) * 4) as usize;
             let dist_x = (x as i32 - 16).abs();
-
-            if in_body_y && dist_x <= 12 {
-                let dist_sq = dist_x * dist_x + dist_y_sq;
-                if dist_sq <= LENS_RADIUS_SQ {
-                    // Lens - white circle in center
-                    rgba[idx] = 255; // R
-                    rgba[idx + 1] = 255; // G
-                    rgba[idx + 2] = 255; // B
-                } else {
-                    // Camera body - dark blue
-                    rgba[idx] = 41; // R
-                    rgba[idx + 1] = 128; // G
-                    rgba[idx + 2] = 185; // B
-                }
-                rgba[idx + 3] = 255; // A
+            let dist_sq = dist_x * dist_x + dist_y_sq;
+            if dist_sq <= LENS_RADIUS_SQ {
+                rgba[idx] = 255;
+                rgba[idx + 1] = 255;
+                rgba[idx + 2] = 255;
+            } else {
+                rgba[idx] = 41;
+                rgba[idx + 1] = 128;
+                rgba[idx + 2] = 185;
             }
-            // else: transparent (already 0)
+            rgba[idx + 3] = 255;
+            x += 1;
         }
+        y += 1;
     }
 
     rgba
+}
+
+/// Return the pre-computed 32×32 RGBA pixel buffer for the tray icon in `O(1)` time.
+fn build_default_icon_pixels() -> Vec<u8> {
+    DEFAULT_ICON_PIXELS.to_vec()
 }
 
 /// Create the system tray icon with context menu
@@ -99,6 +102,17 @@ pub fn create_tray() -> Result<TrayIcon, Box<dyn std::error::Error>> {
 }
 
 fn icon_from_rgba_pixels(rgba: Vec<u8>) -> Result<Icon, Box<dyn std::error::Error>> {
+    let expected_byte_len = (DEFAULT_ICON_SIZE * DEFAULT_ICON_SIZE * 4) as usize;
+    if rgba.len() != expected_byte_len {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "Expected {expected_byte_len} RGBA bytes for tray icon, got {}",
+                rgba.len()
+            ),
+        )
+        .into());
+    }
     Icon::from_rgba(rgba, DEFAULT_ICON_SIZE, DEFAULT_ICON_SIZE).map_err(|e| e.into())
 }
 
@@ -143,6 +157,7 @@ mod tests {
             pixels.len(),
             (DEFAULT_ICON_SIZE * DEFAULT_ICON_SIZE * 4) as usize
         );
+        assert_eq!(compute_default_icon_pixels().as_slice(), pixels.as_slice());
     }
 
     #[test]
@@ -1031,6 +1046,21 @@ mod tests {
 
     #[test]
     fn icon_from_rgba_pixels_returns_err_for_invalid_buffer_size() {
-        assert!(icon_from_rgba_pixels(Vec::new()).is_err());
+        let expected_byte_len = (DEFAULT_ICON_SIZE * DEFAULT_ICON_SIZE * 4) as usize;
+        for byte_len in [
+            0,
+            1,
+            expected_byte_len - 4,
+            expected_byte_len - 1,
+            expected_byte_len + 1,
+            expected_byte_len + 4,
+        ] {
+            let error = icon_from_rgba_pixels(vec![0; byte_len]).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().map(|e| e.kind()),
+                Some(std::io::ErrorKind::InvalidInput),
+                "invalid buffer length {byte_len} must be rejected consistently on every platform"
+            );
+        }
     }
 }

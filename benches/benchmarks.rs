@@ -1689,6 +1689,143 @@ fn bench_build_physical_screen_layouts(c: &mut Criterion) {
         b.iter(|| selection::benchmark_build_physical_screen_layouts(black_box(&inputs)));
     });
 
+    group.bench_function("eight_monitor_chain", |b| {
+        let inputs = vec![
+            (-11520, 600, 1920, 1080, 1920, 1080, false),
+            (-9600, 500, 1920, 1080, 2400, 1350, false),
+            (-7680, 400, 1920, 1080, 1920, 1080, false),
+            (-5760, 300, 1920, 1080, 2880, 1620, false),
+            (-3840, 200, 1920, 1080, 1920, 1080, false),
+            (-1920, 100, 1920, 1080, 2400, 1350, false),
+            (0, 0, 1920, 1080, 1920, 1080, true),
+            (2000, 1200, 1920, 1080, 1920, 1080, false),
+        ];
+        b.iter(|| selection::benchmark_build_physical_screen_layouts(black_box(&inputs)));
+    });
+
+    group.finish();
+}
+
+fn bench_padded_recording_region(c: &mut Criterion) {
+    let mut group = c.benchmark_group("padded_recording_region");
+    let src_w = 1919u32;
+    let src_h = 1079u32;
+    let dst_w = 1920u32;
+    let dst_h = 1080u32;
+    let src = patterned_bytes((src_w * src_h * 4) as usize);
+    let mut out = vec![0u8; (dst_w * dst_h * 4) as usize];
+
+    group.bench_function("rgba_1919x1079_to_1920x1080", |b| {
+        b.iter(|| {
+            record::rgba_region_to_bgra_bottom_up_into(
+                black_box(&src),
+                black_box(src_w),
+                black_box(src_h),
+                black_box(&mut out),
+                black_box(dst_w),
+                black_box(dst_h),
+            );
+        });
+    });
+
+    group.bench_function("bgra_1919x1079_to_1920x1080", |b| {
+        b.iter(|| {
+            record::bgra_top_down_region_to_bottom_up_into(
+                black_box(&src),
+                black_box(src_w),
+                black_box(src_h),
+                black_box(&mut out),
+                black_box(dst_w),
+                black_box(dst_h),
+            );
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_overlay_frame_update(c: &mut Criterion) {
+    let mut group = c.benchmark_group("overlay_frame_update");
+    let w = 1920usize;
+    let h = 1080usize;
+    let bg = vec![0x00336699u32; w * h];
+    let mut buf = bg.clone();
+
+    group.bench_function("drag_border_1080p", |b| {
+        let mut damage = selection::OverlayDamage {
+            surface_size: Some((w, h)),
+            start_pos: Some((100, 100)),
+            current_pos: Some((1500, 900)),
+        };
+        let mut toggle = false;
+        b.iter(|| {
+            toggle = !toggle;
+            let end = if toggle { (1501, 901) } else { (1500, 900) };
+            selection::update_selection_overlay_frame(
+                black_box(&mut buf),
+                black_box(w),
+                black_box(h),
+                black_box(&bg),
+                black_box(w),
+                black_box(Some((100, 100))),
+                black_box(Some(end)),
+                black_box(&mut damage),
+            );
+        });
+    });
+
+    group.bench_function("crosshair_1080p", |b| {
+        let mut damage = selection::OverlayDamage {
+            surface_size: Some((w, h)),
+            start_pos: None,
+            current_pos: Some((960, 540)),
+        };
+        let mut toggle = false;
+        b.iter(|| {
+            toggle = !toggle;
+            let pos = if toggle { (961, 541) } else { (960, 540) };
+            selection::update_selection_overlay_frame(
+                black_box(&mut buf),
+                black_box(w),
+                black_box(h),
+                black_box(&bg),
+                black_box(w),
+                black_box(None),
+                black_box(Some(pos)),
+                black_box(&mut damage),
+            );
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_crop_packed_region(c: &mut Criterion) {
+    let mut group = c.benchmark_group("crop_packed_region");
+    let w = 1920u32;
+    let h = 1080u32;
+    let packed: Vec<u32> = (0..(w * h))
+        .map(|i| 0xFF00_0000 | (i & 0x00FF_FFFF))
+        .collect();
+    let region = selection::Region {
+        physical_x: 200,
+        physical_y: 150,
+        physical_width: 960,
+        physical_height: 540,
+    };
+
+    group.bench_function("960x540_from_1080p", |b| {
+        b.iter(|| {
+            selection::crop_packed_region(
+                black_box(w),
+                black_box(h),
+                black_box(&packed),
+                black_box(region),
+            )
+            .unwrap()
+        });
+    });
+
     group.finish();
 }
 
@@ -1888,6 +2025,7 @@ criterion_group!(
     bench_frame_duration_hns,
     bench_round_to_even,
     bench_rgba_to_bgra_bottom_up,
+    bench_padded_recording_region,
     bench_pack_u32_pair,
     bench_validate_recording_start,
     bench_get_recording_dir,
@@ -1930,6 +2068,8 @@ criterion_group!(
     bench_ranges_overlap,
     bench_monitor_scale_ratio,
     bench_scaled_gap,
+    bench_overlay_frame_update,
+    bench_crop_packed_region,
     // tray
     bench_build_default_icon_pixels,
 );

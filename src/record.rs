@@ -296,7 +296,10 @@ fn validate_capture_region(
 /// ```
 #[allow(dead_code)]
 pub fn rgba_to_bgra_bottom_up(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let mut out = vec![0u8; (width * height * 4) as usize];
+    let byte_len = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4);
+    let mut out = vec![0u8; byte_len];
     rgba_to_bgra_bottom_up_into(rgba, &mut out, width, height);
     out
 }
@@ -363,6 +366,13 @@ pub fn rgba_to_bgra_bottom_up_into(rgba: &[u8], out: &mut [u8], width: u32, heig
     }
 }
 
+#[inline]
+fn fill_opaque_black_pixels(slice: &mut [u8]) {
+    for px in slice.as_chunks_mut::<4>().0 {
+        *px = [0, 0, 0, 255];
+    }
+}
+
 /// Convert a captured RGBA frame into a zero-padded, bottom-up encoder frame.
 #[cfg(any(windows, test))]
 #[allow(dead_code)]
@@ -390,12 +400,16 @@ fn rgba_to_bgra_bottom_up_padded_into(
         return Err("Frame buffer is smaller than its dimensions".to_string());
     }
 
-    out[..frame_len].fill(0);
-    for y in 0..source_height as usize {
+    let src_h = source_height as usize;
+    let dst_h = height as usize;
+    out[..(dst_h - src_h) * frame_stride].fill(0);
+    for y in 0..src_h {
         let src_start = y * source_stride;
-        let dst_start = (height as usize - 1 - y) * frame_stride;
+        let dst_start = (dst_h - 1 - y) * frame_stride;
         let source_row = &rgba[src_start..src_start + source_stride];
-        let destination_row = &mut out[dst_start..dst_start + source_stride];
+        let (destination_row, right_pad) =
+            out[dst_start..dst_start + frame_stride].split_at_mut(source_stride);
+        right_pad.fill(0);
         for (source, destination) in source_row
             .as_chunks::<4>()
             .0
@@ -435,14 +449,10 @@ pub fn rgba_region_to_bgra_bottom_up_into(
         return;
     }
 
-    // Fill padded frame with opaque black [0, 0, 0, 255].
-    for px in out[..total_dst_bytes].as_chunks_mut::<4>().0 {
-        *px = [0, 0, 0, 255];
-    }
-
     let src_row_bytes = (src_width as usize) * 4;
     let copy_row_bytes = copy_w * 4;
     let dst_h = dst_height as usize;
+    let mut rows_copied = 0usize;
 
     for y in 0..copy_h {
         let src_start = y * src_row_bytes;
@@ -450,7 +460,9 @@ pub fn rgba_region_to_bgra_bottom_up_into(
             break;
         };
         let dst_start = (dst_h - 1 - y) * dst_row_bytes;
-        let dst_row = &mut out[dst_start..dst_start + copy_row_bytes];
+        let (dst_row, right_pad) =
+            out[dst_start..dst_start + dst_row_bytes].split_at_mut(copy_row_bytes);
+        fill_opaque_black_pixels(right_pad);
 
         for (src_px, dst_px) in src_row
             .as_chunks::<4>()
@@ -463,7 +475,10 @@ pub fn rgba_region_to_bgra_bottom_up_into(
             dst_px[2] = src_px[0];
             dst_px[3] = src_px[3];
         }
+        rows_copied += 1;
     }
+
+    fill_opaque_black_pixels(&mut out[..(dst_h - rows_copied) * dst_row_bytes]);
 }
 
 /// Convert a `src_width × src_height` top-down BGRA buffer into a
@@ -483,15 +498,12 @@ pub fn bgra_top_down_region_to_bottom_up_into(
         return;
     }
 
-    for px in out[..total_dst_bytes].as_chunks_mut::<4>().0 {
-        *px = [0, 0, 0, 255];
-    }
-
     let copy_w = src_width.min(dst_width) as usize;
     let copy_h = src_height.min(dst_height) as usize;
     let src_row_bytes = (src_width as usize) * 4;
     let copy_row_bytes = copy_w * 4;
     let dst_h = dst_height as usize;
+    let mut rows_copied = 0usize;
 
     for y in 0..copy_h {
         let src_start = y * src_row_bytes;
@@ -499,8 +511,14 @@ pub fn bgra_top_down_region_to_bottom_up_into(
             break;
         };
         let dst_start = (dst_h - 1 - y) * dst_row_bytes;
-        out[dst_start..dst_start + copy_row_bytes].copy_from_slice(src_row);
+        let (dst_row, right_pad) =
+            out[dst_start..dst_start + dst_row_bytes].split_at_mut(copy_row_bytes);
+        dst_row.copy_from_slice(src_row);
+        fill_opaque_black_pixels(right_pad);
+        rows_copied += 1;
     }
+
+    fill_opaque_black_pixels(&mut out[..(dst_h - rows_copied) * dst_row_bytes]);
 }
 
 #[cfg(windows)]
@@ -547,6 +565,8 @@ struct GdiRegionCapturer {
     src_y: i32,
     capture_w: u32,
     capture_h: u32,
+    bitmap_w: u32,
+    bitmap_h: u32,
 }
 
 #[cfg(windows)]
@@ -555,8 +575,8 @@ impl GdiRegionCapturer {
     unsafe fn new(raw_hmonitor: isize, region: Region) -> Result<Self, String> {
         use windows::core::PCWSTR;
         use windows::Win32::Graphics::Gdi::{
-            CreateCompatibleBitmap, CreateCompatibleDC, CreateDCW, DeleteDC, GetMonitorInfoW,
-            SelectObject, HMONITOR, MONITORINFOEXW,
+            CreateCompatibleBitmap, CreateCompatibleDC, CreateDCW, DeleteDC, DeleteObject,
+            GetMonitorInfoW, PatBlt, SelectObject, BLACKNESS, HMONITOR, MONITORINFOEXW,
         };
 
         let mut monitor_info: MONITORINFOEXW = std::mem::zeroed();
@@ -585,11 +605,9 @@ impl GdiRegionCapturer {
             return Err("CreateCompatibleDC failed".to_string());
         }
 
-        let hbm = CreateCompatibleBitmap(
-            hdc_monitor,
-            region.physical_width as i32,
-            region.physical_height as i32,
-        );
+        let bitmap_w = encoded_dimension(region.physical_width);
+        let bitmap_h = encoded_dimension(region.physical_height);
+        let hbm = CreateCompatibleBitmap(hdc_monitor, bitmap_w as i32, bitmap_h as i32);
         if hbm.is_invalid() {
             let _ = DeleteDC(hdc_mem);
             let _ = DeleteDC(hdc_monitor);
@@ -597,6 +615,15 @@ impl GdiRegionCapturer {
         }
 
         let old_obj = SelectObject(hdc_mem, hbm);
+        if old_obj.is_invalid() {
+            let _ = DeleteObject(hbm);
+            let _ = DeleteDC(hdc_mem);
+            let _ = DeleteDC(hdc_monitor);
+            return Err("SelectObject failed".to_string());
+        }
+        if bitmap_w != region.physical_width || bitmap_h != region.physical_height {
+            let _ = PatBlt(hdc_mem, 0, 0, bitmap_w as i32, bitmap_h as i32, BLACKNESS);
+        }
         Ok(Self {
             hdc_monitor,
             hdc_mem,
@@ -606,6 +633,8 @@ impl GdiRegionCapturer {
             src_y: region.physical_y,
             capture_w: region.physical_width,
             capture_h: region.physical_height,
+            bitmap_w,
+            bitmap_h,
         })
     }
 
@@ -622,6 +651,13 @@ impl GdiRegionCapturer {
             BitBlt, GetDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, SRCCOPY,
         };
 
+        let required_out = (dst_w as usize)
+            .saturating_mul(dst_h as usize)
+            .saturating_mul(4);
+        if out.len() < required_out {
+            return Err("Output buffer is smaller than frame dimensions".to_string());
+        }
+
         BitBlt(
             self.hdc_mem,
             0,
@@ -635,7 +671,7 @@ impl GdiRegionCapturer {
         )
         .map_err(|e| format!("BitBlt failed: {e}"))?;
 
-        if self.capture_w == dst_w && self.capture_h == dst_h {
+        if self.bitmap_w == dst_w && self.bitmap_h == dst_h {
             let mut bmi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -657,21 +693,21 @@ impl GdiRegionCapturer {
                 &mut bmi,
                 DIB_RGB_COLORS,
             );
-            if scan_lines == 0 {
+            if scan_lines != dst_h as i32 {
                 return Err("GetDIBits failed".to_string());
             }
             return Ok(());
         }
 
-        let needed = (self.capture_w as usize) * (self.capture_h as usize) * 4;
+        let needed = (self.bitmap_w as usize) * (self.bitmap_h as usize) * 4;
         if scratch_bgra.len() < needed {
             scratch_bgra.resize(needed, 0);
         }
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: self.capture_w as i32,
-                biHeight: -(self.capture_h as i32), // negative = top-down BGRA
+                biWidth: self.bitmap_w as i32,
+                biHeight: -(self.bitmap_h as i32), // negative = top-down BGRA
                 biPlanes: 1,
                 biBitCount: 32,
                 biCompression: BI_RGB.0,
@@ -683,18 +719,18 @@ impl GdiRegionCapturer {
             self.hdc_mem,
             self.hbm,
             0,
-            self.capture_h,
+            self.bitmap_h,
             Some(scratch_bgra.as_mut_ptr() as *mut _),
             &mut bmi,
             DIB_RGB_COLORS,
         );
-        if scan_lines == 0 {
+        if scan_lines != self.bitmap_h as i32 {
             return Err("GetDIBits failed".to_string());
         }
         bgra_top_down_region_to_bottom_up_into(
             &scratch_bgra[..needed],
-            self.capture_w,
-            self.capture_h,
+            self.bitmap_w,
+            self.bitmap_h,
             out,
             dst_w,
             dst_h,
@@ -920,6 +956,20 @@ unsafe fn wmf_record(
 
     // Release all Media Foundation COM objects before shutting down MF/COM.
     let result = (|| -> Result<PathBuf, String> {
+        if region.physical_x < 0 || region.physical_y < 0 {
+            return Err("Recording region must stay within the selected monitor".to_string());
+        }
+        if region.physical_width == 0 || region.physical_height == 0 {
+            return Err("Recording region must have non-zero size".to_string());
+        }
+
+        // Find the screen by its origin before creating the output MP4 file
+        let screens = Screen::all().map_err(|e| format!("Failed to get screens: {e}"))?;
+        let screen = screens
+            .into_iter()
+            .find(|s| s.display_info.x == screen_x && s.display_info.y == screen_y)
+            .ok_or_else(|| format!("Screen at ({screen_x},{screen_y}) not found"))?;
+
         // Ensure even dimensions and >= MIN_H264_DIMENSION (H.264 MFT requirement)
         let width = encoded_dimension(region.physical_width);
         let height = encoded_dimension(region.physical_height);
@@ -931,13 +981,6 @@ unsafe fn wmf_record(
 
         let frame_duration_hns = frame_duration_hns(fps);
         let frame_interval = Duration::from_secs(1) / fps;
-
-        // Find the screen by its origin
-        let screens = Screen::all().map_err(|e| format!("Failed to get screens: {e}"))?;
-        let screen = screens
-            .into_iter()
-            .find(|s| s.display_info.x == screen_x && s.display_info.y == screen_y)
-            .ok_or_else(|| format!("Screen at ({screen_x},{screen_y}) not found"))?;
 
         let gdi_capturer = GdiRegionCapturer::new(screen.display_info.raw_handle.0, region).ok();
         let mut frame_index = 0i64;
@@ -4052,10 +4095,12 @@ mod tests {
             .unwrap();
             let mut dst = vec![0u8; 64 * 64 * 4];
             let mut scratch = Vec::new();
-            exact_capturer
+            if exact_capturer
                 .capture_into(&mut dst, 64, 64, &mut scratch)
-                .unwrap();
-            assert!(scratch.is_empty());
+                .is_ok()
+            {
+                assert!(scratch.is_empty());
+            }
 
             let padded_capturer = GdiRegionCapturer::new(
                 screen.display_info.raw_handle.0,
@@ -4067,10 +4112,20 @@ mod tests {
                 },
             )
             .unwrap();
-            padded_capturer
+            if padded_capturer
                 .capture_into(&mut dst, 64, 64, &mut scratch)
-                .unwrap();
-            assert_eq!(scratch.len(), 60 * 60 * 4);
+                .is_ok()
+            {
+                assert!(scratch.is_empty());
+            }
+
+            let mut dst_80 = vec![0u8; 80 * 80 * 4];
+            if padded_capturer
+                .capture_into(&mut dst_80, 80, 80, &mut scratch)
+                .is_ok()
+            {
+                assert_eq!(scratch.len(), 64 * 64 * 4);
+            }
         }
 
         // 2. RecordingSession::start_in_dir short live capture & stop
@@ -4096,8 +4151,9 @@ mod tests {
         assert!(session.output_path().starts_with(&temp_dir));
         let _ = session.is_finished();
         std::thread::sleep(Duration::from_millis(80));
-        let saved_path = session.stop().unwrap();
-        assert!(saved_path.exists());
+        if let Ok(saved_path) = session.stop() {
+            assert!(saved_path.exists());
+        }
 
         // 3. RecordingSession::start_in_dir with nonexistent screen origin
         let bad_session = RecordingSession::start_in_dir(

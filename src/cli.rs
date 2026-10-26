@@ -31,6 +31,9 @@ where
         }
 
         let arg = arg.as_ref();
+        if arg == OsStr::new("--") {
+            break;
+        }
         let arg_str = arg.to_string_lossy();
 
         if arg == OsStr::new("--format") || arg_str.starts_with("--format=") {
@@ -759,5 +762,9 @@ mod tests {
     fn cli_format_flag_present_in_unknown_short_option_breaks_cluster() {
         assert!(!cli_format_flag_present_in(vec!["rustshot", "-x", "png"]));
         assert!(!cli_format_flag_present_in(vec!["rustshot", "-wxf"]));
+        assert!(!cli_format_flag_present_in(vec![
+            "rustshot", "--", "--format", "jpg"
+        ]));
+        assert!(!cli_format_flag_present_in(vec!["rustshot", "--", "-f"]));
     }
 }

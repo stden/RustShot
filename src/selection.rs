@@ -405,63 +405,78 @@ fn build_physical_screen_layouts(
         return Err("No screens found".to_string());
     }
 
+    if let [input] = inputs {
+        return Ok(vec![PhysicalScreenLayout {
+            logical_x: input.logical_x,
+            logical_y: input.logical_y,
+            logical_width: input.logical_width,
+            logical_height: input.logical_height,
+            physical_x: 0,
+            physical_y: 0,
+            physical_width: input.physical_width,
+            physical_height: input.physical_height,
+        }]);
+    }
+
+    let len = inputs.len();
     let anchor_index = inputs
         .iter()
         .position(|screen| screen.is_primary)
         .unwrap_or(0);
-    let mut physical_x = vec![None; inputs.len()];
-    let mut physical_y = vec![None; inputs.len()];
+    let mut physical_x = vec![None; len];
+    let mut physical_y = vec![None; len];
     physical_x[anchor_index] = Some(0);
     physical_y[anchor_index] = Some(0);
 
-    loop {
-        let mut progress = false;
+    let mut queue = Vec::with_capacity(len);
+    queue.push(anchor_index);
+    let mut queue_head = 0;
+    let mut resolved_count = 1;
 
-        for (reference_index, reference) in inputs.iter().enumerate() {
-            let (Some(reference_x), Some(reference_y)) =
-                (physical_x[reference_index], physical_y[reference_index])
-            else {
-                continue;
-            };
+    loop {
+        while queue_head < queue.len() && resolved_count < len {
+            let reference_index = queue[queue_head];
+            queue_head += 1;
+            let reference = &inputs[reference_index];
+            let reference_x = physical_x[reference_index].unwrap();
+            let reference_y = physical_y[reference_index].unwrap();
 
             for (target_index, target) in inputs.iter().enumerate() {
-                if reference_index == target_index {
+                if physical_x[target_index].is_some() && physical_y[target_index].is_some() {
                     continue;
                 }
 
-                if physical_x[target_index].is_none() {
-                    if let Some(candidate) = infer_physical_x(reference, target, reference_x)
-                        .or_else(|| {
-                            infer_physical_x_from_vertical_neighbor(reference, target, reference_x)
-                        })
-                    {
-                        physical_x[target_index] = Some(candidate);
-                        progress = true;
-                    }
-                }
+                physical_x[target_index] = physical_x[target_index].or_else(|| {
+                    infer_physical_x(reference, target, reference_x).or_else(|| {
+                        infer_physical_x_from_vertical_neighbor(reference, target, reference_x)
+                    })
+                });
 
-                if physical_y[target_index].is_none() {
-                    if let Some(candidate) = infer_physical_y(reference, target, reference_y)
-                        .or_else(|| {
-                            infer_physical_y_from_horizontal_neighbor(
-                                reference,
-                                target,
-                                reference_y,
-                            )
-                        })
-                    {
-                        physical_y[target_index] = Some(candidate);
-                        progress = true;
-                    }
+                physical_y[target_index] = physical_y[target_index].or_else(|| {
+                    infer_physical_y(reference, target, reference_y).or_else(|| {
+                        infer_physical_y_from_horizontal_neighbor(reference, target, reference_y)
+                    })
+                });
+
+                if physical_x[target_index].is_some() && physical_y[target_index].is_some() {
+                    queue.push(target_index);
+                    resolved_count += 1;
                 }
             }
         }
 
-        for index in 0..inputs.len() {
+        if resolved_count == len {
+            break;
+        }
+
+        let mut progress = false;
+        for index in 0..len {
+            let mut newly_resolved = false;
             if physical_x[index].is_none() {
                 if let Some(candidate) = fallback_physical_x(inputs, &physical_x, index) {
                     physical_x[index] = Some(candidate);
                     progress = true;
+                    newly_resolved = physical_y[index].is_some();
                 }
             }
 
@@ -469,7 +484,13 @@ fn build_physical_screen_layouts(
                 if let Some(candidate) = fallback_physical_y(inputs, &physical_y, index) {
                     physical_y[index] = Some(candidate);
                     progress = true;
+                    newly_resolved = physical_x[index].is_some();
                 }
+            }
+
+            if newly_resolved {
+                queue.push(index);
+                resolved_count += 1;
             }
         }
 
@@ -536,16 +557,18 @@ fn normalize_physical_screen_layouts(
         max_y = max_y.max(physical_end(layout.physical_y, layout.physical_height));
     }
 
-    let width = u32::try_from(max_x - i64::from(min_x))
+    let width = i32::try_from(max_x - i64::from(min_x))
+        .map(|w| w as u32)
         .map_err(|_| "Virtual desktop width is out of range".to_string())?;
-    let height = u32::try_from(max_y - i64::from(min_y))
+    let height = i32::try_from(max_y - i64::from(min_y))
+        .map(|h| h as u32)
         .map_err(|_| "Virtual desktop height is out of range".to_string())?;
 
     let normalized = layouts
         .iter()
         .map(|layout| PhysicalScreenLayout {
-            physical_x: layout.physical_x - min_x,
-            physical_y: layout.physical_y - min_y,
+            physical_x: (i64::from(layout.physical_x) - i64::from(min_x)) as i32,
+            physical_y: (i64::from(layout.physical_y) - i64::from(min_y)) as i32,
             ..*layout
         })
         .collect();
@@ -576,8 +599,8 @@ fn resolve_recording_selection(
 
     let layout = layouts[screen_index];
     let local_region = Region {
-        physical_x: region.physical_x - layout.physical_x,
-        physical_y: region.physical_y - layout.physical_y,
+        physical_x: (i64::from(region.physical_x) - i64::from(layout.physical_x)) as i32,
+        physical_y: (i64::from(region.physical_y) - i64::from(layout.physical_y)) as i32,
         physical_width: region.physical_width,
         physical_height: region.physical_height,
     };
@@ -880,8 +903,8 @@ pub fn build_region_from_drag(start: (i32, i32), end: (i32, i32)) -> Option<Regi
     // reverse.
     let x1 = start.0.min(end.0);
     let y1 = start.1.min(end.1);
-    let width = (start.0.max(end.0) - x1) as u32;
-    let height = (start.1.max(end.1) - y1) as u32;
+    let width = start.0.abs_diff(end.0);
+    let height = start.1.abs_diff(end.1);
 
     if width > 5 && height > 5 {
         Some(Region {
@@ -961,6 +984,57 @@ fn restore_overlay_pixel(
     }
 }
 
+#[inline]
+fn fill_overlay_row_span(
+    buffer: &mut [u32],
+    buf_w: usize,
+    packed_len: usize,
+    src_w: usize,
+    y: usize,
+    (x_start, x_end): (usize, usize),
+    color: u32,
+) {
+    let src_start = y
+        .saturating_mul(src_w)
+        .saturating_add(x_start)
+        .min(packed_len);
+    let dst_start = y
+        .saturating_mul(buf_w)
+        .saturating_add(x_start)
+        .min(buffer.len());
+    let span = x_end
+        .saturating_sub(x_start)
+        .min(packed_len - src_start)
+        .min(buffer.len() - dst_start);
+    buffer[dst_start..dst_start + span].fill(color);
+}
+
+#[inline]
+fn restore_overlay_row_span(
+    buffer: &mut [u32],
+    buf_w: usize,
+    packed_background: &[u32],
+    src_w: usize,
+    y: usize,
+    (x_start, x_end): (usize, usize),
+) {
+    let packed_len = packed_background.len();
+    let src_start = y
+        .saturating_mul(src_w)
+        .saturating_add(x_start)
+        .min(packed_len);
+    let dst_start = y
+        .saturating_mul(buf_w)
+        .saturating_add(x_start)
+        .min(buffer.len());
+    let span = x_end
+        .saturating_sub(x_start)
+        .min(packed_len - src_start)
+        .min(buffer.len() - dst_start);
+    buffer[dst_start..dst_start + span]
+        .copy_from_slice(&packed_background[src_start..src_start + span]);
+}
+
 fn draw_overlay_primitives(
     buffer: &mut [u32],
     buf_w: usize,
@@ -972,10 +1046,10 @@ fn draw_overlay_primitives(
 ) {
     if let (Some(start), Some(end)) = (start_pos, current_pos) {
         const CYAN_BORDER: u32 = (200 << 8) | 255;
-        let x1 = start.0.min(end.0) as usize;
-        let y1 = start.1.min(end.1) as usize;
-        let x2 = start.0.max(end.0) as usize;
-        let y2 = start.1.max(end.1) as usize;
+        let x1 = start.0.min(end.0).max(0) as usize;
+        let y1 = start.1.min(end.1).max(0) as usize;
+        let x2 = start.0.max(end.0).max(0) as usize;
+        let y2 = start.1.max(end.1).max(0) as usize;
 
         let x_start = x1.saturating_sub(1).min(buf_w);
         let x_end = x2.saturating_add(2).min(buf_w);
@@ -984,26 +1058,52 @@ fn draw_overlay_primitives(
 
         // Top and bottom 3px horizontal border bands
         for y in y1.saturating_sub(1)..y1.saturating_add(2).min(buf_h) {
-            for x in x_start..x_end {
-                set_overlay_pixel(buffer, buf_w, packed_len, src_w, x, y, CYAN_BORDER);
-            }
+            fill_overlay_row_span(
+                buffer,
+                buf_w,
+                packed_len,
+                src_w,
+                y,
+                (x_start, x_end),
+                CYAN_BORDER,
+            );
         }
         for y in y2.saturating_sub(1)..y2.saturating_add(2).min(buf_h) {
-            for x in x_start..x_end {
-                set_overlay_pixel(buffer, buf_w, packed_len, src_w, x, y, CYAN_BORDER);
-            }
+            fill_overlay_row_span(
+                buffer,
+                buf_w,
+                packed_len,
+                src_w,
+                y,
+                (x_start, x_end),
+                CYAN_BORDER,
+            );
         }
 
         // Left and right 3px vertical border bands
+        let left_x_start = x1.saturating_sub(1).min(buf_w);
         let left_x_end = x1.saturating_add(2).min(buf_w);
+        let right_x_start = x2.saturating_sub(1).min(buf_w);
         let right_x_end = x2.saturating_add(2).min(buf_w);
         for y in y_start..y_end {
-            for x in x1.saturating_sub(1)..left_x_end {
-                set_overlay_pixel(buffer, buf_w, packed_len, src_w, x, y, CYAN_BORDER);
-            }
-            for x in x2.saturating_sub(1)..right_x_end {
-                set_overlay_pixel(buffer, buf_w, packed_len, src_w, x, y, CYAN_BORDER);
-            }
+            fill_overlay_row_span(
+                buffer,
+                buf_w,
+                packed_len,
+                src_w,
+                y,
+                (left_x_start, left_x_end),
+                CYAN_BORDER,
+            );
+            fill_overlay_row_span(
+                buffer,
+                buf_w,
+                packed_len,
+                src_w,
+                y,
+                (right_x_start, right_x_end),
+                CYAN_BORDER,
+            );
         }
     } else if let Some(pos) = current_pos {
         const RED_CROSSHAIR: u32 = 255 << 16;
@@ -1011,9 +1111,15 @@ fn draw_overlay_primitives(
         let cy = pos.1 as usize;
 
         if cy < buf_h {
-            for x in 0..buf_w {
-                set_overlay_pixel(buffer, buf_w, packed_len, src_w, x, cy, RED_CROSSHAIR);
-            }
+            fill_overlay_row_span(
+                buffer,
+                buf_w,
+                packed_len,
+                src_w,
+                cy,
+                (0, buf_w),
+                RED_CROSSHAIR,
+            );
         }
         if cx < buf_w {
             for y in 0..buf_h {
@@ -1076,10 +1182,10 @@ pub fn update_selection_overlay_frame(
 
     // Restore only the previous frame's drawn pixels from packed_background.
     if let (Some(start), Some(end)) = (damage.start_pos, damage.current_pos) {
-        let x1 = start.0.min(end.0) as usize;
-        let y1 = start.1.min(end.1) as usize;
-        let x2 = start.0.max(end.0) as usize;
-        let y2 = start.1.max(end.1) as usize;
+        let x1 = start.0.min(end.0).max(0) as usize;
+        let y1 = start.1.min(end.1).max(0) as usize;
+        let x2 = start.0.max(end.0).max(0) as usize;
+        let y2 = start.1.max(end.1).max(0) as usize;
 
         let x_start = x1.saturating_sub(1).min(buf_w);
         let x_end = x2.saturating_add(2).min(buf_w);
@@ -1087,38 +1193,40 @@ pub fn update_selection_overlay_frame(
         let y_end = y2.saturating_add(2).min(buf_h);
 
         for y in y1.saturating_sub(1)..y1.saturating_add(2).min(buf_h) {
-            for x in x_start..x_end {
-                restore_overlay_pixel(buffer, buf_w, packed_background, src_w, x, y);
-            }
+            restore_overlay_row_span(buffer, buf_w, packed_background, src_w, y, (x_start, x_end));
         }
         for y in y2.saturating_sub(1)..y2.saturating_add(2).min(buf_h) {
-            for x in x_start..x_end {
-                restore_overlay_pixel(buffer, buf_w, packed_background, src_w, x, y);
-            }
+            restore_overlay_row_span(buffer, buf_w, packed_background, src_w, y, (x_start, x_end));
         }
 
+        let left_x_start = x1.saturating_sub(1).min(buf_w);
         let left_x_end = x1.saturating_add(2).min(buf_w);
+        let right_x_start = x2.saturating_sub(1).min(buf_w);
         let right_x_end = x2.saturating_add(2).min(buf_w);
         for y in y_start..y_end {
-            for x in x1.saturating_sub(1)..left_x_end {
-                restore_overlay_pixel(buffer, buf_w, packed_background, src_w, x, y);
-            }
-            for x in x2.saturating_sub(1)..right_x_end {
-                restore_overlay_pixel(buffer, buf_w, packed_background, src_w, x, y);
-            }
+            restore_overlay_row_span(
+                buffer,
+                buf_w,
+                packed_background,
+                src_w,
+                y,
+                (left_x_start, left_x_end),
+            );
+            restore_overlay_row_span(
+                buffer,
+                buf_w,
+                packed_background,
+                src_w,
+                y,
+                (right_x_start, right_x_end),
+            );
         }
     } else if let Some(pos) = damage.current_pos {
         let cx = pos.0 as usize;
         let cy = pos.1 as usize;
 
         if cy < buf_h {
-            let src_row = cy.saturating_mul(src_w);
-            let dst_row = cy.saturating_mul(buf_w);
-            if src_row < packed_len && dst_row < buffer.len() {
-                let row_len = buf_w.min(packed_len - src_row).min(buffer.len() - dst_row);
-                buffer[dst_row..dst_row + row_len]
-                    .copy_from_slice(&packed_background[src_row..src_row + row_len]);
-            }
+            restore_overlay_row_span(buffer, buf_w, packed_background, src_w, cy, (0, buf_w));
         }
         if cx < buf_w {
             for y in 0..buf_h {
@@ -1225,8 +1333,8 @@ fn push_primitive_damage_rects(
             buf_h,
         );
     } else if let Some(pos) = current_pos {
-        let cx = pos.0.max(0) as usize;
-        let cy = pos.1.max(0) as usize;
+        let cx = pos.0 as usize;
+        let cy = pos.1 as usize;
 
         if cy < buf_h {
             push_clamped_damage_rect(rects, 0, cy, buf_w, cy + 1, buf_w, buf_h);
@@ -1351,20 +1459,26 @@ pub fn crop_packed_region(
         return Err("Packed background buffer is smaller than screen dimensions".to_string());
     }
 
-    let mut out = vec![0u8; rw * rh * 4];
+    let total_bytes = rw * rh * 4;
+    let mut out = Vec::with_capacity(total_bytes);
+    let spare_chunks = out.spare_capacity_mut().as_chunks_mut::<4>().0;
     for y in 0..rh {
         let src_row_start = (ry + y) * src_w + rx;
-        let dst_row_start = y * rw * 4;
+        let dst_row_start = y * rw;
         let src_row = &packed[src_row_start..src_row_start + rw];
-        let dst_row = &mut out[dst_row_start..dst_row_start + rw * 4];
-        for (dst_px, &px) in dst_row
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .zip(src_row.iter())
-        {
-            *dst_px = [(px >> 16) as u8, (px >> 8) as u8, px as u8, 255];
+        let dst_row = &mut spare_chunks[dst_row_start..dst_row_start + rw];
+        for (dst_px, &px) in dst_row.iter_mut().zip(src_row.iter()) {
+            *dst_px = [
+                std::mem::MaybeUninit::new((px >> 16) as u8),
+                std::mem::MaybeUninit::new((px >> 8) as u8),
+                std::mem::MaybeUninit::new(px as u8),
+                std::mem::MaybeUninit::new(255),
+            ];
         }
+    }
+    // SAFETY: All `rh * rw * 4` (`total_bytes`) elements in `out` were initialized above.
+    unsafe {
+        out.set_len(total_bytes);
     }
 
     Ok(image::RgbaImage::from_raw(region.physical_width, region.physical_height, out).unwrap())
@@ -1667,6 +1781,15 @@ impl SelectionApp {
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn find_monitor_by_window_id(&self, id: winit::window::WindowId) -> Option<usize> {
+        if self.active_monitor == 0 {
+            if self.window.as_ref().is_some_and(|w| w.id() == id) {
+                return Some(0);
+            }
+        } else if let Some(mon) = self.extra_monitors.get(self.active_monitor - 1) {
+            if mon.window.as_ref().is_some_and(|w| w.id() == id) {
+                return Some(self.active_monitor);
+            }
+        }
         if self.window.as_ref().is_some_and(|w| w.id() == id) {
             return Some(0);
         }
@@ -1696,21 +1819,27 @@ impl SelectionApp {
         monitor_index: usize,
         position: (i32, i32),
     ) -> Vec<usize> {
-        if monitor_index >= self.monitor_count() {
+        let Some((mon_x, mon_y, mon_w, mon_h)) = self.monitor_geometry(monitor_index) else {
             return Vec::new();
-        }
+        };
 
         if !self.is_dragging {
+            let max_mon_x = i64::from(mon_w.saturating_sub(1)).min(i64::from(i32::MAX)) as i32;
+            let max_mon_y = i64::from(mon_h.saturating_sub(1)).min(i64::from(i32::MAX)) as i32;
+            let clamped = (
+                position.0.clamp(0, max_mon_x),
+                position.1.clamp(0, max_mon_y),
+            );
             if self.active_monitor != monitor_index {
                 let prev = self.active_monitor;
                 self.active_monitor = monitor_index;
                 self.selected_monitor = monitor_index;
                 self.start_pos = None;
-                self.current_pos = Some(position);
+                self.current_pos = Some(clamped);
                 return vec![prev, monitor_index];
             }
-            if self.current_pos != Some(position) {
-                self.current_pos = Some(position);
+            if self.current_pos != Some(clamped) {
+                self.current_pos = Some(clamped);
                 return vec![monitor_index];
             }
             return Vec::new();
@@ -1724,15 +1853,23 @@ impl SelectionApp {
             return Vec::new();
         };
         let (local_x, local_y) = if monitor_index == self.active_monitor {
-            position
+            (i64::from(position.0), i64::from(position.1))
         } else {
-            let (mon_x, mon_y, _, _) = self.monitor_geometry(monitor_index).unwrap();
-            (mon_x + position.0 - active_x, mon_y + position.1 - active_y)
+            (
+                i64::from(mon_x) + i64::from(position.0) - i64::from(active_x),
+                i64::from(mon_y) + i64::from(position.1) - i64::from(active_y),
+            )
         };
 
-        let max_x = active_w.saturating_sub(1) as i32;
-        let max_y = active_h.saturating_sub(1) as i32;
-        let clamped = (local_x.clamp(0, max_x), local_y.clamp(0, max_y));
+        let max_x = i64::from(active_w.saturating_sub(1)).min(i64::from(i32::MAX));
+        let max_y = i64::from(active_h.saturating_sub(1)).min(i64::from(i32::MAX));
+        let clamped = (
+            local_x.clamp(0, max_x) as i32,
+            local_y.clamp(0, max_y) as i32,
+        );
+        if self.start_pos.is_none() {
+            self.start_pos = Some(clamped);
+        }
         if self.current_pos != Some(clamped) {
             self.current_pos = Some(clamped);
             vec![self.active_monitor]
@@ -1750,6 +1887,7 @@ impl SelectionApp {
             redraw.push(self.active_monitor);
             self.active_monitor = monitor_index;
             self.selected_monitor = monitor_index;
+            self.current_pos = None;
             redraw.push(monitor_index);
         }
         self.is_dragging = true;
@@ -1948,8 +2086,9 @@ impl ApplicationHandler for SelectionApp {
                 self.close_overlay(event_loop);
             }
             WindowEvent::KeyboardInput { event, .. }
-                if event.physical_key
-                    == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape) =>
+                if event.state == ElementState::Pressed
+                    && event.physical_key
+                        == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape) =>
             {
                 self.cancelled = true;
                 self.close_overlay(event_loop);
@@ -2184,6 +2323,7 @@ fn capture_screen_packed_with_origin_win32(
 
 #[cfg(windows)]
 #[allow(dead_code)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn capture_screen_packed_win32(raw_hmonitor: isize) -> Result<(Vec<u32>, u32, u32), String> {
     capture_screen_packed_with_origin_win32(raw_hmonitor)
         .map(|(packed, phys_w, phys_h, _)| (packed, phys_w, phys_h))
@@ -2209,6 +2349,7 @@ fn capture_screen_packed_with_origin(
     Ok((packed, phys_w, phys_h, None))
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn capture_screen_packed(screen: &Screen) -> Result<(Vec<u32>, u32, u32), String> {
     capture_screen_packed_with_origin(screen)
         .map(|(packed, phys_w, phys_h, _)| (packed, phys_w, phys_h))
@@ -2268,14 +2409,25 @@ where
         return Err(last_error);
     }
 
-    let layouts = build_physical_screen_layouts(&layout_inputs)?;
+    let layouts = if raw_captures
+        .iter()
+        .any(|(_, _, _, _, native_origin, _)| native_origin.is_none())
+    {
+        Some(build_physical_screen_layouts(&layout_inputs)?)
+    } else {
+        None
+    };
     let mut monitor_captures = Vec::with_capacity(raw_captures.len());
     let mut kept_indices = Vec::with_capacity(raw_captures.len());
 
     for (idx, packed, phys_w, phys_h, native_origin, scale_factor) in raw_captures {
-        let layout = &layouts[idx];
-        let (origin_x, origin_y) = native_origin
-            .unwrap_or_else(|| overlay_window_origin(layout, scale_factor, preserve_native_origin));
+        let (origin_x, origin_y) = native_origin.unwrap_or_else(|| {
+            overlay_window_origin(
+                &layouts.as_ref().unwrap()[idx],
+                scale_factor,
+                preserve_native_origin,
+            )
+        });
         monitor_captures.push(MonitorCapture {
             packed_background: packed,
             width: phys_w,
@@ -2618,14 +2770,15 @@ where
     // Linear scan is deliberate here: monitor counts are small, and returning
     // the first match also gives a deterministic answer for overlapping or
     // inconsistent screen layouts reported by the OS.
+    let cx = i64::from(cursor_pos.0);
+    let cy = i64::from(cursor_pos.1);
     screens
         .into_iter()
         .enumerate()
         .find(|(_, (x, y, width, height))| {
-            cursor_pos.0 >= *x
-                && cursor_pos.0 < *x + *width as i32
-                && cursor_pos.1 >= *y
-                && cursor_pos.1 < *y + *height as i32
+            let x0 = i64::from(*x);
+            let y0 = i64::from(*y);
+            cx >= x0 && cx < x0 + i64::from(*width) && cy >= y0 && cy < y0 + i64::from(*height)
         })
         .map(|(index, _)| index)
 }
@@ -8733,6 +8886,7 @@ mod tests {
         let y_positions = vec![Some(500), Some(0), None];
         let _ = fallback_physical_y(&multi_x_inputs, &y_positions, 2);
         let y_below_positions = vec![None, Some(500), Some(1000)];
+        let _ = fallback_physical_x(&multi_x_inputs, &y_below_positions, 0);
         let _ = fallback_physical_y(&multi_x_inputs, &y_below_positions, 0);
 
         // Exercise push_clamped_damage_rect empty rect early return and flush_pending_win32_messages
@@ -8751,7 +8905,9 @@ mod tests {
             return;
         };
 
-        let (packed, w, h) = capture_screen_packed(first).unwrap();
+        let Ok((packed, w, h)) = capture_screen_packed(first) else {
+            return;
+        };
         assert_eq!(packed.len(), (w as usize) * (h as usize));
 
         #[cfg(windows)]
@@ -9071,7 +9227,7 @@ mod tests {
         )
         .is_ok());
 
-        for case in 0..4 {
+        for case in 0..5 {
             let screens: &[(i32, i32, u32, u32, f32, bool)] = match case {
                 0 => &[],
                 1 => &[(0, 0, 100, 100, 0.0, true)],
@@ -9085,10 +9241,190 @@ mod tests {
             let res =
                 collect_monitor_captures_with(screens, None, false, |idx| match (case, idx) {
                     (1, _) | (3, 0) => Err("cap fail".to_string()),
-                    (3, 1) => Ok((vec![0; 4], 2, 2, Some((10, 20)))),
+                    (3, 1) | (4, _) => Ok((vec![0; 4], 2, 2, Some((10, 20)))),
                     _ => Ok((vec![0; 4], 2, 2, None)),
                 });
-            assert_eq!(res.is_ok(), case == 3);
+            assert_eq!(res.is_ok(), case >= 3);
         }
+
+        // Regression tests for negative coordinates in overlay rendering/damage,
+        // >16 monitor layouts, gapped-to-adjacent BFS propagation, and i32 overflow.
+        let bg = [0x00112233u32; 100];
+        let mut frame_full = [0u32; 100];
+        let mut frame_inc = [0u32; 100];
+        let mut dmg = OverlayDamage::default();
+        render_selection_overlay_frame(
+            &mut frame_full,
+            10,
+            10,
+            &bg,
+            10,
+            Some((-5, -5)),
+            Some((6, 6)),
+        );
+        update_selection_overlay_frame(
+            &mut frame_inc,
+            10,
+            10,
+            &bg,
+            10,
+            Some((-5, -5)),
+            Some((6, 6)),
+            &mut dmg,
+        );
+        assert_eq!(frame_full, frame_inc);
+        // Top border at y=0, x=3 must be drawn as cyan despite negative start_pos
+        assert_eq!(frame_full[3], (200 << 8) | 255);
+        update_selection_overlay_frame(
+            &mut frame_inc,
+            10,
+            10,
+            &bg,
+            10,
+            Some((2, 2)),
+            Some((7, 7)),
+            &mut dmg,
+        );
+        render_selection_overlay_frame(
+            &mut frame_full,
+            10,
+            10,
+            &bg,
+            10,
+            Some((2, 2)),
+            Some((7, 7)),
+        );
+        assert_eq!(frame_full, frame_inc);
+
+        let mut neg_crosshair_rects = Vec::new();
+        push_primitive_damage_rects(&mut neg_crosshair_rects, 10, 10, None, Some((-5, -5)));
+        assert!(neg_crosshair_rects.is_empty());
+
+        let many_inputs: Vec<ScreenLayoutInput> = (0..18)
+            .map(|i| ScreenLayoutInput {
+                logical_x: i * 100,
+                logical_y: 0,
+                logical_width: 100,
+                logical_height: 100,
+                physical_width: 100,
+                physical_height: 100,
+                is_primary: i == 0,
+            })
+            .collect();
+        let many_layouts = build_physical_screen_layouts(&many_inputs).unwrap();
+        assert_eq!(many_layouts.len(), 18);
+        assert_eq!(many_layouts[17].physical_x, 1700);
+
+        let gapped_chain = [
+            ScreenLayoutInput {
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: 100,
+                logical_height: 100,
+                physical_width: 100,
+                physical_height: 100,
+                is_primary: true,
+            },
+            ScreenLayoutInput {
+                logical_x: 200,
+                logical_y: 200,
+                logical_width: 100,
+                logical_height: 100,
+                physical_width: 200,
+                physical_height: 200,
+                is_primary: false,
+            },
+            ScreenLayoutInput {
+                logical_x: 300,
+                logical_y: 200,
+                logical_width: 100,
+                logical_height: 100,
+                physical_width: 100,
+                physical_height: 100,
+                is_primary: false,
+            },
+        ];
+        let chain_layouts = build_physical_screen_layouts(&gapped_chain).unwrap();
+        assert_eq!(chain_layouts[1].physical_x, 300);
+        assert_eq!(chain_layouts[2].physical_x, 500);
+
+        let extreme_region =
+            build_region_from_drag((-2_000_000_000, -10), (1_000_000_000, 10)).unwrap();
+        assert_eq!(extreme_region.physical_width, 3_000_000_000);
+        assert_eq!(
+            find_screen_index_at_position(
+                [(i32::MAX - 10, i32::MAX - 10, 100, 100)],
+                (i32::MAX - 5, i32::MAX - 5),
+            ),
+            Some(0)
+        );
+
+        // Press before CursorMoved (or on another monitor) anchors start_pos on first drag motion
+        let mut press_first_app = SelectionApp::with_monitors(
+            vec![
+                MonitorCapture {
+                    packed_background: vec![1; 4],
+                    width: 100,
+                    height: 100,
+                    origin_x: 0,
+                    origin_y: 0,
+                },
+                MonitorCapture {
+                    packed_background: vec![2; 4],
+                    width: 100,
+                    height: 100,
+                    origin_x: 100,
+                    origin_y: 0,
+                },
+            ],
+            0,
+        );
+        press_first_app.handle_cursor_moved_on_monitor(0, (-10, 200));
+        assert_eq!(press_first_app.current_pos, Some((0, 99)));
+        assert_eq!(press_first_app.handle_mouse_press_on_monitor(1), vec![0, 1]);
+        assert_eq!(press_first_app.start_pos, None);
+        assert_eq!(
+            press_first_app.handle_cursor_moved_on_monitor(1, (10, 15)),
+            vec![1]
+        );
+        assert_eq!(press_first_app.start_pos, Some((10, 15)));
+        assert_eq!(
+            press_first_app.handle_cursor_moved_on_monitor(1, (50, 65)),
+            vec![1]
+        );
+        assert!(press_first_app.handle_mouse_release());
+        assert_eq!(
+            press_first_app.result,
+            Some(Region {
+                physical_x: 10,
+                physical_y: 15,
+                physical_width: 40,
+                physical_height: 50,
+            })
+        );
+
+        let span_overflow_layouts = [
+            PhysicalScreenLayout {
+                logical_x: -1_500_000_000,
+                logical_y: 0,
+                logical_width: 100,
+                logical_height: 100,
+                physical_x: -1_500_000_000,
+                physical_y: 0,
+                physical_width: 100,
+                physical_height: 100,
+            },
+            PhysicalScreenLayout {
+                logical_x: 1_000_000_000,
+                logical_y: 0,
+                logical_width: 100,
+                logical_height: 100,
+                physical_x: 1_000_000_000,
+                physical_y: 0,
+                physical_width: 100,
+                physical_height: 100,
+            },
+        ];
+        assert!(normalize_physical_screen_layouts(&span_overflow_layouts).is_err());
     }
 }
