@@ -37,3 +37,19 @@ Feature: Recording validation and frame timing
       | 1921  | 1922   |
       | 1     | 2      |
       | 0     | 0      |
+
+  Scenario Outline: Encoded dimensions are rounded to even and clamped to the H.264 minimum
+    When <value> is converted to an encoded dimension
+    Then the encoded dimension is <result>
+
+    Examples:
+      | value | result |
+      | 0     | 0      |
+      | 1     | 64     |
+      | 63    | 64     |
+      | 65    | 66     |
+      | 1920  | 1920   |
+
+  Scenario: Odd-dimension RGBA region is padded with opaque black in bottom-up BGRA
+    When a 1 x 1 RGBA pixel (10, 20, 30, 255) is converted into a 2 x 2 bottom-up BGRA frame
+    Then the bottom-up BGRA top-left pixel is (30, 20, 10, 255) and padding pixel is (0, 0, 0, 255)

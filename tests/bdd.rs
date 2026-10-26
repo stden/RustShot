@@ -29,16 +29,23 @@ struct RustShotWorld {
     // --- settings normalization ---
     normalized_format: Option<String>,
     normalized_fps: Option<u32>,
+    reparsed_settings: Option<settings::Settings>,
 
     // --- recording ---
     validate_result: Option<Result<(), String>>,
     frame_duration: Option<i64>,
     round_result: Option<u32>,
+    encoded_dim_result: Option<u32>,
+    padded_bgra_frame: Option<Vec<u8>>,
 
-    // --- selection drag ---
+    // --- selection drag & overlay ---
     drag_start: (i32, i32),
     drag_end: (i32, i32),
     region: Option<Option<selection::Region>>,
+    packed_dims: (u32, u32),
+    packed_buffer: Vec<u32>,
+    crop_result: Option<Result<image::RgbaImage, String>>,
+    damage_rect_count: Option<usize>,
 }
 
 fn app_mode_name(mode: cli::AppMode) -> &'static str {
@@ -158,6 +165,29 @@ fn assert_normalized_fps(world: &mut RustShotWorld, expected: u32) {
     assert_eq!(actual, expected);
 }
 
+#[when(
+    regex = r#"^settings JSON with screenshots_dir "([^"]+)" and recording_fps (\d+) is parsed and formatted$"#
+)]
+fn parse_and_format_settings_json(world: &mut RustShotWorld, dir: String, fps: u32) {
+    let escaped = dir.replace('\\', "\\\\");
+    let raw_json = format!(
+        r#"{{"screenshots_dir": "{escaped}", "recording_fps": {fps}, "default_format": "png", "auto_start": false}}"#
+    );
+    let parsed = settings::parse_settings_json(&raw_json);
+    let formatted = settings::format_settings_json(&parsed);
+    world.reparsed_settings = Some(settings::parse_settings_json(&formatted));
+}
+
+#[then(regex = r#"^the reparsed settings have screenshots_dir "([^"]+)" and recording_fps (\d+)$"#)]
+fn assert_reparsed_settings(world: &mut RustShotWorld, expected_dir: String, expected_fps: u32) {
+    let s = world
+        .reparsed_settings
+        .as_ref()
+        .expect("settings JSON was not parsed");
+    assert_eq!(s.screenshots_dir.to_string_lossy(), expected_dir);
+    assert_eq!(s.recording_fps, expected_fps);
+}
+
 // ===========================================================================
 // Recording validation and timing
 // ===========================================================================
@@ -221,6 +251,55 @@ fn assert_round_even(world: &mut RustShotWorld, expected: u32) {
     assert_eq!(actual, expected);
 }
 
+#[when(regex = r"^(\d+) is converted to an encoded dimension$")]
+fn compute_encoded_dimension(world: &mut RustShotWorld, value: u32) {
+    world.encoded_dim_result = Some(record::encoded_dimension(value));
+}
+
+#[then(regex = r"^the encoded dimension is (\d+)$")]
+fn assert_encoded_dimension(world: &mut RustShotWorld, expected: u32) {
+    let actual = world
+        .encoded_dim_result
+        .expect("encoded dimension did not run");
+    assert_eq!(actual, expected);
+}
+
+#[when(
+    regex = r"^a 1 x 1 RGBA pixel \((\d+), (\d+), (\d+), (\d+)\) is converted into a 2 x 2 bottom-up BGRA frame$"
+)]
+fn convert_padded_rgba_region(world: &mut RustShotWorld, r: u8, g: u8, b: u8, a: u8) {
+    let rgba = [r, g, b, a];
+    let mut out = vec![0u8; 2 * 2 * 4];
+    record::rgba_region_to_bgra_bottom_up_into(&rgba, 1, 1, &mut out, 2, 2);
+    world.padded_bgra_frame = Some(out);
+}
+
+#[then(
+    regex = r"^the bottom-up BGRA top-left pixel is \((\d+), (\d+), (\d+), (\d+)\) and padding pixel is \((\d+), (\d+), (\d+), (\d+)\)$"
+)]
+#[allow(clippy::too_many_arguments)]
+fn assert_padded_bgra_frame(
+    world: &mut RustShotWorld,
+    b0: u8,
+    g0: u8,
+    r0: u8,
+    a0: u8,
+    bp: u8,
+    gp: u8,
+    rp: u8,
+    ap: u8,
+) {
+    let frame = world
+        .padded_bgra_frame
+        .as_ref()
+        .expect("padded BGRA frame was not computed");
+    // In a 2x2 bottom-up buffer, visual top-left (y=0, x=0) is stored at row 1, col 0 (offset 8..12).
+    assert_eq!(&frame[8..12], &[b0, g0, r0, a0]);
+    // Visual top-right padding pixel (y=0, x=1) is at offset 12..16, and bottom row (y=1) is at 0..8.
+    assert_eq!(&frame[12..16], &[bp, gp, rp, ap]);
+    assert_eq!(&frame[0..4], &[bp, gp, rp, ap]);
+}
+
 // ===========================================================================
 // Selection region from a drag
 // ===========================================================================
@@ -255,6 +334,99 @@ fn assert_region(world: &mut RustShotWorld, x: i32, y: i32, width: u32, height: 
 fn assert_no_region(world: &mut RustShotWorld) {
     let region = world.region.expect("region was not built");
     assert!(region.is_none(), "expected no region, got {region:?}");
+}
+
+#[given(regex = r"^a (\d+) x (\d+) packed background buffer$")]
+fn given_packed_buffer(world: &mut RustShotWorld, width: u32, height: u32) {
+    world.packed_dims = (width, height);
+    // Pixel (0,0) = 0x00102030, Pixel (1,0) = 0x00204060 (R=32, G=64, B=96), etc.
+    world.packed_buffer = vec![0x0010_2030, 0x0020_4060, 0x0030_6090, 0x0040_80A0];
+}
+
+#[when(
+    regex = r"^a region at \((-?\d+), (-?\d+)\) sized (\d+) x (\d+) is cropped from the packed buffer$"
+)]
+fn when_crop_packed(world: &mut RustShotWorld, x: i32, y: i32, width: u32, height: u32) {
+    let region = selection::Region {
+        physical_x: x,
+        physical_y: y,
+        physical_width: width,
+        physical_height: height,
+    };
+    world.crop_result = Some(selection::crop_packed_region(
+        world.packed_dims.0,
+        world.packed_dims.1,
+        &world.packed_buffer,
+        region,
+    ));
+}
+
+#[then(
+    regex = r"^the cropped image is (\d+) x (\d+) with top-left pixel \((\d+), (\d+), (\d+), (\d+)\)$"
+)]
+fn then_cropped_image(
+    world: &mut RustShotWorld,
+    width: u32,
+    height: u32,
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+) {
+    let img = world
+        .crop_result
+        .as_ref()
+        .expect("crop did not run")
+        .as_ref()
+        .expect("expected crop to succeed");
+    assert_eq!(img.dimensions(), (width, height));
+    assert_eq!(img.get_pixel(0, 0).0, [r, g, b, a]);
+}
+
+#[then(regex = r#"^cropping fails with "([^"]+)"$"#)]
+fn then_crop_fails(world: &mut RustShotWorld, expected: String) {
+    let err = world
+        .crop_result
+        .as_ref()
+        .expect("crop did not run")
+        .as_ref()
+        .expect_err("expected crop to fail");
+    assert_eq!(err, &expected);
+}
+
+#[when(
+    regex = r"^overlay damage rects are computed for a new (\d+) x (\d+) surface at cursor \((\d+), (\d+)\)$"
+)]
+fn when_damage_rects_new(world: &mut RustShotWorld, w: usize, h: usize, cx: i32, cy: i32) {
+    let rects = selection::overlay_present_damage_rects(
+        selection::OverlayDamage::default(),
+        w,
+        h,
+        None,
+        Some((cx, cy)),
+    );
+    world.damage_rect_count = Some(rects.len());
+}
+
+#[when(
+    regex = r"^overlay damage rects are computed for an unchanged (\d+) x (\d+) surface at cursor \((\d+), (\d+)\)$"
+)]
+fn when_damage_rects_unchanged(world: &mut RustShotWorld, w: usize, h: usize, cx: i32, cy: i32) {
+    let prev = selection::OverlayDamage {
+        surface_size: Some((w, h)),
+        start_pos: None,
+        current_pos: Some((cx, cy)),
+    };
+    let rects = selection::overlay_present_damage_rects(prev, w, h, None, Some((cx, cy)));
+    world.damage_rect_count = Some(rects.len());
+}
+
+#[then(regex = r"^(\d+) overlay damage rects? (?:is|are) produced$")]
+fn then_damage_rect_count(world: &mut RustShotWorld, expected: usize) {
+    let count = world
+        .damage_rect_count
+        .expect("overlay damage rects were not computed");
+    assert_eq!(count, expected);
 }
 
 fn main() {

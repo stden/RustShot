@@ -22,3 +22,26 @@ Feature: Building a selection region from a mouse drag
     Given a drag from (0, 0) to (6, 6)
     When the drag region is built
     Then a region is produced at (0, 0) sized 6 x 6
+
+  Scenario: Cropping a packed region extracts RGBA pixels with full opacity
+    Given a 2 x 2 packed background buffer
+    When a region at (1, 0) sized 1 x 1 is cropped from the packed buffer
+    Then the cropped image is 1 x 1 with top-left pixel (32, 64, 96, 255)
+
+  Scenario: Cropping a packed region with negative coordinates fails
+    Given a 2 x 2 packed background buffer
+    When a region at (-1, 0) sized 1 x 1 is cropped from the packed buffer
+    Then cropping fails with "Selection region has negative coordinates"
+
+  Scenario: Cropping an out-of-bounds packed region fails
+    Given a 2 x 2 packed background buffer
+    When a region at (1, 1) sized 2 x 1 is cropped from the packed buffer
+    Then cropping fails with "Selection region is out of bounds"
+
+  Scenario: Overlay damage rect covers the full surface on the first frame
+    When overlay damage rects are computed for a new 100 x 80 surface at cursor (10, 20)
+    Then 1 overlay damage rect is produced
+
+  Scenario: Overlay damage rects are empty when the cursor does not move
+    When overlay damage rects are computed for an unchanged 100 x 80 surface at cursor (10, 20)
+    Then 0 overlay damage rects are produced

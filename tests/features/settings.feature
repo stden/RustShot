@@ -26,3 +26,7 @@ Feature: Settings normalization
       | 60    | 60     |
       | 240   | 240    |
       | 0     | 30     |
+
+  Scenario: Settings JSON round-trips escaped paths and clamps zero FPS
+    When settings JSON with screenshots_dir "C:\Shots\Sub" and recording_fps 0 is parsed and formatted
+    Then the reparsed settings have screenshots_dir "C:\Shots\Sub" and recording_fps 30
