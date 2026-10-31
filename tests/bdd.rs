@@ -46,6 +46,11 @@ struct RustShotWorld {
     packed_buffer: Vec<u32>,
     crop_result: Option<Result<image::RgbaImage, String>>,
     damage_rect_count: Option<usize>,
+
+    // --- overlay frame rendering ---
+    render_buffer: Option<Vec<u32>>,
+    render_buf_w: usize,
+    render_buf_h: usize,
 }
 
 fn app_mode_name(mode: cli::AppMode) -> &'static str {
@@ -427,6 +432,94 @@ fn then_damage_rect_count(world: &mut RustShotWorld, expected: usize) {
         .damage_rect_count
         .expect("overlay damage rects were not computed");
     assert_eq!(count, expected);
+}
+
+// ===========================================================================
+// Overlay frame rendering (border clamping)
+// ===========================================================================
+
+/// Render a selection overlay into a zero-filled buffer and store it for
+/// subsequent `Then` steps to inspect.
+#[when(
+    regex = r"^a (\d+) x (\d+) selection overlay is rendered with drag from \((-?\d+), (-?\d+)\) to \((-?\d+), (-?\d+)\)$"
+)]
+fn when_render_overlay_drag(
+    world: &mut RustShotWorld,
+    buf_w: usize,
+    buf_h: usize,
+    sx: i32,
+    sy: i32,
+    ex: i32,
+    ey: i32,
+) {
+    let bg = vec![0u32; buf_w * buf_h];
+    let mut buffer = bg.clone();
+    selection::render_selection_overlay_frame(
+        &mut buffer,
+        buf_w,
+        buf_h,
+        &bg,
+        buf_w,
+        Some((sx, sy)),
+        Some((ex, ey)),
+    );
+    world.render_buffer = Some(buffer);
+    world.render_buf_w = buf_w;
+    world.render_buf_h = buf_h;
+}
+
+#[then("the last row of the rendered buffer has at least one non-zero pixel")]
+fn then_last_row_has_border(world: &mut RustShotWorld) {
+    let buf = world
+        .render_buffer
+        .as_ref()
+        .expect("overlay was not rendered");
+    let w = world.render_buf_w;
+    let h = world.render_buf_h;
+    let start = (h - 1) * w;
+    assert!(
+        buf[start..start + w].iter().any(|&p| p != 0),
+        "expected a border pixel in the last row but all pixels are zero"
+    );
+}
+
+#[then("the last column of the rendered buffer has at least one non-zero pixel")]
+fn then_last_col_has_border(world: &mut RustShotWorld) {
+    let buf = world
+        .render_buffer
+        .as_ref()
+        .expect("overlay was not rendered");
+    let w = world.render_buf_w;
+    let h = world.render_buf_h;
+    assert!(
+        (0..h).any(|y| buf[y * w + (w - 1)] != 0),
+        "expected a border pixel in the last column but all pixels are zero"
+    );
+}
+
+// ===========================================================================
+// Overlay damage rects — cursor movement
+// ===========================================================================
+
+#[when(
+    regex = r"^overlay damage rects are computed for a (\d+) x (\d+) surface with cursor moving from \((\d+), (\d+)\) to \((\d+), (\d+)\)$"
+)]
+fn when_damage_rects_cursor_moved(
+    world: &mut RustShotWorld,
+    w: usize,
+    h: usize,
+    x1: i32,
+    y1: i32,
+    x2: i32,
+    y2: i32,
+) {
+    let prev = selection::OverlayDamage {
+        surface_size: Some((w, h)),
+        start_pos: None,
+        current_pos: Some((x1, y1)),
+    };
+    let rects = selection::overlay_present_damage_rects(prev, w, h, None, Some((x2, y2)));
+    world.damage_rect_count = Some(rects.len());
 }
 
 fn main() {

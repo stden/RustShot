@@ -45,3 +45,15 @@ Feature: Building a selection region from a mouse drag
   Scenario: Overlay damage rects are empty when the cursor does not move
     When overlay damage rects are computed for an unchanged 100 x 80 surface at cursor (10, 20)
     Then 0 overlay damage rects are produced
+
+  Scenario: Moving the crosshair produces damage rects for both old and new positions
+    When overlay damage rects are computed for a 100 x 80 surface with cursor moving from (10, 20) to (30, 40)
+    Then 4 overlay damage rects are produced
+
+  Scenario: Bottom border is drawn when drag end is beyond the buffer height
+    When a 100 x 10 selection overlay is rendered with drag from (0, 0) to (50, 15)
+    Then the last row of the rendered buffer has at least one non-zero pixel
+
+  Scenario: Right border is drawn when drag end is beyond the buffer width
+    When a 100 x 10 selection overlay is rendered with drag from (0, 0) to (105, 5)
+    Then the last column of the rendered buffer has at least one non-zero pixel

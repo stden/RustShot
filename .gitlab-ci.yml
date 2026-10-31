@@ -81,6 +81,13 @@ fmt:
     - rustup component add rustfmt
     - cargo fmt --all -- --check
 
+duplication:
+  stage: test
+  before_script:
+    - . ci/rust-job-env.sh
+  script:
+    - cargo run --manifest-path tools/check_duplicates/Cargo.toml -- src
+
 # Clippy lint check. Use --tests (lib + bins + tests + examples) instead of
 # --all-targets so the 1900-line criterion bench file is not compiled just
 # for linting. Disable debug info generation — clippy is lint-only, it never

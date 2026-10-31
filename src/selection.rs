@@ -1035,6 +1035,27 @@ fn restore_overlay_row_span(
         .copy_from_slice(&packed_background[src_start..src_start + span]);
 }
 
+/// Extract and clamp selection border corners from a drag pair.
+///
+/// Returns `(x1, y1, x2, y2)` where `(x1, y1)` is the top-left and `(x2, y2)`
+/// is the bottom-right corner in buffer pixel coordinates. `x2` and `y2` are
+/// clamped to the last valid pixel (`buf_w - 1`, `buf_h - 1`) to guard against
+/// cursor coordinates reported slightly outside the window due to DPI rounding
+/// on secondary monitors.
+#[inline]
+fn drag_border_coords(
+    start: (i32, i32),
+    end: (i32, i32),
+    buf_w: usize,
+    buf_h: usize,
+) -> (usize, usize, usize, usize) {
+    let x1 = start.0.min(end.0).max(0) as usize;
+    let y1 = start.1.min(end.1).max(0) as usize;
+    let x2 = (start.0.max(end.0).max(0) as usize).min(buf_w.saturating_sub(1));
+    let y2 = (start.1.max(end.1).max(0) as usize).min(buf_h.saturating_sub(1));
+    (x1, y1, x2, y2)
+}
+
 fn draw_overlay_primitives(
     buffer: &mut [u32],
     buf_w: usize,
@@ -1046,10 +1067,7 @@ fn draw_overlay_primitives(
 ) {
     if let (Some(start), Some(end)) = (start_pos, current_pos) {
         const CYAN_BORDER: u32 = (200 << 8) | 255;
-        let x1 = start.0.min(end.0).max(0) as usize;
-        let y1 = start.1.min(end.1).max(0) as usize;
-        let x2 = start.0.max(end.0).max(0) as usize;
-        let y2 = start.1.max(end.1).max(0) as usize;
+        let (x1, y1, x2, y2) = drag_border_coords(start, end, buf_w, buf_h);
 
         let x_start = x1.saturating_sub(1).min(buf_w);
         let x_end = x2.saturating_add(2).min(buf_w);
@@ -1182,10 +1200,7 @@ pub fn update_selection_overlay_frame(
 
     // Restore only the previous frame's drawn pixels from packed_background.
     if let (Some(start), Some(end)) = (damage.start_pos, damage.current_pos) {
-        let x1 = start.0.min(end.0).max(0) as usize;
-        let y1 = start.1.min(end.1).max(0) as usize;
-        let x2 = start.0.max(end.0).max(0) as usize;
-        let y2 = start.1.max(end.1).max(0) as usize;
+        let (x1, y1, x2, y2) = drag_border_coords(start, end, buf_w, buf_h);
 
         let x_start = x1.saturating_sub(1).min(buf_w);
         let x_end = x2.saturating_add(2).min(buf_w);
@@ -1286,10 +1301,7 @@ fn push_primitive_damage_rects(
     current_pos: Option<(i32, i32)>,
 ) {
     if let (Some(start), Some(end)) = (start_pos, current_pos) {
-        let x1 = start.0.min(end.0).max(0) as usize;
-        let y1 = start.1.min(end.1).max(0) as usize;
-        let x2 = start.0.max(end.0).max(0) as usize;
-        let y2 = start.1.max(end.1).max(0) as usize;
+        let (x1, y1, x2, y2) = drag_border_coords(start, end, buf_w, buf_h);
 
         let x_start = x1.saturating_sub(1).min(buf_w);
         let x_end = x2.saturating_add(2).min(buf_w);

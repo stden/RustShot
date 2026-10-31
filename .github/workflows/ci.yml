@@ -23,6 +23,14 @@ jobs:
       - name: Validate indexed knowledge
         run: python -B wiki/lint.py
 
+  duplication:
+    name: Code duplication
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo run --manifest-path tools/check_duplicates/Cargo.toml -- src
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

@@ -1,0 +1,9 @@
+[package]
+name = "check_duplicates"
+version = "0.1.0"
+edition = "2021"
+description = "Code duplication detector for Rust source files"
+
+[[bin]]
+name = "check_duplicates"
+path = "src/main.rs"
