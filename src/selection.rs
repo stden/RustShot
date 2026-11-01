@@ -1091,7 +1091,14 @@ fn draw_overlay_primitives(
     if let (Some(start), Some(end)) = (start_pos, current_pos) {
         const CYAN_BORDER: u32 = (200 << 8) | 255;
         let BorderGeometry {
-            x1, y1, x2, y2, x_start, x_end, y_start, y_end,
+            x1,
+            y1,
+            x2,
+            y2,
+            x_start,
+            x_end,
+            y_start,
+            y_end,
         } = border_geometry(start, end, buf_w, buf_h);
 
         // Top and bottom 3px horizontal border bands
@@ -1221,7 +1228,14 @@ pub fn update_selection_overlay_frame(
     // Restore only the previous frame's drawn pixels from packed_background.
     if let (Some(start), Some(end)) = (damage.start_pos, damage.current_pos) {
         let BorderGeometry {
-            x1, y1, x2, y2, x_start, x_end, y_start, y_end,
+            x1,
+            y1,
+            x2,
+            y2,
+            x_start,
+            x_end,
+            y_start,
+            y_end,
         } = border_geometry(start, end, buf_w, buf_h);
 
         for y in y1.saturating_sub(1)..y1.saturating_add(2).min(buf_h) {
@@ -1319,7 +1333,14 @@ fn push_primitive_damage_rects(
 ) {
     if let (Some(start), Some(end)) = (start_pos, current_pos) {
         let BorderGeometry {
-            x1, y1, x2, y2, x_start, x_end, y_start, y_end,
+            x1,
+            y1,
+            x2,
+            y2,
+            x_start,
+            x_end,
+            y_start,
+            y_end,
         } = border_geometry(start, end, buf_w, buf_h);
 
         push_clamped_damage_rect(
@@ -2243,9 +2264,9 @@ fn capture_screen_packed_with_origin_win32(
     raw_hmonitor: isize,
 ) -> Result<Win32PackedScreenCapture, String> {
     use windows::Win32::Graphics::Gdi::{
-        BitBlt, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetDeviceCaps,
-        SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DESKTOPHORZRES, DESKTOPVERTRES,
-        DIB_RGB_COLORS, SRCCOPY,
+        BitBlt, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetDeviceCaps, SelectObject,
+        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DESKTOPHORZRES, DESKTOPVERTRES, DIB_RGB_COLORS,
+        SRCCOPY,
     };
 
     // SAFETY: All GDI handles created below (`hdc_monitor`, `hdc_mem`, `hbm`) are checked
@@ -2275,12 +2296,7 @@ fn capture_screen_packed_with_origin_win32(
             return Err("CreateCompatibleDC failed".to_string());
         }
 
-        let hbm = crate::gdi::capture_bitmap_or_cleanup(
-            hdc_monitor,
-            hdc_mem,
-            phys_w,
-            phys_h,
-        )?;
+        let hbm = crate::gdi::capture_bitmap_or_cleanup(hdc_monitor, hdc_mem, phys_w, phys_h)?;
 
         let old_obj = SelectObject(hdc_mem, hbm);
         let blt_res = BitBlt(hdc_mem, 0, 0, phys_w, phys_h, hdc_monitor, 0, 0, SRCCOPY)
@@ -2391,7 +2407,8 @@ where
                 last_error = err;
                 (
                     scaled_physical_dimension(logical_width, scale_factor).unwrap_or(logical_width),
-                    scaled_physical_dimension(logical_height, scale_factor).unwrap_or(logical_height),
+                    scaled_physical_dimension(logical_height, scale_factor)
+                        .unwrap_or(logical_height),
                 )
             }
         };
@@ -2464,7 +2481,14 @@ where
 
 fn screen_layout_metadata(screen: &Screen) -> (i32, i32, u32, u32, f32, bool) {
     let info = &screen.display_info;
-    (info.x, info.y, info.width, info.height, info.scale_factor, info.is_primary)
+    (
+        info.x,
+        info.y,
+        info.width,
+        info.height,
+        info.scale_factor,
+        info.is_primary,
+    )
 }
 
 /// Capture all monitors so the selection overlay can open a native-DPI borderless
@@ -2472,10 +2496,7 @@ fn screen_layout_metadata(screen: &Screen) -> (i32, i32, u32, u32, f32, bool) {
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn capture_monitors_for_selection() -> Result<(Vec<MonitorCapture>, Vec<Screen>, usize), String> {
     let screens = Screen::all().map_err(|e| format!("Failed to get screens: {}", e))?;
-    let screen_infos: Vec<_> = screens
-        .iter()
-        .map(screen_layout_metadata)
-        .collect();
+    let screen_infos: Vec<_> = screens.iter().map(screen_layout_metadata).collect();
 
     let (monitor_captures, kept_indices, initial_active) = collect_monitor_captures_with(
         &screen_infos,
@@ -2680,8 +2701,11 @@ fn run_selection_overlay<T>(
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub fn select_region() -> Result<image::RgbaImage, String> {
     let (captures, _screens, initial_active) = capture_monitors_for_selection()?;
-    let (region, (packed_background, width, height, _)) =
-        run_selection_overlay(captures, initial_active, SelectionApp::take_selected_monitor_capture)?;
+    let (region, (packed_background, width, height, _)) = run_selection_overlay(
+        captures,
+        initial_active,
+        SelectionApp::take_selected_monitor_capture,
+    )?;
     crop_packed_region(width, height, &packed_background, region)
 }
 
@@ -3855,11 +3879,8 @@ mod tests {
             physical_layout((1920, 0, 1707, 960), (1920, 0, 2560, 1440)),
         ];
 
-        let error = resolve_recording_selection(
-            &layouts,
-            test_region(1910, 100, 40, 200),
-        )
-        .unwrap_err();
+        let error =
+            resolve_recording_selection(&layouts, test_region(1910, 100, 40, 200)).unwrap_err();
 
         assert!(error.contains("single monitor"));
     }
@@ -3871,11 +3892,9 @@ mod tests {
             physical_layout((1920, 0, 1707, 960), (1920, 0, 2560, 1440)),
         ];
 
-        let (screen_index, local_region) = resolve_recording_selection(
-            &layouts,
-            test_region(2000, 100, 400, 300),
-        )
-        .expect("region should resolve inside the right monitor");
+        let (screen_index, local_region) =
+            resolve_recording_selection(&layouts, test_region(2000, 100, 400, 300))
+                .expect("region should resolve inside the right monitor");
 
         assert_eq!(screen_index, 1);
         assert_eq!(local_region.physical_x, 80);
@@ -4235,11 +4254,8 @@ mod tests {
             physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
             physical_layout((1920, 0, 1920, 1080), (1920, 0, 1920, 1080)),
         ];
-        let (idx, region) = resolve_recording_selection(
-            &layouts,
-            test_region(100, 100, 500, 400),
-        )
-        .unwrap();
+        let (idx, region) =
+            resolve_recording_selection(&layouts, test_region(100, 100, 500, 400)).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(region.physical_x, 100);
         assert_eq!(region.physical_y, 100);
@@ -4248,11 +4264,8 @@ mod tests {
     #[test]
     fn resolve_recording_selection_exact_monitor_bounds() {
         let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
-        let (idx, region) = resolve_recording_selection(
-            &layouts,
-            test_region(0, 0, 1920, 1080),
-        )
-        .unwrap();
+        let (idx, region) =
+            resolve_recording_selection(&layouts, test_region(0, 0, 1920, 1080)).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(region.physical_x, 0);
         assert_eq!(region.physical_y, 0);
@@ -4263,20 +4276,14 @@ mod tests {
     #[test]
     fn resolve_recording_selection_region_exceeds_single_monitor() {
         let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
-        let result = resolve_recording_selection(
-            &layouts,
-            test_region(0, 0, 2000, 1080),
-        );
+        let result = resolve_recording_selection(&layouts, test_region(0, 0, 2000, 1080));
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("single monitor"));
     }
 
     #[test]
     fn resolve_recording_selection_empty_layouts() {
-        let result = resolve_recording_selection(
-            &[],
-            test_region(0, 0, 100, 100),
-        );
+        let result = resolve_recording_selection(&[], test_region(0, 0, 100, 100));
         assert!(result.is_err());
     }
 
@@ -4284,8 +4291,9 @@ mod tests {
 
     #[test]
     fn build_physical_screen_layouts_single_monitor() {
-        let layouts = build_physical_screen_layouts(&[screen_layout((0, 0, 1920, 1080), (1920, 1080), true)])
-        .unwrap();
+        let layouts =
+            build_physical_screen_layouts(&[screen_layout((0, 0, 1920, 1080), (1920, 1080), true)])
+                .unwrap();
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].physical_x, 0);
         assert_eq!(layouts[0].physical_y, 0);
@@ -5036,33 +5044,10 @@ mod tests {
     }
 
     #[test]
-    fn build_physical_screen_layouts_two_vertical() {
-        let inputs = vec![
-            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
-            screen_layout((0, 1080, 1920, 1080), (1920, 1080), false),
-        ];
-        let layouts = build_physical_screen_layouts(&inputs).unwrap();
-        assert_eq!(layouts[0].physical_y, 0);
-        assert_eq!(layouts[1].physical_y, 1080);
-    }
-
-    #[test]
     fn build_physical_screen_layouts_empty_input_is_error() {
         let result = build_physical_screen_layouts(&[]);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("No screens"));
-    }
-
-    #[test]
-    fn build_physical_screen_layouts_mixed_dpi() {
-        // Primary 1920x1080@1x, secondary 1707x960@1.5x (physical 2560x1440)
-        let inputs = vec![
-            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
-            screen_layout((1920, 0, 1707, 960), (2560, 1440), false),
-        ];
-        let layouts = build_physical_screen_layouts(&inputs).unwrap();
-        assert_eq!(layouts[0].physical_x, 0);
-        assert_eq!(layouts[1].physical_x, 1920);
     }
 
     #[test]
@@ -5564,19 +5549,6 @@ mod tests {
         assert_eq!(idx, 0);
         assert_eq!(local.physical_width, 1920);
         assert_eq!(local.physical_height, 1080);
-    }
-
-    #[test]
-    fn resolve_recording_selection_selects_second_monitor() {
-        let layouts = vec![
-            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
-            physical_layout((1920, 0, 2560, 1440), (1920, 0, 2560, 1440)),
-        ];
-        let region = test_region(2000, 100, 200, 200);
-        let (idx, local) = resolve_recording_selection(&layouts, region).unwrap();
-        assert_eq!(idx, 1);
-        assert_eq!(local.physical_x, 80);
-        assert_eq!(local.physical_y, 100);
     }
 
     // --- monitor_scale_ratio edge cases ---
@@ -6389,6 +6361,7 @@ mod tests {
         ];
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
         assert_eq!(layouts[0].physical_y, 0);
+        assert_eq!(layouts[1].physical_y, 1080);
         assert_eq!(
             layouts[1].physical_y, layouts[0].physical_height as i32,
             "second monitor physical_y should equal first monitor's physical height"
@@ -6848,23 +6821,11 @@ mod tests {
         let rgba = vec![
             10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255,
         ];
-        let full = crop_selected_region(
-            2,
-            2,
-            rgba.clone(),
-            test_region(0, 0, 2, 2),
-        )
-        .unwrap();
+        let full = crop_selected_region(2, 2, rgba.clone(), test_region(0, 0, 2, 2)).unwrap();
         assert_eq!(full.dimensions(), (2, 2));
         assert_eq!(full.into_raw(), rgba);
 
-        let sub = crop_selected_region(
-            2,
-            2,
-            rgba,
-            test_region(1, 1, 1, 1),
-        )
-        .unwrap();
+        let sub = crop_selected_region(2, 2, rgba, test_region(1, 1, 1, 1)).unwrap();
         assert_eq!(sub.dimensions(), (1, 1));
         assert_eq!(sub.into_raw(), vec![100, 110, 120, 255]);
     }
@@ -6978,61 +6939,19 @@ mod tests {
         let packed = vec![0xFF11_2233; 4 * 4];
 
         // Negative coordinates
-        assert!(crop_packed_region(
-            4,
-            4,
-            &packed,
-            test_region(-1, 0, 2, 2)
-        )
-        .is_err());
-        assert!(crop_packed_region(
-            4,
-            4,
-            &packed,
-            test_region(0, -1, 2, 2)
-        )
-        .is_err());
+        assert!(crop_packed_region(4, 4, &packed, test_region(-1, 0, 2, 2)).is_err());
+        assert!(crop_packed_region(4, 4, &packed, test_region(0, -1, 2, 2)).is_err());
 
         // Zero width / height
-        assert!(crop_packed_region(
-            4,
-            4,
-            &packed,
-            test_region(0, 0, 0, 2)
-        )
-        .is_err());
-        assert!(crop_packed_region(
-            4,
-            4,
-            &packed,
-            test_region(0, 0, 2, 0)
-        )
-        .is_err());
+        assert!(crop_packed_region(4, 4, &packed, test_region(0, 0, 0, 2)).is_err());
+        assert!(crop_packed_region(4, 4, &packed, test_region(0, 0, 2, 0)).is_err());
 
         // Out of bounds
-        assert!(crop_packed_region(
-            4,
-            4,
-            &packed,
-            test_region(3, 0, 2, 2)
-        )
-        .is_err());
-        assert!(crop_packed_region(
-            4,
-            4,
-            &packed,
-            test_region(0, 3, 2, 2)
-        )
-        .is_err());
+        assert!(crop_packed_region(4, 4, &packed, test_region(3, 0, 2, 2)).is_err());
+        assert!(crop_packed_region(4, 4, &packed, test_region(0, 3, 2, 2)).is_err());
 
         // Undersized packed buffer
-        assert!(crop_packed_region(
-            4,
-            4,
-            &packed[..15],
-            test_region(0, 0, 2, 2)
-        )
-        .is_err());
+        assert!(crop_packed_region(4, 4, &packed[..15], test_region(0, 0, 2, 2)).is_err());
     }
 
     #[test]
@@ -7212,10 +7131,7 @@ mod tests {
         assert!(app.handle_mouse_release());
         assert!(!app.is_dragging);
         assert_eq!(app.selected_monitor, 1);
-        assert_eq!(
-            app.result,
-            Some(test_region(300, 250, 400, 300))
-        );
+        assert_eq!(app.result, Some(test_region(300, 250, 400, 300)));
 
         let (packed, w, h, idx) = app.take_selected_monitor_capture();
         assert_eq!(idx, 1);
@@ -7255,10 +7171,7 @@ mod tests {
 
         assert!(app.handle_mouse_release());
         assert_eq!(app.selected_monitor, 1);
-        assert_eq!(
-            app.result,
-            Some(test_region(0, 200, 200, 100))
-        );
+        assert_eq!(app.result, Some(test_region(0, 200, 200, 100)));
     }
 
     #[test]
@@ -7431,10 +7344,7 @@ mod tests {
         app.handle_cursor_moved_on_monitor(1, (150, 140));
         assert!(app.handle_mouse_release());
         assert_eq!(app.selected_monitor, 1);
-        assert_eq!(
-            app.result,
-            Some(test_region(50, 60, 100, 80))
-        );
+        assert_eq!(app.result, Some(test_region(50, 60, 100, 80)));
     }
 
     #[test]
@@ -7485,10 +7395,7 @@ mod tests {
 
         assert!(app.handle_mouse_release());
         assert_eq!(app.selected_monitor, 0);
-        assert_eq!(
-            app.result,
-            Some(test_region(500, 500, 300, 699))
-        );
+        assert_eq!(app.result, Some(test_region(500, 500, 300, 699)));
 
         let (packed, w, h, idx) = app.take_selected_monitor_capture();
         assert_eq!(idx, 0);
@@ -7926,23 +7833,11 @@ mod tests {
 
         // 9. crop_selected_region negative coordinates and invalid buffer size
         assert_eq!(
-            crop_selected_region(
-                2,
-                2,
-                vec![0u8; 16],
-                test_region(-1, 0, 1, 1)
-            )
-            .unwrap_err(),
+            crop_selected_region(2, 2, vec![0u8; 16], test_region(-1, 0, 1, 1)).unwrap_err(),
             "Selection region has negative coordinates"
         );
         assert_eq!(
-            crop_selected_region(
-                2,
-                2,
-                vec![0u8; 4],
-                test_region(0, 0, 1, 1)
-            )
-            .unwrap_err(),
+            crop_selected_region(2, 2, vec![0u8; 4], test_region(0, 0, 1, 1)).unwrap_err(),
             "Failed to create image from composite data"
         );
 
@@ -8145,10 +8040,7 @@ mod tests {
             vec![1]
         );
         assert!(press_first_app.handle_mouse_release());
-        assert_eq!(
-            press_first_app.result,
-            Some(test_region(10, 15, 40, 50))
-        );
+        assert_eq!(press_first_app.result, Some(test_region(10, 15, 40, 50)));
 
         let span_overflow_layouts = [
             physical_layout((-1_500_000_000, 0, 100, 100), (-1_500_000_000, 0, 100, 100)),

@@ -179,3 +179,43 @@ fn five_calls_to_a_shared_helper_are_still_a_clone() {
         Some(1)
     );
 }
+
+#[test]
+fn detects_rust_bodies_inside_macro_dsl() {
+    let code = format!(
+        "cases! {{ fn first(value in arbitrary()) {{\n{BODY}\n}} }}\n\
+         cases! {{ fn second(value in arbitrary()) {{\n{BODY}\n}} }}"
+    );
+    assert_eq!(
+        Fixture::new(&[("a.rs", &code)]).run().status.code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn comments_between_statements_cannot_hide_a_clone() {
+    let first = format!("fn first() {{\n{BODY}\n}}");
+    let body = BODY.replace(';', "; /* a nested /* block */ comment */");
+    let second = format!("fn second() {{\n{body}\n}}");
+    assert_eq!(
+        Fixture::new(&[("a.rs", &first), ("b.rs", &second)])
+            .run()
+            .status
+            .code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn nested_occurrence_is_not_a_clone_of_itself() {
+    let code = format!("fn only() {{\nif ready {{\n{BODY}\n}}\n}}");
+    assert_eq!(
+        Fixture::new(&[("a.rs", &code)]).run().status.code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn empty_scan_is_an_error() {
+    assert_eq!(Fixture::new(&[]).run().status.code(), Some(2));
+}

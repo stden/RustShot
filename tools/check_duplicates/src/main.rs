@@ -57,6 +57,21 @@ struct Collector<'a> {
 }
 
 impl Collector<'_> {
+    fn macro_blocks(&mut self, tokens: TokenStream) {
+        for token in tokens {
+            if let TokenTree::Group(group) = token {
+                if group.delimiter() == Delimiter::Brace {
+                    let stream = TokenStream::from(TokenTree::Group(group.clone()));
+                    if let Ok(block) = syn::parse2::<syn::Block>(stream) {
+                        self.visit_block(&block);
+                        continue;
+                    }
+                }
+                self.macro_blocks(group.stream());
+            }
+        }
+    }
+
     fn push(&mut self, statements: &mut Vec<Statement>) {
         if !statements.is_empty() {
             self.blocks.push(Block {
@@ -68,6 +83,12 @@ impl Collector<'_> {
 }
 
 impl<'ast> Visit<'ast> for Collector<'_> {
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        // Macro DSLs may contain ordinary Rust bodies (for example proptest).
+        // Recover those blocks without evaluating cfgs or expanding macros.
+        self.macro_blocks(node.tokens.clone());
+    }
+
     fn visit_block(&mut self, block: &'ast syn::Block) {
         let mut statements = Vec::new();
         for statement in &block.stmts {

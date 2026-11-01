@@ -447,11 +447,9 @@ pub fn rgba_region_to_bgra_bottom_up_into(
     dst_width: u32,
     dst_height: u32,
 ) {
-    let Some((dst_row_bytes, total_dst_bytes, copy_w, copy_h)) = frame_copy_dimensions(
-        out.len(),
-        (src_width, src_height),
-        (dst_width, dst_height),
-    ) else {
+    let Some((dst_row_bytes, total_dst_bytes, copy_w, copy_h)) =
+        frame_copy_dimensions(out.len(), (src_width, src_height), (dst_width, dst_height))
+    else {
         return;
     };
     if copy_w == dst_width as usize
@@ -495,11 +493,9 @@ pub fn bgra_top_down_region_to_bottom_up_into(
     dst_width: u32,
     dst_height: u32,
 ) {
-    let Some((dst_row_bytes, _, copy_w, copy_h)) = frame_copy_dimensions(
-        out.len(),
-        (src_width, src_height),
-        (dst_width, dst_height),
-    ) else {
+    let Some((dst_row_bytes, _, copy_w, copy_h)) =
+        frame_copy_dimensions(out.len(), (src_width, src_height), (dst_width, dst_height))
+    else {
         return;
     };
     let src_row_bytes = (src_width as usize) * 4;
@@ -1122,8 +1118,8 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use crate::selection::test_region;
     use super::*;
+    use crate::selection::test_region;
 
     #[test]
     fn recording_frame_padding_preserves_odd_capture_pixels() {
@@ -1438,12 +1434,7 @@ mod tests {
 
     #[test]
     fn recording_session_start_rejects_zero_fps() {
-        let result = RecordingSession::start(
-            0,
-            0,
-            test_region(0, 0, 100, 100),
-            0,
-        );
+        let result = RecordingSession::start(0, 0, test_region(0, 0, 100, 100), 0);
 
         assert!(matches!(
             result,
@@ -2104,24 +2095,14 @@ mod tests {
 
     #[test]
     fn recording_session_start_zero_fps_with_large_region() {
-        let result = RecordingSession::start(
-            0,
-            0,
-            test_region(0, 0, 1920, 1080),
-            0,
-        );
+        let result = RecordingSession::start(0, 0, test_region(0, 0, 1920, 1080), 0);
         assert!(result.is_err());
     }
 
     #[cfg(not(windows))]
     #[test]
     fn recording_session_start_nonzero_fps_fails_on_non_windows() {
-        let result = RecordingSession::start(
-            0,
-            0,
-            test_region(0, 0, 100, 100),
-            30,
-        );
+        let result = RecordingSession::start(0, 0, test_region(0, 0, 100, 100), 30);
         assert!(result.is_err());
         // Can't use unwrap_err (no Debug on RecordingSession), so use match
         match result {
@@ -2225,12 +2206,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn recording_session_stop_returns_error_on_non_windows() {
-        let session = RecordingSession::start(
-            0,
-            0,
-            test_region(0, 0, 100, 100),
-            30,
-        );
+        let session = RecordingSession::start(0, 0, test_region(0, 0, 100, 100), 30);
         // start itself should fail on non-windows because the thread returns Err
         // but the session is created before the thread finishes
         match session {
@@ -2245,12 +2221,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn recording_session_output_path_is_mp4_even_on_non_windows() {
-        let session = RecordingSession::start(
-            0,
-            0,
-            test_region(0, 0, 100, 100),
-            30,
-        );
+        let session = RecordingSession::start(0, 0, test_region(0, 0, 100, 100), 30);
         if let Ok(s) = session {
             assert_eq!(
                 s.output_path().extension().and_then(|e| e.to_str()),
@@ -3254,13 +3225,7 @@ mod tests {
     #[test]
     fn recording_session_start_in_dir_zero_fps_error_message() {
         let dir = PathBuf::from("/tmp/test-recordings");
-        let result = RecordingSession::start_in_dir(
-            0,
-            0,
-            test_region(0, 0, 100, 100),
-            0,
-            dir,
-        );
+        let result = RecordingSession::start_in_dir(0, 0, test_region(0, 0, 100, 100), 0, dir);
         assert!(matches!(
             result,
             Err(ref e) if e == "Recording FPS must be greater than 0"
@@ -3716,12 +3681,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_record_perf_gdi_region_capturer_rejects_invalid_hmonitor() {
-        let res = unsafe {
-            GdiRegionCapturer::new(
-                0,
-                test_region(0, 0, 64, 64),
-            )
-        };
+        let res = unsafe { GdiRegionCapturer::new(0, test_region(0, 0, 64, 64)) };
         assert!(res.is_err());
         assert!(res.err().unwrap().contains("GetMonitorInfoW failed"));
     }
@@ -3764,11 +3724,9 @@ mod tests {
 
         // 1. Direct GdiRegionCapturer test: exact dimensions & padded dimensions
         unsafe {
-            let exact_capturer = GdiRegionCapturer::new(
-                screen.display_info.raw_handle.0,
-                test_region(0, 0, 64, 64),
-            )
-            .unwrap();
+            let exact_capturer =
+                GdiRegionCapturer::new(screen.display_info.raw_handle.0, test_region(0, 0, 64, 64))
+                    .unwrap();
             let mut dst = vec![0u8; 64 * 64 * 4];
             let mut scratch = Vec::new();
             if exact_capturer
@@ -3778,11 +3736,9 @@ mod tests {
                 assert!(scratch.is_empty());
             }
 
-            let padded_capturer = GdiRegionCapturer::new(
-                screen.display_info.raw_handle.0,
-                test_region(0, 0, 60, 60),
-            )
-            .unwrap();
+            let padded_capturer =
+                GdiRegionCapturer::new(screen.display_info.raw_handle.0, test_region(0, 0, 60, 60))
+                    .unwrap();
             if padded_capturer
                 .capture_into(&mut dst, 64, 64, &mut scratch)
                 .is_ok()

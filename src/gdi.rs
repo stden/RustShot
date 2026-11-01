@@ -13,9 +13,12 @@ use windows::Win32::Graphics::Gdi::{
 pub(crate) unsafe fn monitor_info(raw_hmonitor: isize) -> Result<MONITORINFOEXW, String> {
     let mut info: MONITORINFOEXW = std::mem::zeroed();
     info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-    GetMonitorInfoW(HMONITOR(raw_hmonitor), (&mut info as *mut MONITORINFOEXW).cast())
-        .ok()
-        .map_err(|e| format!("GetMonitorInfoW failed: {e}"))?;
+    GetMonitorInfoW(
+        HMONITOR(raw_hmonitor),
+        (&mut info as *mut MONITORINFOEXW).cast(),
+    )
+    .ok()
+    .map_err(|e| format!("GetMonitorInfoW failed: {e}"))?;
     Ok(info)
 }
 

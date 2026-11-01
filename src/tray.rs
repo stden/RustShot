@@ -139,7 +139,10 @@ pub fn menu_receiver() -> &'static tray_icon::menu::MenuEventReceiver {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     fn count_rgb_pixels(pixels: &[u8], rgb: [u8; 3]) -> usize {
-        pixels.chunks_exact(4).filter(|pixel| pixel[..3] == rgb).count()
+        pixels
+            .chunks_exact(4)
+            .filter(|pixel| pixel[..3] == rgb)
+            .count()
     }
 
     fn is_blue_pixel(pixels: &[u8], x: u32, y: u32) -> bool {
@@ -901,16 +904,10 @@ mod tests {
         let pixels = build_default_icon_pixels();
         let midpoint = DEFAULT_ICON_SIZE / 2;
 
-        let left_body = (0..DEFAULT_ICON_SIZE).any(|y| {
-            (0..midpoint).any(|x| {
-                is_blue_pixel(&pixels, x, y)
-            })
-        });
-        let right_body = (0..DEFAULT_ICON_SIZE).any(|y| {
-            (midpoint..DEFAULT_ICON_SIZE).any(|x| {
-                is_blue_pixel(&pixels, x, y)
-            })
-        });
+        let left_body =
+            (0..DEFAULT_ICON_SIZE).any(|y| (0..midpoint).any(|x| is_blue_pixel(&pixels, x, y)));
+        let right_body = (0..DEFAULT_ICON_SIZE)
+            .any(|y| (midpoint..DEFAULT_ICON_SIZE).any(|x| is_blue_pixel(&pixels, x, y)));
 
         assert!(left_body, "left half should contain blue body pixels");
         assert!(right_body, "right half should contain blue body pixels");
@@ -921,16 +918,10 @@ mod tests {
         let pixels = build_default_icon_pixels();
         let midpoint = DEFAULT_ICON_SIZE / 2;
 
-        let top_body = (0..midpoint).any(|y| {
-            (0..DEFAULT_ICON_SIZE).any(|x| {
-                is_blue_pixel(&pixels, x, y)
-            })
-        });
-        let bottom_body = (midpoint..DEFAULT_ICON_SIZE).any(|y| {
-            (0..DEFAULT_ICON_SIZE).any(|x| {
-                is_blue_pixel(&pixels, x, y)
-            })
-        });
+        let top_body =
+            (0..midpoint).any(|y| (0..DEFAULT_ICON_SIZE).any(|x| is_blue_pixel(&pixels, x, y)));
+        let bottom_body = (midpoint..DEFAULT_ICON_SIZE)
+            .any(|y| (0..DEFAULT_ICON_SIZE).any(|x| is_blue_pixel(&pixels, x, y)));
 
         assert!(top_body, "top half should contain blue body pixels");
         assert!(bottom_body, "bottom half should contain blue body pixels");
