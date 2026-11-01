@@ -29,6 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Test duplication detector
+        run: cargo test --manifest-path tools/check_duplicates/Cargo.toml
       - run: cargo run --manifest-path tools/check_duplicates/Cargo.toml -- src
 
   fmt:

@@ -2097,9 +2097,7 @@ fn bench_pack_rgba_to_softbuffer(c: &mut Criterion) {
 
     // 1080p — common primary monitor
     {
-        let rgba: Vec<u8> = (0..(1920 * 1080 * 4))
-            .map(|i| (i % 256) as u8)
-            .collect();
+        let rgba: Vec<u8> = (0..(1920 * 1080 * 4)).map(|i| (i % 256) as u8).collect();
         group.bench_function("1080p", |b| {
             b.iter(|| selection::pack_rgba_to_softbuffer(black_box(&rgba)));
         });
@@ -2107,9 +2105,7 @@ fn bench_pack_rgba_to_softbuffer(c: &mut Criterion) {
 
     // 4K — high-resolution primary monitor
     {
-        let rgba: Vec<u8> = (0..(3840 * 2160 * 4))
-            .map(|i| (i % 256) as u8)
-            .collect();
+        let rgba: Vec<u8> = (0..(3840 * 2160 * 4)).map(|i| (i % 256) as u8).collect();
         group.bench_function("4k", |b| {
             b.iter(|| selection::pack_rgba_to_softbuffer(black_box(&rgba)));
         });
@@ -2196,8 +2192,6 @@ fn bench_overlay_present_damage_rects(c: &mut Criterion) {
 
     group.finish();
 }
-
-
 
 criterion_group!(
     benches,
