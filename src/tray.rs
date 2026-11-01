@@ -140,7 +140,9 @@ pub fn menu_receiver() -> &'static tray_icon::menu::MenuEventReceiver {
 mod tests {
     fn count_rgb_pixels(pixels: &[u8], rgb: [u8; 3]) -> usize {
         pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| pixel[..3] == rgb)
             .count()
     }
