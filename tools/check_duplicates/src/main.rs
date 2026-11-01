@@ -140,8 +140,8 @@ fn load_blocks(dir: &Path) -> Result<Vec<Block>, String> {
     }
     let mut blocks = Vec::new();
     for path in files {
-        let source = fs::read_to_string(&path)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let source =
+            fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
         let syntax =
             syn::parse_file(&source).map_err(|error| format!("{}: {error}", path.display()))?;
         Collector {
@@ -169,7 +169,7 @@ fn find_duplicates(blocks: &[Block]) -> Vec<Duplicate> {
             let mut lines = BTreeSet::new();
             let mut key = Vec::new();
             for (offset, statement) in block.statements[start..].iter().enumerate() {
-                lines.extend(&statement.lines);
+                lines.extend(statement.lines.iter().copied());
                 key.push(statement.key.clone());
                 if lines.len() >= MIN_LINES {
                     seen.entry(key).or_default().push(Seed {
