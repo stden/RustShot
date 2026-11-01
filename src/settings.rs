@@ -615,6 +615,38 @@ fn extract_json_bool(json: &str, key: &str) -> Option<bool> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    fn open_dialog_recording_paths(path: &std::path::Path) -> Vec<PathBuf> {
+        struct Guard;
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                set_settings_path_for_tests(None);
+                set_open_file_in_editor_for_tests(None);
+            }
+        }
+        thread_local! {
+            static OPENED: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+        }
+        fn record(path: &std::path::Path) {
+            OPENED.with(|paths| paths.borrow_mut().push(path.to_path_buf()));
+        }
+        let _guard = Guard;
+        set_settings_path_for_tests(Some(path.to_path_buf()));
+        set_open_file_in_editor_for_tests(Some(record));
+        OPENED.with(|paths| paths.borrow_mut().clear());
+        open_settings_dialog();
+        OPENED.with(|paths| std::mem::take(&mut *paths.borrow_mut()))
+    }
+
+    fn custom_settings() -> Settings {
+        Settings {
+            screenshots_dir: PathBuf::from("/tmp/shots"),
+            recordings_dir: PathBuf::from("/tmp/recs"),
+            default_format: "jpg".to_string(),
+            recording_fps: 60,
+            auto_start: false,
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -699,13 +731,7 @@ mod tests {
 
     #[test]
     fn parse_settings_json_roundtrip() {
-        let original = Settings {
-            screenshots_dir: PathBuf::from("/tmp/shots"),
-            recordings_dir: PathBuf::from("/tmp/recs"),
-            default_format: "jpg".to_string(),
-            recording_fps: 60,
-            auto_start: false,
-        };
+        let original = custom_settings();
         let json = format_settings_json(&original);
         let parsed = parse_settings_json(&json);
         assert_eq!(parsed.default_format, "jpg");
@@ -835,13 +861,7 @@ mod tests {
         let _guard = PathGuard;
         set_settings_path_for_tests(Some(settings_path.clone()));
 
-        let settings = Settings {
-            screenshots_dir: PathBuf::from("/tmp/shots"),
-            recordings_dir: PathBuf::from("/tmp/recs"),
-            default_format: "jpg".to_string(),
-            recording_fps: 60,
-            auto_start: false,
-        };
+        let settings = custom_settings();
 
         save_settings(&settings).unwrap();
         let loaded = load_settings();
@@ -854,33 +874,11 @@ mod tests {
 
     #[test]
     fn open_settings_dialog_uses_test_override() {
-        struct Guard;
-
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                set_settings_path_for_tests(None);
-                set_open_file_in_editor_for_tests(None);
-            }
-        }
-
-        static OPENED_PATHS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-
-        fn record_opened_path(path: &std::path::Path) {
-            OPENED_PATHS.lock().unwrap().push(path.to_path_buf());
-        }
-
         let temp_root =
             std::env::temp_dir().join(format!("rustshot_settings_dialog_{}", generate_timestamp()));
         std::fs::create_dir_all(&temp_root).unwrap();
         let settings_path = temp_root.join("RustShot").join("settings.json");
-        let _guard = Guard;
-        set_settings_path_for_tests(Some(settings_path.clone()));
-        set_open_file_in_editor_for_tests(Some(record_opened_path));
-        OPENED_PATHS.lock().unwrap().clear();
-
-        open_settings_dialog();
-
-        let opened_paths = OPENED_PATHS.lock().unwrap().clone();
+        let opened_paths = open_dialog_recording_paths(&settings_path);
         assert_eq!(opened_paths, vec![settings_path.clone()]);
         assert!(settings_path.is_file());
 
@@ -919,35 +917,13 @@ mod tests {
 
     #[test]
     fn open_settings_dialog_returns_early_when_save_fails() {
-        struct Guard;
-
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                set_settings_path_for_tests(None);
-                set_open_file_in_editor_for_tests(None);
-            }
-        }
-
-        static OPENED_PATHS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-
-        fn record_opened_path(path: &std::path::Path) {
-            OPENED_PATHS.lock().unwrap().push(path.to_path_buf());
-        }
-
         let temp_root =
             std::env::temp_dir().join(format!("rustshot_settings_fail_{}", generate_timestamp()));
         std::fs::create_dir_all(&temp_root).unwrap();
         let blocked_parent = temp_root.join("blocked_parent");
         std::fs::write(&blocked_parent, "not a directory").unwrap();
         let settings_path = blocked_parent.join("settings.json");
-        let _guard = Guard;
-        set_settings_path_for_tests(Some(settings_path.clone()));
-        set_open_file_in_editor_for_tests(Some(record_opened_path));
-        OPENED_PATHS.lock().unwrap().clear();
-
-        open_settings_dialog();
-
-        let opened_paths = OPENED_PATHS.lock().unwrap().clone();
+        let opened_paths = open_dialog_recording_paths(&settings_path);
         assert!(opened_paths.is_empty());
         assert!(!settings_path.is_file());
 
@@ -1686,13 +1662,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("settings.json");
 
-        let settings = Settings {
-            screenshots_dir: PathBuf::from("/tmp/shots"),
-            recordings_dir: PathBuf::from("/tmp/recs"),
-            default_format: "jpg".to_string(),
-            recording_fps: 60,
-            auto_start: false,
-        };
+        let settings = custom_settings();
 
         let json = format_settings_json(&settings);
         std::fs::write(&path, &json).unwrap();
@@ -1908,17 +1878,6 @@ mod tests {
     // -------------------------------------------------------------------------
     // format_settings_json edge cases
     // -------------------------------------------------------------------------
-
-    #[test]
-    fn format_settings_json_includes_every_key() {
-        let s = Settings::default();
-        let json = format_settings_json(&s);
-        assert!(json.contains("screenshots_dir"));
-        assert!(json.contains("recordings_dir"));
-        assert!(json.contains("default_format"));
-        assert!(json.contains("recording_fps"));
-        assert!(json.contains("auto_start"));
-    }
 
     #[test]
     fn format_settings_json_escapes_backslashes() {

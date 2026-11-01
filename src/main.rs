@@ -1118,6 +1118,51 @@ fn main() {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    fn run_capture_spies(args: Args) -> (String, Cell<bool>, Cell<bool>) {
+        let capture_called = Cell::new(false);
+        let window_called = Cell::new(false);
+        let result = run_cli_with_capture(
+            args,
+            |_, _, _| {
+                capture_called.set(true);
+                Ok(PathBuf::from("screen.png"))
+            },
+            |_, _| {
+                window_called.set(true);
+                Ok(PathBuf::from("window.png"))
+            },
+        )
+        .unwrap();
+        (result, capture_called, window_called)
+    }
+
+    fn assert_listing_skips_capture(args: Args) {
+        let result = run_cli_with_capture_using_settings(
+            args,
+            &settings::Settings::default(),
+            false,
+            |_, _, _| unreachable!("capture handler should not run when listing screens"),
+            |_, _| unreachable!("window handler should not run when listing screens"),
+        )
+        .unwrap();
+
+        assert!(result.starts_with("Available screens:"));
+    }
+
+    /// Default flags for pure CLI tests; individual cases override their trigger.
+    fn test_args() -> Args {
+        Args {
+            cli: false,
+            select: false,
+            output: None,
+            format: CliFormat::Png,
+            screen: None,
+            list: false,
+            select_record: false,
+            window: false,
+        }
+    }
+
     use super::cli::AppMode;
     use super::*;
     use std::cell::Cell;
@@ -1194,14 +1239,8 @@ mod tests {
     #[test]
     fn run_cli_with_capture_lists_screens() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
             list: true,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
 
         let output =
@@ -1235,13 +1274,7 @@ mod tests {
     fn should_run_cli_mode_is_true_for_cli_flag() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -1249,14 +1282,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_is_true_for_list_flag() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
             list: true,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -1264,14 +1291,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_is_true_for_output_path() {
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(PathBuf::from("out.png")),
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -1279,14 +1300,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_is_true_for_screen_selection() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
             screen: Some(1),
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -1294,14 +1309,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_is_true_for_non_default_format() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
             format: CliFormat::Bmp,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -1309,14 +1318,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_is_false_for_select_only() {
         let args = Args {
-            cli: false,
             select: true,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(!should_run_cli_mode(&args));
     }
@@ -1326,12 +1329,7 @@ mod tests {
         let args = Args {
             cli: true,
             select: true,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -1346,14 +1344,10 @@ mod tests {
     fn run_cli_with_capture_uses_selected_output_and_format() {
         let output_path = PathBuf::from("custom.png");
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(output_path.clone()),
             format: CliFormat::Jpg,
             screen: Some(1),
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let called = Cell::new(false);
         let path_for_assert = output_path.clone();
@@ -1388,16 +1382,7 @@ mod tests {
 
     #[test]
     fn run_cli_with_capture_reports_capture_error() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
 
         let result = run_cli_with_capture_test(args, |_, _, _| Err("capture failed".to_string()));
         assert_eq!(result, Err("capture failed".to_string()));
@@ -1951,16 +1936,7 @@ mod tests {
 
     #[test]
     fn should_run_cli_mode_with_format_explicit_true_for_explicit_png() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         assert!(should_run_cli_mode_with_format_explicit(&args, true));
     }
 
@@ -1968,13 +1944,7 @@ mod tests {
     fn run_cli_with_capture_using_settings_uses_settings_format_when_flag_absent() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let settings = settings::Settings {
             default_format: "bmp".to_string(),
@@ -2000,13 +1970,8 @@ mod tests {
     fn run_cli_with_capture_using_settings_prefers_explicit_cli_format() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
             format: CliFormat::Jpg,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let settings = settings::Settings {
             default_format: "bmp".to_string(),
@@ -2032,13 +1997,8 @@ mod tests {
     fn run_cli_with_capture_using_settings_prefers_output_extension_when_flag_is_absent() {
         let args = Args {
             cli: true,
-            select: false,
             output: Some(PathBuf::from("shot.bmp")),
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let settings = settings::Settings {
             default_format: "jpg".to_string(),
@@ -2067,13 +2027,8 @@ mod tests {
     fn run_cli_with_capture_using_settings_output_without_extension_uses_settings_format() {
         let args = Args {
             cli: true,
-            select: false,
             output: Some(PathBuf::from("shot")),
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let settings = settings::Settings {
             default_format: "jpg".to_string(),
@@ -2102,13 +2057,8 @@ mod tests {
     fn run_cli_with_capture_using_settings_rejects_unsupported_output_extension_without_flag() {
         let args = Args {
             cli: true,
-            select: false,
             output: Some(PathBuf::from("shot.gif")),
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
 
         let result = run_cli_with_capture_using_settings(
@@ -2129,13 +2079,9 @@ mod tests {
     fn run_cli_with_capture_using_settings_explicit_format_allows_unsupported_extension() {
         let args = Args {
             cli: true,
-            select: false,
             output: Some(PathBuf::from("shot.gif")),
             format: CliFormat::Bmp,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let called = Cell::new(false);
 
@@ -2160,13 +2106,8 @@ mod tests {
     fn run_cli_with_capture_using_settings_propagates_capture_error() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
             screen: Some(2),
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
 
         let result = run_cli_with_capture_using_settings(
@@ -2186,64 +2127,33 @@ mod tests {
     #[test]
     fn run_cli_with_capture_using_settings_list_skips_capture_and_window_handlers() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
             list: true,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
 
-        let result = run_cli_with_capture_using_settings(
-            args,
-            &settings::Settings::default(),
-            false,
-            |_, _, _| unreachable!("capture handler should not run when listing screens"),
-            |_, _| unreachable!("window handler should not run when listing screens"),
-        )
-        .unwrap();
-
-        assert!(result.starts_with("Available screens:"));
+        assert_listing_skips_capture(args);
     }
 
     #[test]
     fn run_cli_with_capture_using_settings_list_skips_unsupported_output_extension_validation() {
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(PathBuf::from("listing.gif")),
-            format: CliFormat::Png,
-            screen: None,
             list: true,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
 
-        let result = run_cli_with_capture_using_settings(
-            args,
-            &settings::Settings::default(),
-            false,
-            |_, _, _| unreachable!("capture handler should not run when listing screens"),
-            |_, _| unreachable!("window handler should not run when listing screens"),
-        )
-        .unwrap();
-
-        assert!(result.starts_with("Available screens:"));
+        assert_listing_skips_capture(args);
     }
 
     #[test]
     fn run_cli_with_capture_using_settings_list_takes_priority_over_window_mode() {
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(PathBuf::from("window.gif")),
             format: CliFormat::Bmp,
             screen: Some(3),
             list: true,
-            select_record: false,
             window: true,
+            ..test_args()
         };
 
         let result = run_cli_with_capture_using_settings(
@@ -2262,13 +2172,10 @@ mod tests {
     fn run_cli_with_capture_using_settings_uses_window_handler_for_window_mode() {
         let args = Args {
             cli: true,
-            select: false,
             output: Some(PathBuf::from("window-shot.bmp")),
-            format: CliFormat::Png,
             screen: Some(7),
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let called = Cell::new(false);
 
@@ -2297,13 +2204,11 @@ mod tests {
     fn run_cli_with_capture_using_settings_propagates_window_error() {
         let args = Args {
             cli: true,
-            select: false,
             output: Some(PathBuf::from("window-shot.png")),
             format: CliFormat::Jpg,
             screen: Some(5),
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
 
         let result = run_cli_with_capture_using_settings(
@@ -2389,14 +2294,8 @@ mod tests {
     #[test]
     fn decide_app_mode_output_some_gives_cli() {
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(PathBuf::from("x.png")),
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::Cli));
     }
@@ -2404,14 +2303,8 @@ mod tests {
     #[test]
     fn decide_app_mode_select_true_gives_selection() {
         let args = Args {
-            cli: false,
             select: true,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::Selection));
     }
@@ -2420,13 +2313,7 @@ mod tests {
     fn decide_app_mode_cli_true_gives_cli() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::Cli));
     }
@@ -2434,30 +2321,15 @@ mod tests {
     #[test]
     fn decide_app_mode_list_true_gives_cli() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
             list: true,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::Cli));
     }
 
     #[test]
     fn decide_app_mode_all_false_gives_tray() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         assert!(matches!(decide_app_mode(&args), AppMode::Tray));
     }
 
@@ -2466,14 +2338,10 @@ mod tests {
     #[test]
     fn run_cli_with_capture_passes_screen_index_correctly() {
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(PathBuf::from("custom.png")),
             format: CliFormat::Jpg,
             screen: Some(1),
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let called = Cell::new(false);
         run_cli_with_capture_test(args, |_output, _format, actual_screen| {
@@ -2487,16 +2355,7 @@ mod tests {
 
     #[test]
     fn run_cli_with_capture_screen_none_passes_none() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         let called = Cell::new(false);
         run_cli_with_capture_test(args, |_output, _format, actual_screen| {
             called.set(true);
@@ -2510,14 +2369,8 @@ mod tests {
     #[test]
     fn run_cli_with_capture_bmp_format_is_forwarded() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
             format: CliFormat::Bmp,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let called = Cell::new(false);
         run_cli_with_capture_test(args, |_output, actual_format, _screen| {
@@ -2531,16 +2384,7 @@ mod tests {
 
     #[test]
     fn run_cli_with_capture_png_format_is_forwarded() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         let called = Cell::new(false);
         run_cli_with_capture_test(args, |_output, actual_format, _screen| {
             called.set(true);
@@ -2555,14 +2399,9 @@ mod tests {
     fn run_cli_with_capture_output_path_is_forwarded() {
         let output_path = PathBuf::from("my_screenshot.jpg");
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(output_path.clone()),
             format: CliFormat::Jpg,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let called = Cell::new(false);
         let expected = output_path.clone();
@@ -2577,16 +2416,7 @@ mod tests {
 
     #[test]
     fn run_cli_with_capture_result_message_contains_path() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         let result =
             run_cli_with_capture_test(args, |_, _, _| Ok(PathBuf::from("my_output.png"))).unwrap();
         assert!(result.contains("my_output.png"));
@@ -2596,14 +2426,8 @@ mod tests {
     #[test]
     fn run_cli_with_capture_list_does_not_call_capture_fn() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
             list: true,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         // The capture fn should never be called when list=true
         let result = run_cli_with_capture_test(args, |_, _, _| {
@@ -2677,14 +2501,8 @@ mod tests {
     #[test]
     fn run_cli_with_capture_jpg_format_is_forwarded() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
             format: CliFormat::Jpg,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let called = Cell::new(false);
         run_cli_with_capture_test(args, |_output, actual_format, _screen| {
@@ -2698,16 +2516,7 @@ mod tests {
 
     #[test]
     fn run_cli_with_capture_result_starts_with_screenshot_saved() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         let result =
             run_cli_with_capture_test(args, |_, _, _| Ok(PathBuf::from("out.png"))).unwrap();
         assert!(result.starts_with("Screenshot saved to:"));
@@ -2740,16 +2549,7 @@ mod tests {
 
     #[test]
     fn run_cli_with_capture_error_passthrough_preserves_message() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         let result = run_cli_with_capture_test(args, |_, _, _| Err("disk full".to_string()));
         assert_eq!(result.unwrap_err(), "disk full");
     }
@@ -2760,12 +2560,7 @@ mod tests {
         let args = Args {
             cli: true,
             select: true,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::Selection));
     }
@@ -2797,16 +2592,7 @@ mod tests {
     #[test]
     fn run_cli_with_capture_result_message_display_format() {
         // Result should be "Screenshot saved to: <path>" with a space after the colon
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         let result =
             run_cli_with_capture_test(args, |_, _, _| Ok(PathBuf::from("test.png"))).unwrap();
         assert_eq!(result, "Screenshot saved to: test.png");
@@ -2852,16 +2638,7 @@ mod tests {
     #[test]
     fn run_cli_with_capture_capture_fn_called_exactly_once() {
         let call_count = Cell::new(0u32);
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         let _ = run_cli_with_capture_test(args, |_, _, _| {
             call_count.set(call_count.get() + 1);
             Ok(PathBuf::from("shot.png"))
@@ -2897,14 +2674,9 @@ mod tests {
     fn decide_app_mode_select_overrides_output() {
         // select=true takes priority even when output is also set
         let args = Args {
-            cli: false,
             select: true,
             output: Some(PathBuf::from("x.png")),
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::Selection));
     }
@@ -2924,14 +2696,8 @@ mod tests {
     fn run_cli_with_capture_list_fn_call_count_is_zero() {
         let count = Cell::new(0u32);
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
             list: true,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let _ = run_cli_with_capture_test(args, |_, _, _| {
             count.set(count.get() + 1);
@@ -2995,14 +2761,8 @@ mod tests {
     #[test]
     fn decide_app_mode_select_record_true_gives_select_record() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
             select_record: true,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
@@ -3011,13 +2771,8 @@ mod tests {
     fn decide_app_mode_select_record_wins_over_cli() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
             select_record: true,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
@@ -3025,14 +2780,9 @@ mod tests {
     #[test]
     fn decide_app_mode_select_record_wins_over_list() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
             list: true,
             select_record: true,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
@@ -3040,14 +2790,9 @@ mod tests {
     #[test]
     fn decide_app_mode_select_record_and_select_both_true_gives_select_record() {
         let args = Args {
-            cli: false,
             select: true,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
             select_record: true,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
@@ -3055,14 +2800,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_is_false_for_select_record_only() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
             select_record: true,
-            window: false,
+            ..test_args()
         };
         assert!(!should_run_cli_mode(&args));
     }
@@ -3086,14 +2825,9 @@ mod tests {
     fn decide_app_mode_select_record_with_output_gives_select_record() {
         // select_record takes priority even when output path is set
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(PathBuf::from("out.png")),
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
             select_record: true,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
@@ -3122,16 +2856,7 @@ mod tests {
 
     #[test]
     fn should_run_cli_mode_false_when_no_flags() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         assert!(!should_run_cli_mode(&args));
     }
 
@@ -3139,13 +2864,9 @@ mod tests {
     fn should_run_cli_mode_true_when_all_cli_flags_set() {
         let args = Args {
             cli: true,
-            select: false,
             output: Some(PathBuf::from("x.png")),
-            format: CliFormat::Png,
-            screen: None,
             list: true,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -3154,13 +2875,7 @@ mod tests {
     fn run_cli_with_capture_output_none_passes_none() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let called = Cell::new(false);
         run_cli_with_capture_test(args, |output, _, _| {
@@ -3237,14 +2952,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_is_true_for_window_flag() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -3252,14 +2961,8 @@ mod tests {
     #[test]
     fn decide_app_mode_window_gives_cli() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::Cli));
     }
@@ -3267,29 +2970,10 @@ mod tests {
     #[test]
     fn run_cli_with_capture_window_flag_calls_window_fn() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
-        let capture_called = Cell::new(false);
-        let window_called = Cell::new(false);
-        let result = run_cli_with_capture(
-            args,
-            |_, _, _| {
-                capture_called.set(true);
-                Ok(PathBuf::from("screen.png"))
-            },
-            |_, _| {
-                window_called.set(true);
-                Ok(PathBuf::from("window.png"))
-            },
-        )
-        .unwrap();
+        let (result, capture_called, window_called) = run_capture_spies(args);
         assert!(!capture_called.get(), "capture fn should not be called");
         assert!(window_called.get(), "window fn should be called");
         assert!(result.contains("window.png"));
@@ -3299,28 +2983,9 @@ mod tests {
     fn run_cli_with_capture_no_window_flag_calls_capture_fn() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
-        let capture_called = Cell::new(false);
-        let window_called = Cell::new(false);
-        let result = run_cli_with_capture(
-            args,
-            |_, _, _| {
-                capture_called.set(true);
-                Ok(PathBuf::from("screen.png"))
-            },
-            |_, _| {
-                window_called.set(true);
-                Ok(PathBuf::from("window.png"))
-            },
-        )
-        .unwrap();
+        let (result, capture_called, window_called) = run_capture_spies(args);
         assert!(capture_called.get(), "capture fn should be called");
         assert!(!window_called.get(), "window fn should not be called");
         assert!(result.contains("screen.png"));
@@ -3329,14 +2994,8 @@ mod tests {
     #[test]
     fn run_cli_with_capture_window_error_propagates() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let result = run_cli_with_capture(
             args,
@@ -3349,14 +3008,10 @@ mod tests {
     #[test]
     fn run_cli_with_capture_window_output_path_forwarded() {
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(PathBuf::from("custom_window.png")),
             format: CliFormat::Jpg,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let result = run_cli_with_capture(
             args,
@@ -3376,44 +3031,23 @@ mod tests {
     #[test]
     fn should_run_cli_mode_window_only_is_true() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
 
     #[test]
     fn should_run_cli_mode_is_false_for_all_defaults() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         assert!(!should_run_cli_mode(&args));
     }
 
     #[test]
     fn should_run_cli_mode_is_false_for_select_record() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
             select_record: true,
-            window: false,
+            ..test_args()
         };
         assert!(!should_run_cli_mode(&args));
     }
@@ -3423,14 +3057,8 @@ mod tests {
     #[test]
     fn decide_app_mode_select_record_gives_select_record() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
             select_record: true,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
@@ -3438,14 +3066,8 @@ mod tests {
     #[test]
     fn decide_app_mode_window_flag_gives_cli() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::Cli));
     }
@@ -3477,14 +3099,9 @@ mod tests {
     #[test]
     fn run_cli_with_capture_window_bmp_format() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
             format: CliFormat::Bmp,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let result = run_cli_with_capture(
             args,
@@ -3501,14 +3118,8 @@ mod tests {
     #[test]
     fn run_cli_with_capture_window_none_output() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let result = run_cli_with_capture(
             args,
@@ -3527,14 +3138,9 @@ mod tests {
     #[test]
     fn run_cli_with_capture_list_takes_priority_over_window() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
             list: true,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let result = run_cli_with_capture(
             args,
@@ -3707,14 +3313,9 @@ mod tests {
     #[test]
     fn run_cli_with_capture_window_jpg_format() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
             format: CliFormat::Jpg,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let result = run_cli_with_capture(
             args,
@@ -3731,14 +3332,8 @@ mod tests {
     #[test]
     fn run_cli_with_capture_window_png_format() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let result = run_cli_with_capture(
             args,
@@ -3757,14 +3352,9 @@ mod tests {
     #[test]
     fn decide_app_mode_select_record_wins_over_window() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
             select_record: true,
             window: true,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
@@ -3772,14 +3362,9 @@ mod tests {
     #[test]
     fn decide_app_mode_select_wins_over_window() {
         let args = Args {
-            cli: false,
             select: true,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::Selection));
     }
@@ -3790,13 +3375,8 @@ mod tests {
     fn run_cli_with_capture_screen_index_0_forwarded() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
             screen: Some(0),
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let called = Cell::new(false);
         run_cli_with_capture_test(args, |_, _, screen| {
@@ -3812,13 +3392,8 @@ mod tests {
     fn run_cli_with_capture_screen_index_5_forwarded() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
             screen: Some(5),
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let called = Cell::new(false);
         run_cli_with_capture_test(args, |_, _, screen| {
@@ -3881,14 +3456,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_only_screen_flag() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
             screen: Some(0),
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -3896,14 +3465,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_only_output_flag() {
         let args = Args {
-            cli: false,
-            select: false,
             output: Some(PathBuf::from("x.png")),
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -3911,14 +3474,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_only_jpg_format() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
             format: CliFormat::Jpg,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -3926,14 +3483,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_only_bmp_format() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
             format: CliFormat::Bmp,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         assert!(should_run_cli_mode(&args));
     }
@@ -4021,13 +3572,7 @@ mod tests {
     fn run_cli_with_capture_capture_error_preserves_exact_message() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
+            ..test_args()
         };
         let result = run_cli_with_capture_test(args, |_, _, _| {
             Err("Screen index 99 is out of range (0-1)".to_string())
@@ -4038,14 +3583,8 @@ mod tests {
     #[test]
     fn run_cli_with_capture_window_error_preserves_exact_message() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let result = run_cli_with_capture(
             args,
@@ -4188,45 +3727,21 @@ mod tests {
 
     #[test]
     fn should_run_cli_mode_with_format_explicit_false_and_no_flags() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         assert!(!should_run_cli_mode_with_format_explicit(&args, false));
     }
 
     #[test]
     fn should_run_cli_mode_with_format_explicit_true_triggers_cli() {
-        let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
-            window: false,
-        };
+        let args = test_args();
         assert!(should_run_cli_mode_with_format_explicit(&args, true));
     }
 
     #[test]
     fn should_run_cli_mode_with_format_explicit_window_flag_triggers_cli() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         assert!(should_run_cli_mode_with_format_explicit(&args, false));
     }
@@ -4695,13 +4210,10 @@ mod tests {
     fn run_cli_with_capture_using_settings_allows_unsupported_ext_when_format_explicit() {
         let args = Args {
             cli: true,
-            select: false,
             output: Some(PathBuf::from("shot.gif")),
             format: CliFormat::Bmp,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let called = Cell::new(false);
         let result = run_cli_with_capture_using_settings(
@@ -4723,13 +4235,8 @@ mod tests {
     fn run_cli_with_capture_using_settings_window_error_message_contains_path() {
         let args = Args {
             cli: true,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let result = run_cli_with_capture_using_settings(
             args,
@@ -4788,14 +4295,8 @@ mod tests {
     #[test]
     fn should_run_cli_mode_with_format_explicit_false_and_window_triggers_cli() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         assert!(should_run_cli_mode_with_format_explicit(&args, false));
     }
@@ -4807,14 +4308,8 @@ mod tests {
     #[test]
     fn decide_app_mode_select_record_is_select_record() {
         let args = Args {
-            cli: false,
-            select: false,
-            output: None,
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
             select_record: true,
-            window: false,
+            ..test_args()
         };
         assert!(matches!(decide_app_mode(&args), AppMode::SelectRecord));
     }
@@ -4827,13 +4322,9 @@ mod tests {
     fn run_cli_with_capture_using_settings_window_mode_uses_output_extension() {
         let args = Args {
             cli: true,
-            select: false,
             output: Some(PathBuf::from("capture.jpg")),
-            format: CliFormat::Png,
-            screen: None,
-            list: false,
-            select_record: false,
             window: true,
+            ..test_args()
         };
         let called = Cell::new(false);
         let result = run_cli_with_capture_using_settings(

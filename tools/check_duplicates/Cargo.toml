@@ -7,3 +7,8 @@ description = "Code duplication detector for Rust source files"
 [[bin]]
 name = "check_duplicates"
 path = "src/main.rs"
+
+[dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+syn = { version = "2", features = ["full", "visit"] }

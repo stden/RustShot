@@ -29,6 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Lint duplication detector
+        run: cargo clippy --manifest-path tools/check_duplicates/Cargo.toml --all-targets -- -D warnings
+      - name: Test duplication detector
+        run: cargo test --manifest-path tools/check_duplicates/Cargo.toml
       - run: cargo run --manifest-path tools/check_duplicates/Cargo.toml -- src
 
   fmt:
@@ -40,6 +44,7 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all --check
+      - run: cargo fmt --manifest-path tools/check_duplicates/Cargo.toml --all --check
 
   clippy:
     name: Clippy

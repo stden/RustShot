@@ -606,6 +606,20 @@ pub fn benchmark_ensure_parent_directory(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    fn save_test_image(
+        dir: &std::path::Path,
+        name: &str,
+        color: [u8; 4],
+        format: Format,
+    ) -> PathBuf {
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(name);
+        let image = image::RgbaImage::from_pixel(4, 4, image::Rgba(color));
+        save_image_optimized(&image, &path, format).unwrap();
+        path
+    }
+
     use super::*;
     use std::cell::{Cell, RefCell};
 
@@ -2176,12 +2190,7 @@ mod tests {
     #[test]
     fn save_image_optimized_png_creates_valid_file() {
         let dir = std::env::temp_dir().join("rustshot_test_save_png");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("test.png");
-
-        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]));
-        save_image_optimized(&img, &path, Format::Png).unwrap();
+        let path = save_test_image(&dir, "test.png", [255, 0, 0, 255], Format::Png);
 
         let bytes = std::fs::read(&path).unwrap();
         assert!(bytes.len() > 8);
@@ -2194,12 +2203,7 @@ mod tests {
     #[test]
     fn save_image_optimized_jpg_creates_valid_file() {
         let dir = std::env::temp_dir().join("rustshot_test_save_jpg");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("test.jpg");
-
-        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 255, 0, 255]));
-        save_image_optimized(&img, &path, Format::Jpg).unwrap();
+        let path = save_test_image(&dir, "test.jpg", [0, 255, 0, 255], Format::Jpg);
 
         let bytes = std::fs::read(&path).unwrap();
         assert!(bytes.len() > 2);
@@ -2212,12 +2216,7 @@ mod tests {
     #[test]
     fn save_image_optimized_bmp_creates_valid_file() {
         let dir = std::env::temp_dir().join("rustshot_test_save_bmp");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("test.bmp");
-
-        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 255, 255]));
-        save_image_optimized(&img, &path, Format::Bmp).unwrap();
+        let path = save_test_image(&dir, "test.bmp", [0, 0, 255, 255], Format::Bmp);
 
         let bytes = std::fs::read(&path).unwrap();
         assert!(bytes.len() > 2);
@@ -2485,11 +2484,7 @@ mod tests {
     #[test]
     fn save_image_optimized_png_creates_file() {
         let dir = std::env::temp_dir().join("rustshot_save_png_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("test.png");
-        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]));
-        save_image_optimized(&img, &path, Format::Png).unwrap();
+        let path = save_test_image(&dir, "test.png", [255, 0, 0, 255], Format::Png);
         assert!(path.exists());
         assert!(std::fs::metadata(&path).unwrap().len() > 0);
         let _ = std::fs::remove_dir_all(&dir);
@@ -2498,11 +2493,7 @@ mod tests {
     #[test]
     fn save_image_optimized_jpg_creates_file() {
         let dir = std::env::temp_dir().join("rustshot_save_jpg_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("test.jpg");
-        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 255, 0, 255]));
-        save_image_optimized(&img, &path, Format::Jpg).unwrap();
+        let path = save_test_image(&dir, "test.jpg", [0, 255, 0, 255], Format::Jpg);
         assert!(path.exists());
         assert!(std::fs::metadata(&path).unwrap().len() > 0);
         let _ = std::fs::remove_dir_all(&dir);
@@ -2511,11 +2502,7 @@ mod tests {
     #[test]
     fn save_image_optimized_bmp_creates_file() {
         let dir = std::env::temp_dir().join("rustshot_save_bmp_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("test.bmp");
-        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([0, 0, 255, 255]));
-        save_image_optimized(&img, &path, Format::Bmp).unwrap();
+        let path = save_test_image(&dir, "test.bmp", [0, 0, 255, 255], Format::Bmp);
         assert!(path.exists());
         assert!(std::fs::metadata(&path).unwrap().len() > 0);
         let _ = std::fs::remove_dir_all(&dir);

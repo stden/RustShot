@@ -138,6 +138,20 @@ pub fn menu_receiver() -> &'static tray_icon::menu::MenuEventReceiver {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    fn count_rgb_pixels(pixels: &[u8], rgb: [u8; 3]) -> usize {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[..3] == rgb)
+            .count()
+    }
+
+    fn is_blue_pixel(pixels: &[u8], x: u32, y: u32) -> bool {
+        let idx = pixel_idx(x, y);
+        pixels[idx..idx + 4] == [41, 128, 185, 255]
+    }
+
     use super::*;
 
     // Helper: get pixel index for (x, y) in the 32x32 RGBA buffer
@@ -808,10 +822,7 @@ mod tests {
     fn default_icon_lens_pixel_count_is_positive() {
         // Count white (lens) pixels: R=255, G=255, B=255
         let pixels = build_default_icon_pixels();
-        let lens_count = (0..pixels.len())
-            .step_by(4)
-            .filter(|&i| pixels[i] == 255 && pixels[i + 1] == 255 && pixels[i + 2] == 255)
-            .count();
+        let lens_count = count_rgb_pixels(&pixels, [255, 255, 255]);
         assert!(
             lens_count > 0,
             "there should be at least one lens (white) pixel"
@@ -822,10 +833,7 @@ mod tests {
     fn default_icon_body_pixel_count_is_positive() {
         // Count body (camera blue) pixels: R=41, G=128, B=185
         let pixels = build_default_icon_pixels();
-        let body_count = (0..pixels.len())
-            .step_by(4)
-            .filter(|&i| pixels[i] == 41 && pixels[i + 1] == 128 && pixels[i + 2] == 185)
-            .count();
+        let body_count = count_rgb_pixels(&pixels, [41, 128, 185]);
         assert!(
             body_count > 0,
             "there should be at least one body (blue) pixel"
@@ -836,14 +844,8 @@ mod tests {
     fn default_icon_lens_is_smaller_than_body() {
         // Lens (white circle radius 6) should have fewer pixels than the body (25x21 rect minus lens)
         let pixels = build_default_icon_pixels();
-        let lens_count = (0..pixels.len())
-            .step_by(4)
-            .filter(|&i| pixels[i] == 255 && pixels[i + 1] == 255 && pixels[i + 2] == 255)
-            .count();
-        let body_count = (0..pixels.len())
-            .step_by(4)
-            .filter(|&i| pixels[i] == 41 && pixels[i + 1] == 128 && pixels[i + 2] == 185)
-            .count();
+        let lens_count = count_rgb_pixels(&pixels, [255, 255, 255]);
+        let body_count = count_rgb_pixels(&pixels, [41, 128, 185]);
         assert!(
             lens_count < body_count,
             "lens ({lens_count}) should have fewer pixels than body ({body_count})"
@@ -904,24 +906,10 @@ mod tests {
         let pixels = build_default_icon_pixels();
         let midpoint = DEFAULT_ICON_SIZE / 2;
 
-        let left_body = (0..DEFAULT_ICON_SIZE).any(|y| {
-            (0..midpoint).any(|x| {
-                let idx = pixel_idx(x, y);
-                pixels[idx] == 41
-                    && pixels[idx + 1] == 128
-                    && pixels[idx + 2] == 185
-                    && pixels[idx + 3] == 255
-            })
-        });
-        let right_body = (0..DEFAULT_ICON_SIZE).any(|y| {
-            (midpoint..DEFAULT_ICON_SIZE).any(|x| {
-                let idx = pixel_idx(x, y);
-                pixels[idx] == 41
-                    && pixels[idx + 1] == 128
-                    && pixels[idx + 2] == 185
-                    && pixels[idx + 3] == 255
-            })
-        });
+        let left_body =
+            (0..DEFAULT_ICON_SIZE).any(|y| (0..midpoint).any(|x| is_blue_pixel(&pixels, x, y)));
+        let right_body = (0..DEFAULT_ICON_SIZE)
+            .any(|y| (midpoint..DEFAULT_ICON_SIZE).any(|x| is_blue_pixel(&pixels, x, y)));
 
         assert!(left_body, "left half should contain blue body pixels");
         assert!(right_body, "right half should contain blue body pixels");
@@ -932,24 +920,10 @@ mod tests {
         let pixels = build_default_icon_pixels();
         let midpoint = DEFAULT_ICON_SIZE / 2;
 
-        let top_body = (0..midpoint).any(|y| {
-            (0..DEFAULT_ICON_SIZE).any(|x| {
-                let idx = pixel_idx(x, y);
-                pixels[idx] == 41
-                    && pixels[idx + 1] == 128
-                    && pixels[idx + 2] == 185
-                    && pixels[idx + 3] == 255
-            })
-        });
-        let bottom_body = (midpoint..DEFAULT_ICON_SIZE).any(|y| {
-            (0..DEFAULT_ICON_SIZE).any(|x| {
-                let idx = pixel_idx(x, y);
-                pixels[idx] == 41
-                    && pixels[idx + 1] == 128
-                    && pixels[idx + 2] == 185
-                    && pixels[idx + 3] == 255
-            })
-        });
+        let top_body =
+            (0..midpoint).any(|y| (0..DEFAULT_ICON_SIZE).any(|x| is_blue_pixel(&pixels, x, y)));
+        let bottom_body = (midpoint..DEFAULT_ICON_SIZE)
+            .any(|y| (0..DEFAULT_ICON_SIZE).any(|x| is_blue_pixel(&pixels, x, y)));
 
         assert!(top_body, "top half should contain blue body pixels");
         assert!(bottom_body, "bottom half should contain blue body pixels");

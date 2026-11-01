@@ -47,6 +47,9 @@
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+#[cfg(windows)]
+mod gdi;
+
 pub mod capture;
 pub mod cli;
 pub mod record;
