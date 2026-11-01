@@ -676,13 +676,8 @@ where
         .collect()
 }
 
-/// Expose `build_physical_screen_layouts` for benchmarks.
-#[allow(dead_code)]
-#[doc(hidden)]
-pub fn benchmark_build_physical_screen_layouts(
-    inputs: &[(i32, i32, u32, u32, u32, u32, bool)],
-) -> Result<Vec<(i32, i32, u32, u32)>, String> {
-    let screen_inputs: Vec<ScreenLayoutInput> = inputs
+fn benchmark_screen_inputs(inputs: &[BenchmarkNormalizeLayoutInput]) -> Vec<ScreenLayoutInput> {
+    inputs
         .iter()
         .map(
             |&(
@@ -705,7 +700,16 @@ pub fn benchmark_build_physical_screen_layouts(
                 }
             },
         )
-        .collect();
+        .collect()
+}
+
+/// Expose `build_physical_screen_layouts` for benchmarks.
+#[allow(dead_code)]
+#[doc(hidden)]
+pub fn benchmark_build_physical_screen_layouts(
+    inputs: &[(i32, i32, u32, u32, u32, u32, bool)],
+) -> Result<Vec<(i32, i32, u32, u32)>, String> {
+    let screen_inputs = benchmark_screen_inputs(inputs);
     build_physical_screen_layouts(&screen_inputs).map(|layouts| {
         layouts
             .into_iter()
@@ -733,30 +737,7 @@ type BenchmarkResolvedSelection = (usize, BenchmarkRegion);
 pub fn benchmark_normalize_physical_screen_layouts(
     inputs: &[BenchmarkNormalizeLayoutInput],
 ) -> Result<(Vec<BenchmarkNormalizedLayout>, i32, i32, u32, u32), String> {
-    let screen_inputs: Vec<ScreenLayoutInput> = inputs
-        .iter()
-        .map(
-            |&(
-                logical_x,
-                logical_y,
-                logical_width,
-                logical_height,
-                physical_width,
-                physical_height,
-                is_primary,
-            )| {
-                ScreenLayoutInput {
-                    logical_x,
-                    logical_y,
-                    logical_width,
-                    logical_height,
-                    physical_width,
-                    physical_height,
-                    is_primary,
-                }
-            },
-        )
-        .collect();
+    let screen_inputs = benchmark_screen_inputs(inputs);
     let layouts = build_physical_screen_layouts(&screen_inputs)?;
     let (normalized, origin_x, origin_y, width, height) =
         normalize_physical_screen_layouts(&layouts)?;
@@ -984,6 +965,29 @@ fn restore_overlay_pixel(
     }
 }
 
+/// Compute the shared source/destination bounds for drawing and restoring a row.
+#[inline]
+fn overlay_row_span(
+    (src_w, packed_len): (usize, usize),
+    (buf_w, buffer_len): (usize, usize),
+    y: usize,
+    (x_start, x_end): (usize, usize),
+) -> (usize, usize, usize) {
+    let src_start = y
+        .saturating_mul(src_w)
+        .saturating_add(x_start)
+        .min(packed_len);
+    let dst_start = y
+        .saturating_mul(buf_w)
+        .saturating_add(x_start)
+        .min(buffer_len);
+    let span = x_end
+        .saturating_sub(x_start)
+        .min(packed_len - src_start)
+        .min(buffer_len - dst_start);
+    (src_start, dst_start, span)
+}
+
 #[inline]
 fn fill_overlay_row_span(
     buffer: &mut [u32],
@@ -994,18 +998,12 @@ fn fill_overlay_row_span(
     (x_start, x_end): (usize, usize),
     color: u32,
 ) {
-    let src_start = y
-        .saturating_mul(src_w)
-        .saturating_add(x_start)
-        .min(packed_len);
-    let dst_start = y
-        .saturating_mul(buf_w)
-        .saturating_add(x_start)
-        .min(buffer.len());
-    let span = x_end
-        .saturating_sub(x_start)
-        .min(packed_len - src_start)
-        .min(buffer.len() - dst_start);
+    let (_, dst_start, span) = overlay_row_span(
+        (src_w, packed_len),
+        (buf_w, buffer.len()),
+        y,
+        (x_start, x_end),
+    );
     buffer[dst_start..dst_start + span].fill(color);
 }
 
@@ -1019,18 +1017,12 @@ fn restore_overlay_row_span(
     (x_start, x_end): (usize, usize),
 ) {
     let packed_len = packed_background.len();
-    let src_start = y
-        .saturating_mul(src_w)
-        .saturating_add(x_start)
-        .min(packed_len);
-    let dst_start = y
-        .saturating_mul(buf_w)
-        .saturating_add(x_start)
-        .min(buffer.len());
-    let span = x_end
-        .saturating_sub(x_start)
-        .min(packed_len - src_start)
-        .min(buffer.len() - dst_start);
+    let (src_start, dst_start, span) = overlay_row_span(
+        (src_w, packed_len),
+        (buf_w, buffer.len()),
+        y,
+        (x_start, x_end),
+    );
     buffer[dst_start..dst_start + span]
         .copy_from_slice(&packed_background[src_start..src_start + span]);
 }
@@ -1056,6 +1048,37 @@ fn drag_border_coords(
     (x1, y1, x2, y2)
 }
 
+struct BorderGeometry {
+    x1: usize,
+    y1: usize,
+    x2: usize,
+    y2: usize,
+    x_start: usize,
+    x_end: usize,
+    y_start: usize,
+    y_end: usize,
+}
+
+#[inline]
+fn border_geometry(
+    start: (i32, i32),
+    end: (i32, i32),
+    buf_w: usize,
+    buf_h: usize,
+) -> BorderGeometry {
+    let (x1, y1, x2, y2) = drag_border_coords(start, end, buf_w, buf_h);
+    BorderGeometry {
+        x1,
+        y1,
+        x2,
+        y2,
+        x_start: x1.saturating_sub(1).min(buf_w),
+        x_end: x2.saturating_add(2).min(buf_w),
+        y_start: y1.saturating_sub(1).min(buf_h),
+        y_end: y2.saturating_add(2).min(buf_h),
+    }
+}
+
 fn draw_overlay_primitives(
     buffer: &mut [u32],
     buf_w: usize,
@@ -1067,12 +1090,9 @@ fn draw_overlay_primitives(
 ) {
     if let (Some(start), Some(end)) = (start_pos, current_pos) {
         const CYAN_BORDER: u32 = (200 << 8) | 255;
-        let (x1, y1, x2, y2) = drag_border_coords(start, end, buf_w, buf_h);
-
-        let x_start = x1.saturating_sub(1).min(buf_w);
-        let x_end = x2.saturating_add(2).min(buf_w);
-        let y_start = y1.saturating_sub(1).min(buf_h);
-        let y_end = y2.saturating_add(2).min(buf_h);
+        let BorderGeometry {
+            x1, y1, x2, y2, x_start, x_end, y_start, y_end,
+        } = border_geometry(start, end, buf_w, buf_h);
 
         // Top and bottom 3px horizontal border bands
         for y in y1.saturating_sub(1)..y1.saturating_add(2).min(buf_h) {
@@ -1200,12 +1220,9 @@ pub fn update_selection_overlay_frame(
 
     // Restore only the previous frame's drawn pixels from packed_background.
     if let (Some(start), Some(end)) = (damage.start_pos, damage.current_pos) {
-        let (x1, y1, x2, y2) = drag_border_coords(start, end, buf_w, buf_h);
-
-        let x_start = x1.saturating_sub(1).min(buf_w);
-        let x_end = x2.saturating_add(2).min(buf_w);
-        let y_start = y1.saturating_sub(1).min(buf_h);
-        let y_end = y2.saturating_add(2).min(buf_h);
+        let BorderGeometry {
+            x1, y1, x2, y2, x_start, x_end, y_start, y_end,
+        } = border_geometry(start, end, buf_w, buf_h);
 
         for y in y1.saturating_sub(1)..y1.saturating_add(2).min(buf_h) {
             restore_overlay_row_span(buffer, buf_w, packed_background, src_w, y, (x_start, x_end));
@@ -1301,12 +1318,9 @@ fn push_primitive_damage_rects(
     current_pos: Option<(i32, i32)>,
 ) {
     if let (Some(start), Some(end)) = (start_pos, current_pos) {
-        let (x1, y1, x2, y2) = drag_border_coords(start, end, buf_w, buf_h);
-
-        let x_start = x1.saturating_sub(1).min(buf_w);
-        let x_end = x2.saturating_add(2).min(buf_w);
-        let y_start = y1.saturating_sub(1).min(buf_h);
-        let y_end = y2.saturating_add(2).min(buf_h);
+        let BorderGeometry {
+            x1, y1, x2, y2, x_start, x_end, y_start, y_end,
+        } = border_geometry(start, end, buf_w, buf_h);
 
         push_clamped_damage_rect(
             rects,
@@ -2228,11 +2242,10 @@ type PackedScreenCaptureWithOrigin = (Vec<u32>, u32, u32, Option<(i32, i32)>);
 fn capture_screen_packed_with_origin_win32(
     raw_hmonitor: isize,
 ) -> Result<Win32PackedScreenCapture, String> {
-    use windows::core::PCWSTR;
     use windows::Win32::Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateDCW, DeleteDC, DeleteObject,
-        GetDIBits, GetDeviceCaps, GetMonitorInfoW, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
-        BI_RGB, DESKTOPHORZRES, DESKTOPVERTRES, DIB_RGB_COLORS, HMONITOR, MONITORINFOEXW, SRCCOPY,
+        BitBlt, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetDeviceCaps,
+        SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DESKTOPHORZRES, DESKTOPVERTRES,
+        DIB_RGB_COLORS, SRCCOPY,
     };
 
     // SAFETY: All GDI handles created below (`hdc_monitor`, `hdc_mem`, `hbm`) are checked
@@ -2241,29 +2254,13 @@ fn capture_screen_packed_with_origin_win32(
     // the 32-bit top-down `BI_RGB` DIB written by `GetDIBits`, and `set_len` is called only
     // after `GetDIBits` confirms all `phys_h` scanlines were written.
     unsafe {
-        let mut monitor_info: MONITORINFOEXW = std::mem::zeroed();
-        monitor_info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-        GetMonitorInfoW(
-            HMONITOR(raw_hmonitor),
-            (&mut monitor_info as *mut MONITORINFOEXW).cast(),
-        )
-        .ok()
-        .map_err(|e| format!("GetMonitorInfoW failed: {e}"))?;
+        let monitor_info = crate::gdi::monitor_info(raw_hmonitor)?;
 
         let origin = (
             monitor_info.monitorInfo.rcMonitor.left,
             monitor_info.monitorInfo.rcMonitor.top,
         );
-        let sz_device_ptr = monitor_info.szDevice.as_ptr();
-        let hdc_monitor = CreateDCW(
-            PCWSTR(sz_device_ptr),
-            PCWSTR(sz_device_ptr),
-            PCWSTR(std::ptr::null()),
-            None,
-        );
-        if hdc_monitor.is_invalid() {
-            return Err("CreateDCW for monitor failed".to_string());
-        }
+        let hdc_monitor = crate::gdi::monitor_dc(&monitor_info)?;
 
         let phys_w = GetDeviceCaps(hdc_monitor, DESKTOPHORZRES);
         let phys_h = GetDeviceCaps(hdc_monitor, DESKTOPVERTRES);
@@ -2278,12 +2275,12 @@ fn capture_screen_packed_with_origin_win32(
             return Err("CreateCompatibleDC failed".to_string());
         }
 
-        let hbm = CreateCompatibleBitmap(hdc_monitor, phys_w, phys_h);
-        if hbm.is_invalid() {
-            let _ = DeleteDC(hdc_mem);
-            let _ = DeleteDC(hdc_monitor);
-            return Err("CreateCompatibleBitmap failed".to_string());
-        }
+        let hbm = crate::gdi::capture_bitmap_or_cleanup(
+            hdc_monitor,
+            hdc_mem,
+            phys_w,
+            phys_h,
+        )?;
 
         let old_obj = SelectObject(hdc_mem, hbm);
         let blt_res = BitBlt(hdc_mem, 0, 0, phys_w, phys_h, hdc_monitor, 0, 0, SRCCOPY)
@@ -2385,36 +2382,28 @@ where
     for (idx, &(logical_x, logical_y, logical_width, logical_height, scale_factor, is_primary)) in
         screens.iter().enumerate()
     {
-        match capture_fn(idx) {
+        let (physical_width, physical_height) = match capture_fn(idx) {
             Ok((packed, phys_w, phys_h, native_origin)) => {
-                layout_inputs.push(ScreenLayoutInput {
-                    logical_x,
-                    logical_y,
-                    logical_width,
-                    logical_height,
-                    physical_width: phys_w,
-                    physical_height: phys_h,
-                    is_primary,
-                });
                 raw_captures.push((idx, packed, phys_w, phys_h, native_origin, scale_factor));
+                (phys_w, phys_h)
             }
             Err(err) => {
-                let phys_w =
-                    scaled_physical_dimension(logical_width, scale_factor).unwrap_or(logical_width);
-                let phys_h = scaled_physical_dimension(logical_height, scale_factor)
-                    .unwrap_or(logical_height);
-                layout_inputs.push(ScreenLayoutInput {
-                    logical_x,
-                    logical_y,
-                    logical_width,
-                    logical_height,
-                    physical_width: phys_w,
-                    physical_height: phys_h,
-                    is_primary,
-                });
                 last_error = err;
+                (
+                    scaled_physical_dimension(logical_width, scale_factor).unwrap_or(logical_width),
+                    scaled_physical_dimension(logical_height, scale_factor).unwrap_or(logical_height),
+                )
             }
-        }
+        };
+        layout_inputs.push(ScreenLayoutInput {
+            logical_x,
+            logical_y,
+            logical_width,
+            logical_height,
+            physical_width,
+            physical_height,
+            is_primary,
+        });
     }
 
     if raw_captures.is_empty() {
@@ -2473,6 +2462,11 @@ where
     Ok((monitor_captures, kept_indices, initial_active))
 }
 
+fn screen_layout_metadata(screen: &Screen) -> (i32, i32, u32, u32, f32, bool) {
+    let info = &screen.display_info;
+    (info.x, info.y, info.width, info.height, info.scale_factor, info.is_primary)
+}
+
 /// Capture all monitors so the selection overlay can open a native-DPI borderless
 /// window on every screen, allowing the user to start dragging on any monitor.
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -2480,17 +2474,7 @@ fn capture_monitors_for_selection() -> Result<(Vec<MonitorCapture>, Vec<Screen>,
     let screens = Screen::all().map_err(|e| format!("Failed to get screens: {}", e))?;
     let screen_infos: Vec<_> = screens
         .iter()
-        .map(|s| {
-            let info = &s.display_info;
-            (
-                info.x,
-                info.y,
-                info.width,
-                info.height,
-                info.scale_factor,
-                info.is_primary,
-            )
-        })
+        .map(screen_layout_metadata)
         .collect();
 
     let (monitor_captures, kept_indices, initial_active) = collect_monitor_captures_with(
@@ -2532,17 +2516,7 @@ fn capture_screen_at_cursor() -> Result<VirtualDesktopCapture, String> {
     let (packed_background, phys_w, phys_h) = capture_screen_packed(&screen)?;
 
     let window_layout = build_physical_screen_layouts(&build_screen_layout_inputs(
-        screens.iter().map(|screen| {
-            let info = &screen.display_info;
-            (
-                info.x,
-                info.y,
-                info.width,
-                info.height,
-                info.scale_factor,
-                info.is_primary,
-            )
-        }),
+        screens.iter().map(screen_layout_metadata),
         screen_index,
         (phys_w, phys_h),
     )?)?
@@ -2669,6 +2643,35 @@ fn into_packed_background(rgba_data: Vec<u8>, packed_background: Vec<u32>) -> Ve
     }
 }
 
+/// Run and tear down the overlay before returning either selection result.
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn run_selection_overlay<T>(
+    captures: Vec<MonitorCapture>,
+    initial_active: usize,
+    extract: impl FnOnce(&mut SelectionApp) -> T,
+) -> Result<(Region, T), String> {
+    let event_loop = EventLoop::new().map_err(|e| format!("Failed to create event loop: {}", e))?;
+    event_loop.set_control_flow(ControlFlow::Wait);
+    let mut app = SelectionApp::with_monitors(captures, initial_active);
+    event_loop
+        .run_app(&mut app)
+        .map_err(|e| format!("Event loop error: {}", e))?;
+    app.release_window();
+    let setup_error = app.setup_error.take();
+    let cancelled = app.cancelled;
+    let result = app.result;
+    let selected = extract(&mut app);
+    drop(app);
+    flush_pending_win32_messages();
+    if let Some(err) = setup_error {
+        return Err(err);
+    }
+    if cancelled {
+        return Err("Selection cancelled".to_string());
+    }
+    Ok((result.ok_or("No region selected")?, selected))
+}
+
 /// Show the selection overlay on all monitors and return the cropped screenshot.
 ///
 /// Captures all monitors before creating the per-monitor overlay windows,
@@ -2677,34 +2680,8 @@ fn into_packed_background(rgba_data: Vec<u8>, packed_background: Vec<u32>) -> Ve
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub fn select_region() -> Result<image::RgbaImage, String> {
     let (captures, _screens, initial_active) = capture_monitors_for_selection()?;
-
-    let event_loop = EventLoop::new().map_err(|e| format!("Failed to create event loop: {}", e))?;
-    event_loop.set_control_flow(ControlFlow::Wait);
-
-    let mut app = SelectionApp::with_monitors(captures, initial_active);
-
-    event_loop
-        .run_app(&mut app)
-        .map_err(|e| format!("Event loop error: {}", e))?;
-
-    app.release_window();
-    let setup_error = app.setup_error.take();
-    let cancelled = app.cancelled;
-    let result = app.result;
-    let (packed_background, width, height, _) = app.take_selected_monitor_capture();
-    drop(app);
-    flush_pending_win32_messages();
-
-    if let Some(err) = setup_error {
-        return Err(err);
-    }
-
-    if cancelled {
-        return Err("Selection cancelled".to_string());
-    }
-
-    let region = result.ok_or("No region selected")?;
-
+    let (region, (packed_background, width, height, _)) =
+        run_selection_overlay(captures, initial_active, SelectionApp::take_selected_monitor_capture)?;
     crop_packed_region(width, height, &packed_background, region)
 }
 
@@ -2715,32 +2692,8 @@ pub fn select_region() -> Result<image::RgbaImage, String> {
 pub fn select_region_for_recording() -> Result<(screenshots::Screen, Region), String> {
     let (captures, screens, initial_active) = capture_monitors_for_selection()?;
 
-    let event_loop = EventLoop::new().map_err(|e| format!("Failed to create event loop: {}", e))?;
-    event_loop.set_control_flow(ControlFlow::Wait);
-
-    let mut app = SelectionApp::with_monitors(captures, initial_active);
-
-    event_loop
-        .run_app(&mut app)
-        .map_err(|e| format!("Event loop error: {}", e))?;
-
-    app.release_window();
-    let setup_error = app.setup_error.take();
-    let cancelled = app.cancelled;
-    let result = app.result;
-    let selected_monitor = app.selected_monitor;
-    drop(app);
-    flush_pending_win32_messages();
-
-    if let Some(err) = setup_error {
-        return Err(err);
-    }
-
-    if cancelled {
-        return Err("Selection cancelled".to_string());
-    }
-
-    let local_region = result.ok_or("No region selected")?;
+    let (local_region, selected_monitor) =
+        run_selection_overlay(captures, initial_active, |app| app.selected_monitor)?;
     let screen = screens
         .into_iter()
         .nth(selected_monitor)
@@ -2844,19 +2797,65 @@ where
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub(crate) fn test_region(x: i32, y: i32, width: u32, height: u32) -> Region {
+    Region {
+        physical_x: x,
+        physical_y: y,
+        physical_width: width,
+        physical_height: height,
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    fn assert_idle_selection(app: &SelectionApp) {
+        assert_eq!(app.start_pos, None);
+        assert_eq!(app.current_pos, None);
+        assert!(!app.is_dragging);
+        assert!(app.result.is_none());
+        assert!(!app.cancelled);
+    }
+
+    fn screen_layout(
+        logical: (i32, i32, u32, u32),
+        physical: (u32, u32),
+        is_primary: bool,
+    ) -> ScreenLayoutInput {
+        ScreenLayoutInput {
+            logical_x: logical.0,
+            logical_y: logical.1,
+            logical_width: logical.2,
+            logical_height: logical.3,
+            physical_width: physical.0,
+            physical_height: physical.1,
+            is_primary,
+        }
+    }
+
+    fn physical_layout(
+        logical: (i32, i32, u32, u32),
+        physical: (i32, i32, u32, u32),
+    ) -> PhysicalScreenLayout {
+        PhysicalScreenLayout {
+            logical_x: logical.0,
+            logical_y: logical.1,
+            logical_width: logical.2,
+            logical_height: logical.3,
+            physical_x: physical.0,
+            physical_y: physical.1,
+            physical_width: physical.2,
+            physical_height: physical.3,
+        }
+    }
+
     use super::*;
 
     // --- Region struct tests ---
 
     #[test]
     fn region_fields_are_accessible() {
-        let r = Region {
-            physical_x: 10,
-            physical_y: 20,
-            physical_width: 300,
-            physical_height: 200,
-        };
+        let r = test_region(10, 20, 300, 200);
         assert_eq!(r.physical_x, 10);
         assert_eq!(r.physical_y, 20);
         assert_eq!(r.physical_width, 300);
@@ -2865,12 +2864,7 @@ mod tests {
 
     #[test]
     fn region_implements_copy() {
-        let r = Region {
-            physical_x: 1,
-            physical_y: 2,
-            physical_width: 3,
-            physical_height: 4,
-        };
+        let r = test_region(1, 2, 3, 4);
         let s = r; // Uses Copy; r is still usable after this
         assert_eq!(r.physical_x, s.physical_x);
         assert_eq!(r.physical_y, s.physical_y);
@@ -2880,12 +2874,7 @@ mod tests {
 
     #[test]
     fn region_implements_clone() {
-        let r = Region {
-            physical_x: 5,
-            physical_y: 6,
-            physical_width: 7,
-            physical_height: 8,
-        };
+        let r = test_region(5, 6, 7, 8);
         #[allow(clippy::clone_on_copy)]
         let s = r.clone();
         assert_eq!(s.physical_x, 5);
@@ -2896,24 +2885,14 @@ mod tests {
 
     #[test]
     fn region_debug_repr_is_non_empty() {
-        let r = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let r = test_region(0, 0, 100, 100);
         assert!(!format!("{:?}", r).is_empty());
     }
 
     #[test]
     fn region_supports_negative_coords() {
         // Regions can start at negative screen coordinates (multi-monitor)
-        let r = Region {
-            physical_x: -1920,
-            physical_y: -100,
-            physical_width: 1920,
-            physical_height: 1080,
-        };
+        let r = test_region(-1920, -100, 1920, 1080);
         assert_eq!(r.physical_x, -1920);
         assert_eq!(r.physical_y, -100);
     }
@@ -3044,11 +3023,7 @@ mod tests {
         assert_eq!(app.screen_height, 5);
         assert_eq!(app.screen_x, 6);
         assert_eq!(app.screen_y, 7);
-        assert_eq!(app.start_pos, None);
-        assert_eq!(app.current_pos, None);
-        assert!(!app.is_dragging);
-        assert!(app.result.is_none());
-        assert!(!app.cancelled);
+        assert_idle_selection(&app);
     }
 
     #[test]
@@ -3074,12 +3049,7 @@ mod tests {
         let mut app = SelectionApp::new(vec![], 800, 600, 0, 0);
         app.is_dragging = true;
         app.cancelled = true;
-        app.result = Some(Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        });
+        app.result = Some(test_region(0, 0, 100, 100));
         assert!(app.is_dragging);
         assert!(app.cancelled);
         assert!(app.result.is_some());
@@ -3146,12 +3116,7 @@ mod tests {
     fn region_zero_dimensions_is_valid_struct() {
         // Region can be constructed with zero dims (build_region_from_drag filters these,
         // but the type itself is not restricted)
-        let r = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 0,
-            physical_height: 0,
-        };
+        let r = test_region(0, 0, 0, 0);
         assert_eq!(r.physical_width, 0);
         assert_eq!(r.physical_height, 0);
     }
@@ -3191,12 +3156,7 @@ mod tests {
 
     #[test]
     fn region_max_u32_dimensions_are_valid() {
-        let r = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: u32::MAX,
-            physical_height: u32::MAX,
-        };
+        let r = test_region(0, 0, u32::MAX, u32::MAX);
         assert_eq!(r.physical_width, u32::MAX);
         assert_eq!(r.physical_height, u32::MAX);
     }
@@ -3232,12 +3192,7 @@ mod tests {
     #[test]
     fn region_copy_does_not_alias() {
         // Region implements Copy: two copies are fully independent values
-        let r = Region {
-            physical_x: 42,
-            physical_y: 7,
-            physical_width: 100,
-            physical_height: 200,
-        };
+        let r = test_region(42, 7, 100, 200);
         let a = r;
         let b = r;
         // Both copies reflect the original values
@@ -3263,12 +3218,7 @@ mod tests {
 
     #[test]
     fn region_i32_max_coords() {
-        let r = Region {
-            physical_x: i32::MAX,
-            physical_y: i32::MIN,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let r = test_region(i32::MAX, i32::MIN, 1, 1);
         assert_eq!(r.physical_x, i32::MAX);
         assert_eq!(r.physical_y, i32::MIN);
     }
@@ -3290,12 +3240,7 @@ mod tests {
 
     #[test]
     fn region_debug_contains_x_value() {
-        let r = Region {
-            physical_x: 42,
-            physical_y: 0,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let r = test_region(42, 0, 1, 1);
         assert!(format!("{:?}", r).contains("42"));
     }
 
@@ -3321,14 +3266,7 @@ mod tests {
         assert_eq!(app.screen_x, -1920);
         assert_eq!(app.screen_y, 100);
         // start_pos / current_pos
-        assert_eq!(app.start_pos, None);
-        assert_eq!(app.current_pos, None);
-        // is_dragging
-        assert!(!app.is_dragging);
-        // result
-        assert!(app.result.is_none());
-        // cancelled
-        assert!(!app.cancelled);
+        assert_idle_selection(&app);
     }
 
     #[test]
@@ -3886,24 +3824,8 @@ mod tests {
     #[test]
     fn build_physical_screen_layouts_places_high_dpi_monitor_left_of_primary() {
         let layouts = build_physical_screen_layouts(&[
-            ScreenLayoutInput {
-                logical_x: -1707,
-                logical_y: 0,
-                logical_width: 1707,
-                logical_height: 960,
-                physical_width: 2560,
-                physical_height: 1440,
-                is_primary: false,
-            },
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
+            screen_layout((-1707, 0, 1707, 960), (2560, 1440), false),
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
         ])
         .expect("layout should build");
 
@@ -3916,24 +3838,8 @@ mod tests {
     #[test]
     fn build_physical_screen_layouts_keeps_primary_aligned_to_high_dpi_monitor_on_right() {
         let layouts = build_physical_screen_layouts(&[
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1707,
-                logical_height: 960,
-                physical_width: 2560,
-                physical_height: 1440,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
+            screen_layout((1920, 0, 1707, 960), (2560, 1440), false),
         ])
         .expect("layout should build");
 
@@ -3945,36 +3851,13 @@ mod tests {
     #[test]
     fn resolve_recording_selection_rejects_regions_crossing_monitors() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1707,
-                logical_height: 960,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 2560,
-                physical_height: 1440,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 1707, 960), (1920, 0, 2560, 1440)),
         ];
 
         let error = resolve_recording_selection(
             &layouts,
-            Region {
-                physical_x: 1910,
-                physical_y: 100,
-                physical_width: 40,
-                physical_height: 200,
-            },
+            test_region(1910, 100, 40, 200),
         )
         .unwrap_err();
 
@@ -3984,36 +3867,13 @@ mod tests {
     #[test]
     fn resolve_recording_selection_returns_screen_local_physical_region() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1707,
-                logical_height: 960,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 2560,
-                physical_height: 1440,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 1707, 960), (1920, 0, 2560, 1440)),
         ];
 
         let (screen_index, local_region) = resolve_recording_selection(
             &layouts,
-            Region {
-                physical_x: 2000,
-                physical_y: 100,
-                physical_width: 400,
-                physical_height: 300,
-            },
+            test_region(2000, 100, 400, 300),
         )
         .expect("region should resolve inside the right monitor");
 
@@ -4158,15 +4018,7 @@ mod tests {
     // --- infer_physical_x tests ---
 
     fn make_screen(lx: i32, ly: i32, lw: u32, lh: u32, pw: u32, ph: u32) -> ScreenLayoutInput {
-        ScreenLayoutInput {
-            logical_x: lx,
-            logical_y: ly,
-            logical_width: lw,
-            logical_height: lh,
-            physical_width: pw,
-            physical_height: ph,
-            is_primary: false,
-        }
+        screen_layout((lx, ly, lw, lh), (pw, ph), false)
     }
 
     #[test]
@@ -4342,16 +4194,7 @@ mod tests {
 
     #[test]
     fn normalize_layouts_single_screen_at_origin() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
         let (normalized, min_x, min_y, width, height) =
             normalize_physical_screen_layouts(&layouts).unwrap();
         assert_eq!(min_x, 0);
@@ -4365,26 +4208,8 @@ mod tests {
     #[test]
     fn normalize_layouts_negative_offsets_shifted_to_zero() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: -1707,
-                logical_y: 0,
-                logical_width: 1707,
-                logical_height: 960,
-                physical_x: -2560,
-                physical_y: 0,
-                physical_width: 2560,
-                physical_height: 1440,
-            },
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            physical_layout((-1707, 0, 1707, 960), (-2560, 0, 2560, 1440)),
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
         ];
         let (normalized, min_x, min_y, width, height) =
             normalize_physical_screen_layouts(&layouts).unwrap();
@@ -4407,35 +4232,12 @@ mod tests {
     #[test]
     fn resolve_recording_selection_first_monitor() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 1920, 1080), (1920, 0, 1920, 1080)),
         ];
         let (idx, region) = resolve_recording_selection(
             &layouts,
-            Region {
-                physical_x: 100,
-                physical_y: 100,
-                physical_width: 500,
-                physical_height: 400,
-            },
+            test_region(100, 100, 500, 400),
         )
         .unwrap();
         assert_eq!(idx, 0);
@@ -4445,24 +4247,10 @@ mod tests {
 
     #[test]
     fn resolve_recording_selection_exact_monitor_bounds() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
         let (idx, region) = resolve_recording_selection(
             &layouts,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            test_region(0, 0, 1920, 1080),
         )
         .unwrap();
         assert_eq!(idx, 0);
@@ -4474,24 +4262,10 @@ mod tests {
 
     #[test]
     fn resolve_recording_selection_region_exceeds_single_monitor() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
         let result = resolve_recording_selection(
             &layouts,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 2000,
-                physical_height: 1080,
-            },
+            test_region(0, 0, 2000, 1080),
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("single monitor"));
@@ -4501,12 +4275,7 @@ mod tests {
     fn resolve_recording_selection_empty_layouts() {
         let result = resolve_recording_selection(
             &[],
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            test_region(0, 0, 100, 100),
         );
         assert!(result.is_err());
     }
@@ -4515,15 +4284,7 @@ mod tests {
 
     #[test]
     fn build_physical_screen_layouts_single_monitor() {
-        let layouts = build_physical_screen_layouts(&[ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        }])
+        let layouts = build_physical_screen_layouts(&[screen_layout((0, 0, 1920, 1080), (1920, 1080), true)])
         .unwrap();
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].physical_x, 0);
@@ -5155,24 +4916,8 @@ mod tests {
 
     #[test]
     fn infer_physical_y_from_horizontal_neighbor_adjacent_right() {
-        let reference = ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        };
-        let target = ScreenLayoutInput {
-            logical_x: 1920,
-            logical_y: 100,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: false,
-        };
+        let reference = screen_layout((0, 0, 1920, 1080), (1920, 1080), true);
+        let target = screen_layout((1920, 100, 1920, 1080), (1920, 1080), false);
         // Adjacent right, y_diff = 100, scale ratio = 1.0, so physical y = 0 + 100 = 100
         assert_eq!(
             infer_physical_y_from_horizontal_neighbor(&reference, &target, 0),
@@ -5182,24 +4927,8 @@ mod tests {
 
     #[test]
     fn infer_physical_y_from_horizontal_neighbor_not_adjacent_returns_none() {
-        let reference = ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        };
-        let target = ScreenLayoutInput {
-            logical_x: 5000,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: false,
-        };
+        let reference = screen_layout((0, 0, 1920, 1080), (1920, 1080), true);
+        let target = screen_layout((5000, 0, 1920, 1080), (1920, 1080), false);
         assert_eq!(
             infer_physical_y_from_horizontal_neighbor(&reference, &target, 0),
             None
@@ -5212,24 +4941,8 @@ mod tests {
 
     #[test]
     fn infer_physical_x_from_vertical_neighbor_adjacent_below() {
-        let reference = ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        };
-        let target = ScreenLayoutInput {
-            logical_x: 200,
-            logical_y: 1080,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: false,
-        };
+        let reference = screen_layout((0, 0, 1920, 1080), (1920, 1080), true);
+        let target = screen_layout((200, 1080, 1920, 1080), (1920, 1080), false);
         // Adjacent below, x_diff = 200, scale ratio = 1.0, so physical x = 0 + 200 = 200
         assert_eq!(
             infer_physical_x_from_vertical_neighbor(&reference, &target, 0),
@@ -5239,24 +4952,8 @@ mod tests {
 
     #[test]
     fn infer_physical_x_from_vertical_neighbor_not_adjacent_returns_none() {
-        let reference = ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        };
-        let target = ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 5000,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: false,
-        };
+        let reference = screen_layout((0, 0, 1920, 1080), (1920, 1080), true);
+        let target = screen_layout((0, 5000, 1920, 1080), (1920, 1080), false);
         assert_eq!(
             infer_physical_x_from_vertical_neighbor(&reference, &target, 0),
             None
@@ -5266,24 +4963,8 @@ mod tests {
     #[test]
     fn infer_physical_y_from_horizontal_neighbor_adjacent_left() {
         // Target sits to the LEFT of the reference: target_right == reference.logical_x.
-        let reference = ScreenLayoutInput {
-            logical_x: 1920,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        };
-        let target = ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 100,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: false,
-        };
+        let reference = screen_layout((1920, 0, 1920, 1080), (1920, 1080), true);
+        let target = screen_layout((0, 100, 1920, 1080), (1920, 1080), false);
         // Adjacent left, y_diff = 100, scale ratio = 1.0, so physical y = 0 + 100 = 100.
         assert_eq!(
             infer_physical_y_from_horizontal_neighbor(&reference, &target, 0),
@@ -5293,24 +4974,8 @@ mod tests {
 
     #[test]
     fn infer_physical_y_from_horizontal_neighbor_high_dpi_scales_y_diff() {
-        let reference = ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        };
-        let target = ScreenLayoutInput {
-            logical_x: 1920,
-            logical_y: 50,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 3840,
-            physical_height: 2160,
-            is_primary: false,
-        };
+        let reference = screen_layout((0, 0, 1920, 1080), (1920, 1080), true);
+        let target = screen_layout((1920, 50, 1920, 1080), (3840, 2160), false);
         // Adjacent right, y_diff = 50, scale ratio = 2160/1080 = 2.0, so physical y = 0 + 100.
         assert_eq!(
             infer_physical_y_from_horizontal_neighbor(&reference, &target, 0),
@@ -5321,24 +4986,8 @@ mod tests {
     #[test]
     fn infer_physical_x_from_vertical_neighbor_adjacent_above() {
         // Target sits ABOVE the reference: target_bottom == reference.logical_y.
-        let reference = ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 1080,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        };
-        let target = ScreenLayoutInput {
-            logical_x: 300,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: false,
-        };
+        let reference = screen_layout((0, 1080, 1920, 1080), (1920, 1080), true);
+        let target = screen_layout((300, 0, 1920, 1080), (1920, 1080), false);
         // Adjacent above, x_diff = 300, scale ratio = 1.0, so physical x = 0 + 300 = 300.
         assert_eq!(
             infer_physical_x_from_vertical_neighbor(&reference, &target, 0),
@@ -5348,24 +4997,8 @@ mod tests {
 
     #[test]
     fn infer_physical_x_from_vertical_neighbor_high_dpi_scales_x_diff() {
-        let reference = ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        };
-        let target = ScreenLayoutInput {
-            logical_x: 80,
-            logical_y: 1080,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 3840,
-            physical_height: 2160,
-            is_primary: false,
-        };
+        let reference = screen_layout((0, 0, 1920, 1080), (1920, 1080), true);
+        let target = screen_layout((80, 1080, 1920, 1080), (3840, 2160), false);
         // Adjacent below, x_diff = 80, scale ratio = 3840/1920 = 2.0, so physical x = 0 + 160.
         assert_eq!(
             infer_physical_x_from_vertical_neighbor(&reference, &target, 0),
@@ -5379,15 +5012,7 @@ mod tests {
 
     #[test]
     fn build_physical_screen_layouts_single_screen() {
-        let inputs = vec![ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        }];
+        let inputs = vec![screen_layout((0, 0, 1920, 1080), (1920, 1080), true)];
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].physical_x, 0);
@@ -5399,24 +5024,8 @@ mod tests {
     #[test]
     fn build_physical_screen_layouts_two_horizontal() {
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
+            screen_layout((1920, 0, 1920, 1080), (1920, 1080), false),
         ];
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
         assert_eq!(layouts.len(), 2);
@@ -5429,24 +5038,8 @@ mod tests {
     #[test]
     fn build_physical_screen_layouts_two_vertical() {
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 1080,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
+            screen_layout((0, 1080, 1920, 1080), (1920, 1080), false),
         ];
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
         assert_eq!(layouts[0].physical_y, 0);
@@ -5464,24 +5057,8 @@ mod tests {
     fn build_physical_screen_layouts_mixed_dpi() {
         // Primary 1920x1080@1x, secondary 1707x960@1.5x (physical 2560x1440)
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1707,
-                logical_height: 960,
-                physical_width: 2560,
-                physical_height: 1440,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
+            screen_layout((1920, 0, 1707, 960), (2560, 1440), false),
         ];
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
         assert_eq!(layouts[0].physical_x, 0);
@@ -5492,24 +5069,8 @@ mod tests {
     fn build_physical_screen_layouts_primary_not_first() {
         // Non-primary first, primary second. Anchor should be at index 1.
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: -1920,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
+            screen_layout((-1920, 0, 1920, 1080), (1920, 1080), false),
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
         ];
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
         // Anchor (primary) is at physical (0, 0)
@@ -5525,16 +5086,7 @@ mod tests {
 
     #[test]
     fn normalize_physical_screen_layouts_single_screen() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
         let (normalized, min_x, min_y, w, h) = normalize_physical_screen_layouts(&layouts).unwrap();
         assert_eq!(min_x, 0);
         assert_eq!(min_y, 0);
@@ -5547,26 +5099,8 @@ mod tests {
     #[test]
     fn normalize_physical_screen_layouts_negative_origin_shifted() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: -1920,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: -1920,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            physical_layout((-1920, 0, 1920, 1080), (-1920, 0, 1920, 1080)),
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
         ];
         let (normalized, min_x, _min_y, w, h) =
             normalize_physical_screen_layouts(&layouts).unwrap();
@@ -5590,33 +5124,10 @@ mod tests {
     #[test]
     fn resolve_recording_selection_region_within_first_screen() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 1920, 1080), (1920, 0, 1920, 1080)),
         ];
-        let region = Region {
-            physical_x: 100,
-            physical_y: 100,
-            physical_width: 500,
-            physical_height: 400,
-        };
+        let region = test_region(100, 100, 500, 400);
         let (idx, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(local.physical_x, 100);
@@ -5628,33 +5139,10 @@ mod tests {
     #[test]
     fn resolve_recording_selection_region_within_second_screen() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 1920, 1080), (1920, 0, 1920, 1080)),
         ];
-        let region = Region {
-            physical_x: 2000,
-            physical_y: 100,
-            physical_width: 500,
-            physical_height: 400,
-        };
+        let region = test_region(2000, 100, 500, 400);
         let (idx, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(idx, 1);
         assert_eq!(local.physical_x, 80); // 2000 - 1920
@@ -5664,34 +5152,11 @@ mod tests {
     #[test]
     fn resolve_recording_selection_spanning_two_screens_returns_error() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 1920, 1080), (1920, 0, 1920, 1080)),
         ];
         // Region spans from screen 0 to screen 1
-        let region = Region {
-            physical_x: 1800,
-            physical_y: 100,
-            physical_width: 500,
-            physical_height: 400,
-        };
+        let region = test_region(1800, 100, 500, 400);
         let result = resolve_recording_selection(&layouts, region);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("single monitor"));
@@ -5699,22 +5164,8 @@ mod tests {
 
     #[test]
     fn resolve_recording_selection_exact_screen_bounds() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        };
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
+        let region = test_region(0, 0, 1920, 1080);
         let (idx, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(local.physical_x, 0);
@@ -5864,15 +5315,7 @@ mod tests {
     #[test]
     fn fallback_physical_x_finds_nearest_left_neighbor() {
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
             ScreenLayoutInput {
                 // Gap: logically at 2000 (80px gap from 1920)
                 logical_x: 2000,
@@ -5894,15 +5337,7 @@ mod tests {
 
     #[test]
     fn fallback_physical_x_no_positioned_neighbors_returns_none() {
-        let inputs = vec![ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        }];
+        let inputs = vec![screen_layout((0, 0, 1920, 1080), (1920, 1080), true)];
         let positions = vec![None];
         assert_eq!(fallback_physical_x(&inputs, &positions, 0), None);
     }
@@ -5910,24 +5345,8 @@ mod tests {
     #[test]
     fn fallback_physical_y_finds_nearest_above_neighbor() {
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 500,
-                logical_y: 1200,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
+            screen_layout((500, 1200, 1920, 1080), (1920, 1080), false),
         ];
         let positions = vec![Some(0), None];
         let result = fallback_physical_y(&inputs, &positions, 1);
@@ -5938,15 +5357,7 @@ mod tests {
 
     #[test]
     fn fallback_physical_y_out_of_range_returns_none() {
-        let inputs = vec![ScreenLayoutInput {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 1920,
-            physical_height: 1080,
-            is_primary: true,
-        }];
+        let inputs = vec![screen_layout((0, 0, 1920, 1080), (1920, 1080), true)];
         let positions = vec![Some(0)];
         assert_eq!(fallback_physical_y(&inputs, &positions, 5), None);
     }
@@ -5955,33 +5366,9 @@ mod tests {
     fn fallback_physical_x_prefers_left_over_right_neighbor() {
         // Both a left and a right neighbor are equally close; the left wins.
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 2000,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
-            ScreenLayoutInput {
-                logical_x: 4000,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
+            screen_layout((2000, 0, 1920, 1080), (1920, 1080), false),
+            screen_layout((4000, 0, 1920, 1080), (1920, 1080), false),
         ];
         let positions = vec![Some(0), None, Some(5000)];
         // Left candidate: 0 + 1920 + scaled_gap(80) = 2000.
@@ -5993,33 +5380,9 @@ mod tests {
     fn fallback_physical_y_prefers_above_over_below_neighbor() {
         // Both an above and a below neighbor are equally close; the above wins.
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 1200,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 2400,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
+            screen_layout((0, 1200, 1920, 1080), (1920, 1080), false),
+            screen_layout((0, 2400, 1920, 1080), (1920, 1080), false),
         ];
         let positions = vec![Some(0), None, Some(5000)];
         // Above candidate: 0 + 1080 + scaled_gap(120) = 1200.
@@ -6179,33 +5542,14 @@ mod tests {
 
     #[test]
     fn resolve_recording_selection_empty_layouts_returns_error() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(0, 0, 100, 100);
         assert!(resolve_recording_selection(&[], region).is_err());
     }
 
     #[test]
     fn resolve_recording_selection_region_at_origin() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
+        let region = test_region(0, 0, 100, 100);
         let (idx, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(local.physical_x, 0);
@@ -6214,22 +5558,8 @@ mod tests {
 
     #[test]
     fn resolve_recording_selection_full_screen_region() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        };
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
+        let region = test_region(0, 0, 1920, 1080);
         let (idx, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(local.physical_width, 1920);
@@ -6239,33 +5569,10 @@ mod tests {
     #[test]
     fn resolve_recording_selection_selects_second_monitor() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 2560,
-                logical_height: 1440,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 2560,
-                physical_height: 1440,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 2560, 1440), (1920, 0, 2560, 1440)),
         ];
-        let region = Region {
-            physical_x: 2000,
-            physical_y: 100,
-            physical_width: 200,
-            physical_height: 200,
-        };
+        let region = test_region(2000, 100, 200, 200);
         let (idx, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(idx, 1);
         assert_eq!(local.physical_x, 80);
@@ -6658,26 +5965,8 @@ mod tests {
     fn normalize_physical_screen_layouts_extreme_coordinates() {
         // Screens at extreme coordinates that cause i64 subtraction to exceed u32 range
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: i32::MIN,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: i32::MAX,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            physical_layout((0, 0, 1920, 1080), (i32::MIN, 0, 1920, 1080)),
+            physical_layout((1920, 0, 1920, 1080), (i32::MAX, 0, 1920, 1080)),
         ];
         let result = normalize_physical_screen_layouts(&layouts);
         // physical_end of second screen = i32::MAX + 1920 as i64 = 2147485567
@@ -6699,15 +5988,7 @@ mod tests {
         let inputs = vec![
             make_screen(0, 0, 1920, 1080, 1920, 1080),
             make_screen(1920, 0, 1920, 1080, 1920, 1080),
-            ScreenLayoutInput {
-                logical_x: 3840,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
+            screen_layout((3840, 0, 1920, 1080), (1920, 1080), true),
         ];
         let result = build_physical_screen_layouts(&inputs).unwrap();
         // Primary (index 2) should be at (0, 0), others positioned relative
@@ -6725,23 +6006,9 @@ mod tests {
 
     #[test]
     fn resolve_recording_selection_region_at_bottom_right_corner() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
         // Region touching the bottom-right corner (1-pixel region at last pixel)
-        let region = Region {
-            physical_x: 1919,
-            physical_y: 1079,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let region = test_region(1919, 1079, 1, 1);
         let result = resolve_recording_selection(&layouts, region);
         assert!(result.is_ok());
         let (idx, local) = result.unwrap();
@@ -6752,23 +6019,9 @@ mod tests {
 
     #[test]
     fn resolve_recording_selection_region_one_pixel_past_boundary() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
         // Region that extends 1 pixel past the right edge
-        let region = Region {
-            physical_x: 1920,
-            physical_y: 0,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let region = test_region(1920, 0, 1, 1);
         let result = resolve_recording_selection(&layouts, region);
         assert!(result.is_err());
     }
@@ -6800,26 +6053,8 @@ mod tests {
         // min_x = 0, so width = u32::MAX+1 > u32::MAX → Err.
         // Normalization: (0 - 0 = 0) and (1 - 0 = 1), both safe i32 ops.
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 1,
-                physical_y: 0,
-                physical_width: u32::MAX,
-                physical_height: 1080,
-            },
+            physical_layout((0, 0, 1, 1080), (0, 0, 1, 1080)),
+            physical_layout((1, 0, 1920, 1080), (1, 0, u32::MAX, 1080)),
         ];
         let result = normalize_physical_screen_layouts(&layouts);
         assert!(result.is_err());
@@ -6848,22 +6083,8 @@ mod tests {
 
     #[test]
     fn resolve_recording_selection_local_region_has_zero_origin_for_first_screen() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
-        let region = Region {
-            physical_x: 100,
-            physical_y: 200,
-            physical_width: 300,
-            physical_height: 400,
-        };
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
+        let region = test_region(100, 200, 300, 400);
         let (idx, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(local.physical_x, 100);
@@ -6873,33 +6094,10 @@ mod tests {
     #[test]
     fn resolve_recording_selection_local_region_subtracts_screen_offset() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 2560,
-                logical_height: 1440,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 2560,
-                physical_height: 1440,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 2560, 1440), (1920, 0, 2560, 1440)),
         ];
-        let region = Region {
-            physical_x: 2000,
-            physical_y: 100,
-            physical_width: 200,
-            physical_height: 200,
-        };
+        let region = test_region(2000, 100, 200, 200);
         let (idx, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(idx, 1);
         assert_eq!(local.physical_x, 80); // 2000 - 1920
@@ -7144,15 +6342,7 @@ mod tests {
 
     #[test]
     fn build_layouts_single_primary_at_origin() {
-        let inputs = vec![ScreenLayoutInput {
-            logical_x: 100,
-            logical_y: 200,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_width: 2880,
-            physical_height: 1620,
-            is_primary: true,
-        }];
+        let inputs = vec![screen_layout((100, 200, 1920, 1080), (2880, 1620), true)];
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].physical_x, 0, "primary must be anchored at x=0");
@@ -7171,24 +6361,8 @@ mod tests {
         // Primary: 1920x1080 logical, 1920x1080 physical (1x)
         // Secondary: 1707x960 logical, 2560x1440 physical (1.5x), right of primary
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1707,
-                logical_height: 960,
-                physical_width: 2560,
-                physical_height: 1440,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
+            screen_layout((1920, 0, 1707, 960), (2560, 1440), false),
         ];
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
         // Primary at origin
@@ -7210,24 +6384,8 @@ mod tests {
     #[test]
     fn build_layouts_vertical_stack_second_y_equals_first_physical_height() {
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 1080,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1920, 1080), (1920, 1080), true),
+            screen_layout((0, 1080, 1920, 1080), (1920, 1080), false),
         ];
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
         assert_eq!(layouts[0].physical_y, 0);
@@ -7295,26 +6453,8 @@ mod tests {
     #[test]
     fn normalize_layouts_negative_coords_shifted_to_zero() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: -1920,
-                logical_y: -500,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: -2560,
-                physical_y: -750,
-                physical_width: 2560,
-                physical_height: 1440,
-            },
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            physical_layout((-1920, -500, 1920, 1080), (-2560, -750, 2560, 1440)),
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
         ];
         let (normalized, min_x, min_y, _w, _h) =
             normalize_physical_screen_layouts(&layouts).unwrap();
@@ -7340,26 +6480,8 @@ mod tests {
     fn normalize_layouts_total_size_spans_full_virtual_desktop() {
         // Two horizontally adjacent monitors with different physical sizes
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1707,
-                logical_height: 960,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 2560,
-                physical_height: 1440,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 1707, 960), (1920, 0, 2560, 1440)),
         ];
         let (_normalized, _min_x, _min_y, width, height) =
             normalize_physical_screen_layouts(&layouts).unwrap();
@@ -7380,26 +6502,8 @@ mod tests {
     #[test]
     fn normalize_layouts_vertical_stack_total_height_is_sum() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 1080,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((0, 1080, 1920, 1080), (0, 1080, 1920, 1080)),
         ];
         let (_normalized, _min_x, _min_y, width, height) =
             normalize_physical_screen_layouts(&layouts).unwrap();
@@ -7437,33 +6541,10 @@ mod tests {
     #[test]
     fn req3_3_resolve_recording_selection_region_inside_one_monitor() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 2560,
-                logical_height: 1440,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 2560,
-                physical_height: 1440,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 2560, 1440), (1920, 0, 2560, 1440)),
         ];
-        let region = Region {
-            physical_x: 100,
-            physical_y: 100,
-            physical_width: 400,
-            physical_height: 300,
-        };
+        let region = test_region(100, 100, 400, 300);
         let (index, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(index, 0);
         assert_eq!(local.physical_x, 100);
@@ -7476,34 +6557,11 @@ mod tests {
     #[test]
     fn req3_4_resolve_recording_selection_spanning_two_monitors_returns_error() {
         let layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 2560,
-                logical_height: 1440,
-                physical_x: 1920,
-                physical_y: 0,
-                physical_width: 2560,
-                physical_height: 1440,
-            },
+            physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080)),
+            physical_layout((1920, 0, 2560, 1440), (1920, 0, 2560, 1440)),
         ];
         // Region crosses the boundary between monitor 0 and monitor 1
-        let region = Region {
-            physical_x: 1800,
-            physical_y: 100,
-            physical_width: 300,
-            physical_height: 200,
-        };
+        let region = test_region(1800, 100, 300, 200);
         let err = resolve_recording_selection(&layouts, region).unwrap_err();
         assert!(
             err.contains("single monitor"),
@@ -7514,23 +6572,9 @@ mod tests {
     /// Requirement 3.5: region at the exact boundary of a monitor is accepted.
     #[test]
     fn req3_5_resolve_recording_selection_exact_boundary_accepted() {
-        let layouts = vec![PhysicalScreenLayout {
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1920,
-            logical_height: 1080,
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        }];
+        let layouts = vec![physical_layout((0, 0, 1920, 1080), (0, 0, 1920, 1080))];
         // Region fills the entire monitor exactly
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        };
+        let region = test_region(0, 0, 1920, 1080);
         let (index, local) = resolve_recording_selection(&layouts, region).unwrap();
         assert_eq!(index, 0);
         assert_eq!(local.physical_x, 0);
@@ -7808,12 +6852,7 @@ mod tests {
             2,
             2,
             rgba.clone(),
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 2,
-                physical_height: 2,
-            },
+            test_region(0, 0, 2, 2),
         )
         .unwrap();
         assert_eq!(full.dimensions(), (2, 2));
@@ -7823,12 +6862,7 @@ mod tests {
             2,
             2,
             rgba,
-            Region {
-                physical_x: 1,
-                physical_y: 1,
-                physical_width: 1,
-                physical_height: 1,
-            },
+            test_region(1, 1, 1, 1),
         )
         .unwrap();
         assert_eq!(sub.dimensions(), (1, 1));
@@ -7875,12 +6909,7 @@ mod tests {
             .map(|px| 0xFF00_0000 | ((px[0] as u32) << 16) | ((px[1] as u32) << 8) | (px[2] as u32))
             .collect();
 
-        let region = Region {
-            physical_x: 2,
-            physical_y: 1,
-            physical_width: 4,
-            physical_height: 3,
-        };
+        let region = test_region(2, 1, 4, 3);
         let expected = crop_selected_region(width, height, rgba, region).unwrap();
         let actual = crop_packed_region(width, height, &packed, region).unwrap();
         assert_eq!(actual.dimensions(), expected.dimensions());
@@ -7953,24 +6982,14 @@ mod tests {
             4,
             4,
             &packed,
-            Region {
-                physical_x: -1,
-                physical_y: 0,
-                physical_width: 2,
-                physical_height: 2,
-            }
+            test_region(-1, 0, 2, 2)
         )
         .is_err());
         assert!(crop_packed_region(
             4,
             4,
             &packed,
-            Region {
-                physical_x: 0,
-                physical_y: -1,
-                physical_width: 2,
-                physical_height: 2,
-            }
+            test_region(0, -1, 2, 2)
         )
         .is_err());
 
@@ -7979,24 +6998,14 @@ mod tests {
             4,
             4,
             &packed,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 0,
-                physical_height: 2,
-            }
+            test_region(0, 0, 0, 2)
         )
         .is_err());
         assert!(crop_packed_region(
             4,
             4,
             &packed,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 2,
-                physical_height: 0,
-            }
+            test_region(0, 0, 2, 0)
         )
         .is_err());
 
@@ -8005,24 +7014,14 @@ mod tests {
             4,
             4,
             &packed,
-            Region {
-                physical_x: 3,
-                physical_y: 0,
-                physical_width: 2,
-                physical_height: 2,
-            }
+            test_region(3, 0, 2, 2)
         )
         .is_err());
         assert!(crop_packed_region(
             4,
             4,
             &packed,
-            Region {
-                physical_x: 0,
-                physical_y: 3,
-                physical_width: 2,
-                physical_height: 2,
-            }
+            test_region(0, 3, 2, 2)
         )
         .is_err());
 
@@ -8031,12 +7030,7 @@ mod tests {
             4,
             4,
             &packed[..15],
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 2,
-                physical_height: 2,
-            }
+            test_region(0, 0, 2, 2)
         )
         .is_err());
     }
@@ -8055,36 +7049,11 @@ mod tests {
         let packed = pack_rgba_to_softbuffer(&rgba);
 
         for region in [
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: width,
-                physical_height: height,
-            },
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1,
-                physical_height: 1,
-            },
-            Region {
-                physical_x: (width - 1) as i32,
-                physical_y: 0,
-                physical_width: 1,
-                physical_height: 1,
-            },
-            Region {
-                physical_x: 0,
-                physical_y: (height - 1) as i32,
-                physical_width: 1,
-                physical_height: 1,
-            },
-            Region {
-                physical_x: (width - 1) as i32,
-                physical_y: (height - 1) as i32,
-                physical_width: 1,
-                physical_height: 1,
-            },
+            test_region(0, 0, width, height),
+            test_region(0, 0, 1, 1),
+            test_region((width - 1) as i32, 0, 1, 1),
+            test_region(0, (height - 1) as i32, 1, 1),
+            test_region((width - 1) as i32, (height - 1) as i32, 1, 1),
         ] {
             let expected = crop_selected_region(width, height, rgba.clone(), region).unwrap();
             let actual = crop_packed_region(width, height, &packed, region).unwrap();
@@ -8183,24 +7152,8 @@ mod tests {
         // Windows PerMonitorV2: Screen 0 is 1920x1200 physical at (0,0) with 1.25 scale
         // (display_info reports logical 1536x960), Screen 1 is 1920x1080 at x=1920, y=0.
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1536,
-                logical_height: 960,
-                physical_width: 1920,
-                physical_height: 1200,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 1920,
-                logical_y: 0,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1536, 960), (1920, 1200), true),
+            screen_layout((1920, 0, 1920, 1080), (1920, 1080), false),
         ];
 
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
@@ -8261,12 +7214,7 @@ mod tests {
         assert_eq!(app.selected_monitor, 1);
         assert_eq!(
             app.result,
-            Some(Region {
-                physical_x: 300,
-                physical_y: 250,
-                physical_width: 400,
-                physical_height: 300,
-            })
+            Some(test_region(300, 250, 400, 300))
         );
 
         let (packed, w, h, idx) = app.take_selected_monitor_capture();
@@ -8309,12 +7257,7 @@ mod tests {
         assert_eq!(app.selected_monitor, 1);
         assert_eq!(
             app.result,
-            Some(Region {
-                physical_x: 0,
-                physical_y: 200,
-                physical_width: 200,
-                physical_height: 100,
-            })
+            Some(test_region(0, 200, 200, 100))
         );
     }
 
@@ -8490,12 +7433,7 @@ mod tests {
         assert_eq!(app.selected_monitor, 1);
         assert_eq!(
             app.result,
-            Some(Region {
-                physical_x: 50,
-                physical_y: 60,
-                physical_width: 100,
-                physical_height: 80,
-            })
+            Some(test_region(50, 60, 100, 80))
         );
     }
 
@@ -8549,12 +7487,7 @@ mod tests {
         assert_eq!(app.selected_monitor, 0);
         assert_eq!(
             app.result,
-            Some(Region {
-                physical_x: 500,
-                physical_y: 500,
-                physical_width: 300,
-                physical_height: 699,
-            })
+            Some(test_region(500, 500, 300, 699))
         );
 
         let (packed, w, h, idx) = app.take_selected_monitor_capture();
@@ -8570,42 +7503,10 @@ mod tests {
         // Bottom at (120, 1200) 1920x1080 physical (1920x1080 logical @ 100%),
         // Top at (0, -1080) 1920x1080 physical (1920x1080 logical @ 100%).
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 1536,
-                logical_height: 960,
-                physical_width: 1920,
-                physical_height: 1200,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: -2560,
-                logical_y: 120,
-                logical_width: 1707,
-                logical_height: 960,
-                physical_width: 2560,
-                physical_height: 1440,
-                is_primary: false,
-            },
-            ScreenLayoutInput {
-                logical_x: 120,
-                logical_y: 1200,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: -1080,
-                logical_width: 1920,
-                logical_height: 1080,
-                physical_width: 1920,
-                physical_height: 1080,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 1536, 960), (1920, 1200), true),
+            screen_layout((-2560, 120, 1707, 960), (2560, 1440), false),
+            screen_layout((120, 1200, 1920, 1080), (1920, 1080), false),
+            screen_layout((0, -1080, 1920, 1080), (1920, 1080), false),
         ];
 
         let layouts = build_physical_screen_layouts(&inputs).unwrap();
@@ -8817,12 +7718,7 @@ mod tests {
         ];
         let mut app = SelectionApp::with_monitors(captures.clone(), 1);
         app.selected_monitor = 1;
-        app.result = Some(Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 2,
-            physical_height: 2,
-        });
+        app.result = Some(test_region(0, 0, 2, 2));
         app.discard_unneeded_captures();
         assert!(app.packed_background.is_empty());
         assert_eq!(app.extra_monitors[0].packed_background.len(), 8);
@@ -8865,33 +7761,9 @@ mod tests {
 
         // Exercise fallback_physical_x and fallback_physical_y with multiple candidates
         let multi_x_inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 200,
-                logical_y: 500,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: false,
-            },
-            ScreenLayoutInput {
-                logical_x: 500,
-                logical_y: 1000,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 100, 100), (100, 100), true),
+            screen_layout((200, 500, 100, 100), (100, 100), false),
+            screen_layout((500, 1000, 100, 100), (100, 100), false),
         ];
         let x_positions = vec![Some(200), Some(0), None];
         let _ = fallback_physical_x(&multi_x_inputs, &x_positions, 2);
@@ -8945,33 +7817,9 @@ mod tests {
     fn selection_pure_logic_remaining_branches_are_covered() {
         // 1. fallback_physical_x & fallback_physical_y: closer reference precedes farther reference
         let inputs = vec![
-            ScreenLayoutInput {
-                logical_x: 100,
-                logical_y: 100,
-                logical_width: 50,
-                logical_height: 50,
-                physical_width: 50,
-                physical_height: 50,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 50,
-                logical_height: 50,
-                physical_width: 50,
-                physical_height: 50,
-                is_primary: false,
-            },
-            ScreenLayoutInput {
-                logical_x: 200,
-                logical_y: 200,
-                logical_width: 50,
-                logical_height: 50,
-                physical_width: 50,
-                physical_height: 50,
-                is_primary: false,
-            },
+            screen_layout((100, 100, 50, 50), (50, 50), true),
+            screen_layout((0, 0, 50, 50), (50, 50), false),
+            screen_layout((200, 200, 50, 50), (50, 50), false),
         ];
         assert_eq!(
             fallback_physical_x(&inputs, &[Some(100), Some(0), None], 2),
@@ -8984,24 +7832,8 @@ mod tests {
 
         // 2. build_physical_screen_layouts: fallback_physical_x & fallback_physical_y progress
         let gapped = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 200,
-                logical_y: 200,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 100, 100), (100, 100), true),
+            screen_layout((200, 200, 100, 100), (100, 100), false),
         ];
         let gapped_layouts = build_physical_screen_layouts(&gapped).unwrap();
         assert_eq!(
@@ -9011,24 +7843,8 @@ mod tests {
 
         // 3. build_physical_screen_layouts: unresolved physical_x and unresolved physical_y errors
         let overlap_both = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 10,
-                logical_y: 10,
-                logical_width: 50,
-                logical_height: 50,
-                physical_width: 50,
-                physical_height: 50,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 100, 100), (100, 100), true),
+            screen_layout((10, 10, 50, 50), (50, 50), false),
         ];
         assert_eq!(
             build_physical_screen_layouts(&overlap_both).unwrap_err(),
@@ -9036,24 +7852,8 @@ mod tests {
         );
 
         let overlap_y_only = vec![
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 200,
-                logical_y: 10,
-                logical_width: 50,
-                logical_height: 50,
-                physical_width: 50,
-                physical_height: 50,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 100, 100), (100, 100), true),
+            screen_layout((200, 10, 50, 50), (50, 50), false),
         ];
         assert_eq!(
             build_physical_screen_layouts(&overlap_y_only).unwrap_err(),
@@ -9062,26 +7862,8 @@ mod tests {
 
         // 4. normalize_physical_screen_layouts height out of range & benchmark_normalize_physical_screen_layouts
         let tall_layouts = vec![
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 100,
-                logical_height: 100,
-                physical_x: 0,
-                physical_y: i32::MIN,
-                physical_width: 100,
-                physical_height: 100,
-            },
-            PhysicalScreenLayout {
-                logical_x: 0,
-                logical_y: 100,
-                logical_width: 100,
-                logical_height: 100,
-                physical_x: 0,
-                physical_y: i32::MAX,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            physical_layout((0, 0, 100, 100), (0, i32::MIN, 100, 100)),
+            physical_layout((0, 100, 100, 100), (0, i32::MAX, 100, 100)),
         ];
         assert_eq!(
             normalize_physical_screen_layouts(&tall_layouts).unwrap_err(),
@@ -9148,12 +7930,7 @@ mod tests {
                 2,
                 2,
                 vec![0u8; 16],
-                Region {
-                    physical_x: -1,
-                    physical_y: 0,
-                    physical_width: 1,
-                    physical_height: 1,
-                }
+                test_region(-1, 0, 1, 1)
             )
             .unwrap_err(),
             "Selection region has negative coordinates"
@@ -9163,12 +7940,7 @@ mod tests {
                 2,
                 2,
                 vec![0u8; 4],
-                Region {
-                    physical_x: 0,
-                    physical_y: 0,
-                    physical_width: 1,
-                    physical_height: 1,
-                }
+                test_region(0, 0, 1, 1)
             )
             .unwrap_err(),
             "Failed to create image from composite data"
@@ -9313,48 +8085,16 @@ mod tests {
         assert!(neg_crosshair_rects.is_empty());
 
         let many_inputs: Vec<ScreenLayoutInput> = (0..18)
-            .map(|i| ScreenLayoutInput {
-                logical_x: i * 100,
-                logical_y: 0,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: i == 0,
-            })
+            .map(|i| screen_layout((i * 100, 0, 100, 100), (100, 100), i == 0))
             .collect();
         let many_layouts = build_physical_screen_layouts(&many_inputs).unwrap();
         assert_eq!(many_layouts.len(), 18);
         assert_eq!(many_layouts[17].physical_x, 1700);
 
         let gapped_chain = [
-            ScreenLayoutInput {
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: true,
-            },
-            ScreenLayoutInput {
-                logical_x: 200,
-                logical_y: 200,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 200,
-                physical_height: 200,
-                is_primary: false,
-            },
-            ScreenLayoutInput {
-                logical_x: 300,
-                logical_y: 200,
-                logical_width: 100,
-                logical_height: 100,
-                physical_width: 100,
-                physical_height: 100,
-                is_primary: false,
-            },
+            screen_layout((0, 0, 100, 100), (100, 100), true),
+            screen_layout((200, 200, 100, 100), (200, 200), false),
+            screen_layout((300, 200, 100, 100), (100, 100), false),
         ];
         let chain_layouts = build_physical_screen_layouts(&gapped_chain).unwrap();
         assert_eq!(chain_layouts[1].physical_x, 300);
@@ -9407,35 +8147,12 @@ mod tests {
         assert!(press_first_app.handle_mouse_release());
         assert_eq!(
             press_first_app.result,
-            Some(Region {
-                physical_x: 10,
-                physical_y: 15,
-                physical_width: 40,
-                physical_height: 50,
-            })
+            Some(test_region(10, 15, 40, 50))
         );
 
         let span_overflow_layouts = [
-            PhysicalScreenLayout {
-                logical_x: -1_500_000_000,
-                logical_y: 0,
-                logical_width: 100,
-                logical_height: 100,
-                physical_x: -1_500_000_000,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
-            PhysicalScreenLayout {
-                logical_x: 1_000_000_000,
-                logical_y: 0,
-                logical_width: 100,
-                logical_height: 100,
-                physical_x: 1_000_000_000,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            physical_layout((-1_500_000_000, 0, 100, 100), (-1_500_000_000, 0, 100, 100)),
+            physical_layout((1_000_000_000, 0, 100, 100), (1_000_000_000, 0, 100, 100)),
         ];
         assert!(normalize_physical_screen_layouts(&span_overflow_layouts).is_err());
     }

@@ -159,3 +159,23 @@ fn skipped_build_directories_do_not_affect_scan() {
         Some(0)
     );
 }
+
+#[test]
+fn repeated_helper_calls_are_one_code_line_each() {
+    let body = "shared(\nfirst,\nsecond,\nthird,\nfourth,\nfifth,\n);";
+    let code = format!("fn first() {{\n{body}\n}}\nfn second() {{\n{body}\n}}");
+    assert_eq!(
+        Fixture::new(&[("a.rs", &code)]).run().status.code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn five_calls_to_a_shared_helper_are_still_a_clone() {
+    let body = "shared(a);\nshared(b);\nshared(c);\nshared(d);\nshared(e);";
+    let code = format!("fn first() {{\n{body}\n}}\nfn second() {{\n{body}\n}}");
+    assert_eq!(
+        Fixture::new(&[("a.rs", &code)]).run().status.code(),
+        Some(1)
+    );
+}

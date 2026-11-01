@@ -352,18 +352,39 @@ pub fn rgba_to_bgra_bottom_up_into(rgba: &[u8], out: &mut [u8], width: u32, heig
         let src_row = &rgba[src_start..src_start + row_bytes];
         let dst_row = &mut out[dst_start..dst_start + row_bytes];
 
-        for (src_px, dst_px) in src_row
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(dst_row.as_chunks_mut::<4>().0.iter_mut())
-        {
-            dst_px[0] = src_px[2]; // B <- R
-            dst_px[1] = src_px[1]; // G <- G
-            dst_px[2] = src_px[0]; // R <- B
-            dst_px[3] = src_px[3]; // A <- A
-        }
+        rgba_row_to_bgra(src_row, dst_row);
     }
+}
+
+#[inline]
+fn rgba_row_to_bgra(source: &[u8], destination: &mut [u8]) {
+    for (src, dst) in source
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(destination.as_chunks_mut::<4>().0.iter_mut())
+    {
+        *dst = [src[2], src[1], src[0], src[3]];
+    }
+}
+
+#[inline]
+fn frame_copy_dimensions(
+    output_len: usize,
+    (src_width, src_height): (u32, u32),
+    (dst_width, dst_height): (u32, u32),
+) -> Option<(usize, usize, usize, usize)> {
+    let row_bytes = (dst_width as usize) * 4;
+    let total_bytes = row_bytes.saturating_mul(dst_height as usize);
+    if output_len < total_bytes {
+        return None;
+    }
+    Some((
+        row_bytes,
+        total_bytes,
+        src_width.min(dst_width) as usize,
+        src_height.min(dst_height) as usize,
+    ))
 }
 
 #[inline]
@@ -410,14 +431,7 @@ fn rgba_to_bgra_bottom_up_padded_into(
         let (destination_row, right_pad) =
             out[dst_start..dst_start + frame_stride].split_at_mut(source_stride);
         right_pad.fill(0);
-        for (source, destination) in source_row
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(destination_row.as_chunks_mut::<4>().0.iter_mut())
-        {
-            *destination = [source[2], source[1], source[0], source[3]];
-        }
+        rgba_row_to_bgra(source_row, destination_row);
     }
     Ok(())
 }
@@ -433,14 +447,13 @@ pub fn rgba_region_to_bgra_bottom_up_into(
     dst_width: u32,
     dst_height: u32,
 ) {
-    let dst_row_bytes = (dst_width as usize) * 4;
-    let total_dst_bytes = dst_row_bytes.saturating_mul(dst_height as usize);
-    if out.len() < total_dst_bytes {
+    let Some((dst_row_bytes, total_dst_bytes, copy_w, copy_h)) = frame_copy_dimensions(
+        out.len(),
+        (src_width, src_height),
+        (dst_width, dst_height),
+    ) else {
         return;
-    }
-
-    let copy_w = src_width.min(dst_width) as usize;
-    let copy_h = src_height.min(dst_height) as usize;
+    };
     if copy_w == dst_width as usize
         && copy_h == dst_height as usize
         && rgba.len() >= total_dst_bytes
@@ -464,17 +477,7 @@ pub fn rgba_region_to_bgra_bottom_up_into(
             out[dst_start..dst_start + dst_row_bytes].split_at_mut(copy_row_bytes);
         fill_opaque_black_pixels(right_pad);
 
-        for (src_px, dst_px) in src_row
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(dst_row.as_chunks_mut::<4>().0.iter_mut())
-        {
-            dst_px[0] = src_px[2];
-            dst_px[1] = src_px[1];
-            dst_px[2] = src_px[0];
-            dst_px[3] = src_px[3];
-        }
+        rgba_row_to_bgra(src_row, dst_row);
         rows_copied += 1;
     }
 
@@ -492,14 +495,13 @@ pub fn bgra_top_down_region_to_bottom_up_into(
     dst_width: u32,
     dst_height: u32,
 ) {
-    let dst_row_bytes = (dst_width as usize) * 4;
-    let total_dst_bytes = dst_row_bytes.saturating_mul(dst_height as usize);
-    if out.len() < total_dst_bytes {
+    let Some((dst_row_bytes, _, copy_w, copy_h)) = frame_copy_dimensions(
+        out.len(),
+        (src_width, src_height),
+        (dst_width, dst_height),
+    ) else {
         return;
-    }
-
-    let copy_w = src_width.min(dst_width) as usize;
-    let copy_h = src_height.min(dst_height) as usize;
+    };
     let src_row_bytes = (src_width as usize) * 4;
     let copy_row_bytes = copy_w * 4;
     let dst_h = dst_height as usize;
@@ -573,31 +575,13 @@ struct GdiRegionCapturer {
 impl GdiRegionCapturer {
     #[cfg_attr(coverage_nightly, coverage(off))]
     unsafe fn new(raw_hmonitor: isize, region: Region) -> Result<Self, String> {
-        use windows::core::PCWSTR;
         use windows::Win32::Graphics::Gdi::{
-            CreateCompatibleBitmap, CreateCompatibleDC, CreateDCW, DeleteDC, DeleteObject,
-            GetMonitorInfoW, PatBlt, SelectObject, BLACKNESS, HMONITOR, MONITORINFOEXW,
+            CreateCompatibleDC, DeleteDC, DeleteObject, PatBlt, SelectObject, BLACKNESS,
         };
 
-        let mut monitor_info: MONITORINFOEXW = std::mem::zeroed();
-        monitor_info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-        GetMonitorInfoW(
-            HMONITOR(raw_hmonitor),
-            (&mut monitor_info as *mut MONITORINFOEXW).cast(),
-        )
-        .ok()
-        .map_err(|e| format!("GetMonitorInfoW failed: {e}"))?;
+        let monitor_info = crate::gdi::monitor_info(raw_hmonitor)?;
 
-        let sz_device_ptr = monitor_info.szDevice.as_ptr();
-        let hdc_monitor = CreateDCW(
-            PCWSTR(sz_device_ptr),
-            PCWSTR(sz_device_ptr),
-            PCWSTR(std::ptr::null()),
-            None,
-        );
-        if hdc_monitor.is_invalid() {
-            return Err("CreateDCW for monitor failed".to_string());
-        }
+        let hdc_monitor = crate::gdi::monitor_dc(&monitor_info)?;
 
         let hdc_mem = CreateCompatibleDC(hdc_monitor);
         if hdc_mem.is_invalid() {
@@ -607,12 +591,12 @@ impl GdiRegionCapturer {
 
         let bitmap_w = encoded_dimension(region.physical_width);
         let bitmap_h = encoded_dimension(region.physical_height);
-        let hbm = CreateCompatibleBitmap(hdc_monitor, bitmap_w as i32, bitmap_h as i32);
-        if hbm.is_invalid() {
-            let _ = DeleteDC(hdc_mem);
-            let _ = DeleteDC(hdc_monitor);
-            return Err("CreateCompatibleBitmap failed".to_string());
-        }
+        let hbm = crate::gdi::capture_bitmap_or_cleanup(
+            hdc_monitor,
+            hdc_mem,
+            bitmap_w as i32,
+            bitmap_h as i32,
+        )?;
 
         let old_obj = SelectObject(hdc_mem, hbm);
         if old_obj.is_invalid() {
@@ -1138,6 +1122,7 @@ where
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use crate::selection::test_region;
     use super::*;
 
     #[test]
@@ -1411,45 +1396,25 @@ mod tests {
 
     #[test]
     fn validate_capture_region_accepts_exact_screen_bounds() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        };
+        let region = test_region(0, 0, 1920, 1080);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_rejects_negative_origin() {
-        let region = Region {
-            physical_x: -1,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(-1, 0, 100, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_rejects_region_outside_frame() {
-        let region = Region {
-            physical_x: 1800,
-            physical_y: 900,
-            physical_width: 200,
-            physical_height: 200,
-        };
+        let region = test_region(1800, 900, 200, 200);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_rejects_zero_width() {
-        let region = Region {
-            physical_x: 10,
-            physical_y: 10,
-            physical_width: 0,
-            physical_height: 100,
-        };
+        let region = test_region(10, 10, 0, 100);
         assert_eq!(
             validate_capture_region(region, 1920, 1080),
             Err("Recording region must have non-zero size".to_string())
@@ -1458,12 +1423,7 @@ mod tests {
 
     #[test]
     fn validate_capture_region_rejects_zero_height() {
-        let region = Region {
-            physical_x: 10,
-            physical_y: 10,
-            physical_width: 100,
-            physical_height: 0,
-        };
+        let region = test_region(10, 10, 100, 0);
         assert_eq!(
             validate_capture_region(region, 1920, 1080),
             Err("Recording region must have non-zero size".to_string())
@@ -1472,12 +1432,7 @@ mod tests {
 
     #[test]
     fn validate_capture_region_accepts_offset_region_touching_frame_edge() {
-        let region = Region {
-            physical_x: 1820,
-            physical_y: 980,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(1820, 980, 100, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
@@ -1486,12 +1441,7 @@ mod tests {
         let result = RecordingSession::start(
             0,
             0,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            test_region(0, 0, 100, 100),
             0,
         );
 
@@ -1506,12 +1456,7 @@ mod tests {
         let result = RecordingSession::start_in_dir(
             0,
             0,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            test_region(0, 0, 100, 100),
             0,
             PathBuf::from("/tmp/custom-recordings"),
         );
@@ -1881,6 +1826,7 @@ mod tests {
             0, 0, 255, 255, // blue
         ];
         let out = rgba_to_bgra_bottom_up(&rgba, 3, 1);
+        assert_eq!(out.len(), 12);
         // Red RGBA→BGRA: [0, 0, 255, 255]
         assert_eq!(&out[0..4], &[0, 0, 255, 255]);
         // Green stays same in BGRA
@@ -2154,22 +2100,6 @@ mod tests {
         assert_eq!(&out[12..16], &[128, 128, 128, 255]);
     }
 
-    #[test]
-    fn rgba_to_bgra_bottom_up_4x4_first_and_last_row_swapped() {
-        // 1x4 image
-        let rgba = vec![
-            10, 20, 30, 255, // row 0
-            40, 50, 60, 255, // row 1
-            70, 80, 90, 255, // row 2
-            100, 110, 120, 255, // row 3
-        ];
-        let out = rgba_to_bgra_bottom_up(&rgba, 1, 4);
-        // Output row 0 = src row 3: RGBA[100,110,120,255] → BGRA[120,110,100,255]
-        assert_eq!(&out[0..4], &[120, 110, 100, 255]);
-        // Output row 3 = src row 0: RGBA[10,20,30,255] → BGRA[30,20,10,255]
-        assert_eq!(&out[12..16], &[30, 20, 10, 255]);
-    }
-
     // --- RecordingSession::start with region edge cases ---
 
     #[test]
@@ -2177,12 +2107,7 @@ mod tests {
         let result = RecordingSession::start(
             0,
             0,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 1920,
-                physical_height: 1080,
-            },
+            test_region(0, 0, 1920, 1080),
             0,
         );
         assert!(result.is_err());
@@ -2194,12 +2119,7 @@ mod tests {
         let result = RecordingSession::start(
             0,
             0,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            test_region(0, 0, 100, 100),
             30,
         );
         assert!(result.is_err());
@@ -2275,12 +2195,7 @@ mod tests {
             PathBuf::from("/tmp/test.mp4"),
             0,
             0,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            test_region(0, 0, 100, 100),
             30,
             rx,
         );
@@ -2296,12 +2211,7 @@ mod tests {
             PathBuf::from("/tmp/test.mp4"),
             0,
             0,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 640,
-                physical_height: 480,
-            },
+            test_region(0, 0, 640, 480),
             60,
             rx,
         );
@@ -2318,12 +2228,7 @@ mod tests {
         let session = RecordingSession::start(
             0,
             0,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            test_region(0, 0, 100, 100),
             30,
         );
         // start itself should fail on non-windows because the thread returns Err
@@ -2343,12 +2248,7 @@ mod tests {
         let session = RecordingSession::start(
             0,
             0,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            test_region(0, 0, 100, 100),
             30,
         );
         if let Ok(s) = session {
@@ -2416,20 +2316,6 @@ mod tests {
     }
 
     // --- rgba_to_bgra_bottom_up asymmetric dimensions ---
-
-    #[test]
-    fn rgba_to_bgra_bottom_up_3x1_wide_image() {
-        // 3 pixels wide, 1 pixel tall
-        let rgba = vec![
-            255, 0, 0, 255, // red
-            0, 255, 0, 255, // green
-            0, 0, 255, 255, // blue
-        ];
-        let out = rgba_to_bgra_bottom_up(&rgba, 3, 1);
-        assert_eq!(out.len(), 12);
-        // Red → BGRA [0, 0, 255, 255]
-        assert_eq!(&out[0..4], &[0, 0, 255, 255]);
-    }
 
     #[test]
     fn rgba_to_bgra_bottom_up_1x3_tall_image_flips_rows() {
@@ -2653,111 +2539,61 @@ mod tests {
 
     #[test]
     fn validate_capture_region_region_at_origin_full_frame() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        };
+        let region = test_region(0, 0, 1920, 1080);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_one_pixel_past_right() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1921,
-            physical_height: 1080,
-        };
+        let region = test_region(0, 0, 1921, 1080);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_one_pixel_past_bottom() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1081,
-        };
+        let region = test_region(0, 0, 1920, 1081);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_offset_exactly_touching_edge() {
-        let region = Region {
-            physical_x: 100,
-            physical_y: 200,
-            physical_width: 1820,
-            physical_height: 880,
-        };
+        let region = test_region(100, 200, 1820, 880);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_offset_one_past_edge() {
-        let region = Region {
-            physical_x: 100,
-            physical_y: 200,
-            physical_width: 1821,
-            physical_height: 880,
-        };
+        let region = test_region(100, 200, 1821, 880);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_1x1_at_last_pixel() {
-        let region = Region {
-            physical_x: 1919,
-            physical_y: 1079,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let region = test_region(1919, 1079, 1, 1);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_negative_x_rejected() {
-        let region = Region {
-            physical_x: -1,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(-1, 0, 100, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_negative_y_rejected() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: -1,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(0, -1, 100, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_zero_width_rejected() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 0,
-            physical_height: 100,
-        };
+        let region = test_region(0, 0, 0, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_zero_height_rejected() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 0,
-        };
+        let region = test_region(0, 0, 100, 0);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
@@ -2810,90 +2646,50 @@ mod tests {
 
     #[test]
     fn validate_capture_region_1x1_at_origin() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let region = test_region(0, 0, 1, 1);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_both_zero_dimensions() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 0,
-            physical_height: 0,
-        };
+        let region = test_region(0, 0, 0, 0);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_negative_x_and_y() {
-        let region = Region {
-            physical_x: -10,
-            physical_y: -20,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(-10, -20, 100, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_exact_frame_size() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        };
+        let region = test_region(0, 0, 1920, 1080);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_one_pixel_wider_than_frame() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1921,
-            physical_height: 1080,
-        };
+        let region = test_region(0, 0, 1921, 1080);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_one_pixel_taller_than_frame() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1081,
-        };
+        let region = test_region(0, 0, 1920, 1081);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_error_message_for_negative_coords() {
-        let region = Region {
-            physical_x: -1,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(-1, 0, 100, 100);
         let err = validate_capture_region(region, 1920, 1080).unwrap_err();
         assert!(err.contains("must stay within"), "error: {err}");
     }
 
     #[test]
     fn validate_capture_region_error_message_for_zero_size() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 0,
-            physical_height: 100,
-        };
+        let region = test_region(0, 0, 0, 100);
         let err = validate_capture_region(region, 1920, 1080).unwrap_err();
         assert!(err.contains("non-zero"), "error: {err}");
     }
@@ -3221,75 +3017,40 @@ mod tests {
 
     #[test]
     fn validate_capture_region_valid_full_frame() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        };
+        let region = test_region(0, 0, 1920, 1080);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_valid_small_region() {
-        let region = Region {
-            physical_x: 100,
-            physical_y: 100,
-            physical_width: 200,
-            physical_height: 200,
-        };
+        let region = test_region(100, 100, 200, 200);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_region_exceeds_width() {
-        let region = Region {
-            physical_x: 1800,
-            physical_y: 0,
-            physical_width: 200,
-            physical_height: 100,
-        };
+        let region = test_region(1800, 0, 200, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_region_exceeds_height() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 1000,
-            physical_width: 100,
-            physical_height: 200,
-        };
+        let region = test_region(0, 1000, 100, 200);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_zero_dimensions_rejected() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 0,
-            physical_height: 100,
-        };
+        let region = test_region(0, 0, 0, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
 
-        let region2 = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 0,
-        };
+        let region2 = test_region(0, 0, 100, 0);
         assert!(validate_capture_region(region2, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_negative_origin_rejected() {
-        let region = Region {
-            physical_x: -10,
-            physical_y: 0,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(-10, 0, 100, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
@@ -3311,16 +3072,6 @@ mod tests {
     #[test]
     fn pack_u32_pair_zero_one() {
         assert_eq!(pack_u32_pair(0, 1), 1u64);
-    }
-
-    #[test]
-    fn pack_u32_pair_typical_frame_size() {
-        // 1920x1080
-        let packed = pack_u32_pair(1920, 1080);
-        let hi = (packed >> 32) as u32;
-        let lo = packed as u32;
-        assert_eq!(hi, 1920);
-        assert_eq!(lo, 1080);
     }
 
     #[test]
@@ -3403,45 +3154,25 @@ mod tests {
 
     #[test]
     fn validate_capture_region_negative_y_only_is_rejected() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: -1,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(0, -1, 100, 100);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_1x1_at_origin_ok() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let region = test_region(0, 0, 1, 1);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_right_edge_overflow() {
-        let region = Region {
-            physical_x: 1920,
-            physical_y: 0,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let region = test_region(1920, 0, 1, 1);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_bottom_edge_overflow() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 1080,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let region = test_region(0, 1080, 1, 1);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
@@ -3451,12 +3182,7 @@ mod tests {
 
     #[test]
     fn validate_capture_region_both_coords_negative() {
-        let region = Region {
-            physical_x: -10,
-            physical_y: -20,
-            physical_width: 100,
-            physical_height: 100,
-        };
+        let region = test_region(-10, -20, 100, 100);
         let err = validate_capture_region(region, 1920, 1080).unwrap_err();
         assert!(err.contains("within the selected monitor"));
     }
@@ -3531,12 +3257,7 @@ mod tests {
         let result = RecordingSession::start_in_dir(
             0,
             0,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 100,
-                physical_height: 100,
-            },
+            test_region(0, 0, 100, 100),
             0,
             dir,
         );
@@ -3552,12 +3273,7 @@ mod tests {
 
     #[test]
     fn region_clone_produces_equal_value() {
-        let r = Region {
-            physical_x: 10,
-            physical_y: 20,
-            physical_width: 100,
-            physical_height: 200,
-        };
+        let r = test_region(10, 20, 100, 200);
         let cloned = r;
         assert_eq!(cloned.physical_x, r.physical_x);
         assert_eq!(cloned.physical_y, r.physical_y);
@@ -3567,12 +3283,7 @@ mod tests {
 
     #[test]
     fn region_debug_repr_is_non_empty() {
-        let r = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let r = test_region(0, 0, 1, 1);
         let debug = format!("{:?}", r);
         assert!(!debug.is_empty());
         assert!(debug.contains("Region"));
@@ -3672,57 +3383,32 @@ mod tests {
 
     #[test]
     fn validate_capture_region_full_frame_exact_match() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 1920,
-            physical_height: 1080,
-        };
+        let region = test_region(0, 0, 1920, 1080);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_1x1_at_last_valid_position() {
-        let region = Region {
-            physical_x: 1919,
-            physical_y: 1079,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let region = test_region(1919, 1079, 1, 1);
         assert!(validate_capture_region(region, 1920, 1080).is_ok());
     }
 
     #[test]
     fn validate_capture_region_1x1_past_right_edge() {
-        let region = Region {
-            physical_x: 1920,
-            physical_y: 0,
-            physical_width: 1,
-            physical_height: 1,
-        };
+        let region = test_region(1920, 0, 1, 1);
         assert!(validate_capture_region(region, 1920, 1080).is_err());
     }
 
     #[test]
     fn validate_capture_region_error_message_for_negative_origin() {
-        let region = Region {
-            physical_x: -1,
-            physical_y: -1,
-            physical_width: 10,
-            physical_height: 10,
-        };
+        let region = test_region(-1, -1, 10, 10);
         let err = validate_capture_region(region, 1920, 1080).unwrap_err();
         assert!(err.contains("within the selected monitor"));
     }
 
     #[test]
     fn validate_capture_region_error_message_for_zero_dimensions() {
-        let region = Region {
-            physical_x: 0,
-            physical_y: 0,
-            physical_width: 0,
-            physical_height: 0,
-        };
+        let region = test_region(0, 0, 0, 0);
         let err = validate_capture_region(region, 1920, 1080).unwrap_err();
         assert!(err.contains("non-zero size"));
     }
@@ -4033,12 +3719,7 @@ mod tests {
         let res = unsafe {
             GdiRegionCapturer::new(
                 0,
-                Region {
-                    physical_x: 0,
-                    physical_y: 0,
-                    physical_width: 64,
-                    physical_height: 64,
-                },
+                test_region(0, 0, 64, 64),
             )
         };
         assert!(res.is_err());
@@ -4085,12 +3766,7 @@ mod tests {
         unsafe {
             let exact_capturer = GdiRegionCapturer::new(
                 screen.display_info.raw_handle.0,
-                Region {
-                    physical_x: 0,
-                    physical_y: 0,
-                    physical_width: 64,
-                    physical_height: 64,
-                },
+                test_region(0, 0, 64, 64),
             )
             .unwrap();
             let mut dst = vec![0u8; 64 * 64 * 4];
@@ -4104,12 +3780,7 @@ mod tests {
 
             let padded_capturer = GdiRegionCapturer::new(
                 screen.display_info.raw_handle.0,
-                Region {
-                    physical_x: 0,
-                    physical_y: 0,
-                    physical_width: 60,
-                    physical_height: 60,
-                },
+                test_region(0, 0, 60, 60),
             )
             .unwrap();
             if padded_capturer
@@ -4138,12 +3809,7 @@ mod tests {
         let session = RecordingSession::start_in_dir(
             screen.display_info.x,
             screen.display_info.y,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 64,
-                physical_height: 64,
-            },
+            test_region(0, 0, 64, 64),
             30,
             temp_dir.clone(),
         )
@@ -4159,12 +3825,7 @@ mod tests {
         let bad_session = RecordingSession::start_in_dir(
             999_999,
             999_999,
-            Region {
-                physical_x: 0,
-                physical_y: 0,
-                physical_width: 64,
-                physical_height: 64,
-            },
+            test_region(0, 0, 64, 64),
             30,
             temp_dir.clone(),
         )

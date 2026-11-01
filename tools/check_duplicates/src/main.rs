@@ -78,7 +78,18 @@ impl<'ast> Visit<'ast> for Collector<'_> {
             }
             let tokens = statement.to_token_stream();
             let mut lines = BTreeSet::new();
-            code_lines(tokens.clone(), &mut lines);
+            let expression = match statement {
+                syn::Stmt::Expr(expression, _) => Some(expression),
+                syn::Stmt::Local(local) => local.init.as_ref().map(|init| &*init.expr),
+                _ => None,
+            };
+            if expression.is_some_and(is_simple_call) {
+                // Reusing a helper is the goal of deduplication. Wrapped
+                // arguments must not turn one invocation into five code lines.
+                lines.insert(statement.span().start().line);
+            } else {
+                code_lines(tokens.clone(), &mut lines);
+            }
             statements.push(Statement {
                 key: tokens.to_string(),
                 lines,
@@ -88,6 +99,22 @@ impl<'ast> Visit<'ast> for Collector<'_> {
         }
         self.push(&mut statements);
         visit::visit_block(self, block);
+    }
+}
+
+fn is_simple_call(expression: &syn::Expr) -> bool {
+    matches!(expression, syn::Expr::Call(call) if call.args.iter().all(is_simple_argument))
+}
+
+fn is_simple_argument(expression: &syn::Expr) -> bool {
+    match expression {
+        syn::Expr::Path(_) | syn::Expr::Lit(_) => true,
+        syn::Expr::Field(field) => is_simple_argument(&field.base),
+        syn::Expr::Reference(reference) => is_simple_argument(&reference.expr),
+        syn::Expr::Paren(paren) => is_simple_argument(&paren.expr),
+        syn::Expr::Unary(unary) => is_simple_argument(&unary.expr),
+        syn::Expr::Tuple(tuple) => tuple.elems.iter().all(is_simple_argument),
+        _ => false,
     }
 }
 
