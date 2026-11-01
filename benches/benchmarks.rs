@@ -2002,8 +2002,202 @@ fn bench_scaled_gap(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// Criterion harness
+// selection::render_selection_overlay_frame
 // ---------------------------------------------------------------------------
+
+fn bench_render_selection_overlay_frame(c: &mut Criterion) {
+    let mut group = c.benchmark_group("render_selection_overlay_frame");
+    let w = 1920usize;
+    let h = 1080usize;
+    let bg = vec![0x00336699u32; w * h];
+    let mut buf = vec![0u32; w * h];
+
+    // Full background copy + cyan border (the slow path; compare with
+    // bench_overlay_frame_update which only repaints the changed strips).
+    group.bench_function("drag_border_1080p", |b| {
+        b.iter(|| {
+            selection::render_selection_overlay_frame(
+                black_box(&mut buf),
+                black_box(w),
+                black_box(h),
+                black_box(&bg),
+                black_box(w),
+                black_box(Some((100, 100))),
+                black_box(Some((1500, 900))),
+            );
+        });
+    });
+
+    // Full background copy + red crosshair
+    group.bench_function("crosshair_1080p", |b| {
+        b.iter(|| {
+            selection::render_selection_overlay_frame(
+                black_box(&mut buf),
+                black_box(w),
+                black_box(h),
+                black_box(&bg),
+                black_box(w),
+                black_box(None),
+                black_box(Some((960, 540))),
+            );
+        });
+    });
+
+    // Drag end pushed 1px beyond the buffer — exercises the DPI clamping path.
+    group.bench_function("drag_border_clamped_end", |b| {
+        b.iter(|| {
+            selection::render_selection_overlay_frame(
+                black_box(&mut buf),
+                black_box(w),
+                black_box(h),
+                black_box(&bg),
+                black_box(w),
+                black_box(Some((0, 0))),
+                black_box(Some((w as i32 + 2, h as i32 + 2))),
+            );
+        });
+    });
+
+    // 4K frame to measure how the O(W+H) border cost scales.
+    let w4k = 3840usize;
+    let h4k = 2160usize;
+    let bg4k = vec![0u32; w4k * h4k];
+    let mut buf4k = vec![0u32; w4k * h4k];
+    group.bench_function("drag_border_4k", |b| {
+        b.iter(|| {
+            selection::render_selection_overlay_frame(
+                black_box(&mut buf4k),
+                black_box(w4k),
+                black_box(h4k),
+                black_box(&bg4k),
+                black_box(w4k),
+                black_box(Some((100, 100))),
+                black_box(Some((3500, 1900))),
+            );
+        });
+    });
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// selection::pack_rgba_to_softbuffer
+// ---------------------------------------------------------------------------
+
+fn bench_pack_rgba_to_softbuffer(c: &mut Criterion) {
+    let mut group = c.benchmark_group("pack_rgba_to_softbuffer");
+
+    // 720p — small overlay or secondary monitor
+    {
+        let rgba = vec![0u8; 1280 * 720 * 4];
+        group.bench_function("720p", |b| {
+            b.iter(|| selection::pack_rgba_to_softbuffer(black_box(&rgba)));
+        });
+    }
+
+    // 1080p — common primary monitor
+    {
+        let rgba: Vec<u8> = (0..(1920 * 1080 * 4))
+            .map(|i| (i % 256) as u8)
+            .collect();
+        group.bench_function("1080p", |b| {
+            b.iter(|| selection::pack_rgba_to_softbuffer(black_box(&rgba)));
+        });
+    }
+
+    // 4K — high-resolution primary monitor
+    {
+        let rgba: Vec<u8> = (0..(3840 * 2160 * 4))
+            .map(|i| (i % 256) as u8)
+            .collect();
+        group.bench_function("4k", |b| {
+            b.iter(|| selection::pack_rgba_to_softbuffer(black_box(&rgba)));
+        });
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// selection::overlay_present_damage_rects
+// ---------------------------------------------------------------------------
+
+fn bench_overlay_present_damage_rects(c: &mut Criterion) {
+    let mut group = c.benchmark_group("overlay_present_damage_rects");
+    let w = 1920usize;
+    let h = 1080usize;
+
+    // First frame: surface_size differs → returns one full-surface rect.
+    group.bench_function("first_frame", |b| {
+        b.iter(|| {
+            selection::overlay_present_damage_rects(
+                black_box(selection::OverlayDamage::default()),
+                black_box(w),
+                black_box(h),
+                black_box(None),
+                black_box(Some((960, 540))),
+            )
+        });
+    });
+
+    // Unchanged cursor → returns empty vec (hot path on every idle frame).
+    group.bench_function("no_change", |b| {
+        let prev = selection::OverlayDamage {
+            surface_size: Some((w, h)),
+            start_pos: None,
+            current_pos: Some((960, 540)),
+        };
+        b.iter(|| {
+            selection::overlay_present_damage_rects(
+                black_box(prev),
+                black_box(w),
+                black_box(h),
+                black_box(None),
+                black_box(Some((960, 540))),
+            )
+        });
+    });
+
+    // Crosshair moved → 4 rects (old H + V lines, new H + V lines).
+    group.bench_function("crosshair_move", |b| {
+        let prev = selection::OverlayDamage {
+            surface_size: Some((w, h)),
+            start_pos: None,
+            current_pos: Some((400, 300)),
+        };
+        b.iter(|| {
+            selection::overlay_present_damage_rects(
+                black_box(prev),
+                black_box(w),
+                black_box(h),
+                black_box(None),
+                black_box(Some((960, 540))),
+            )
+        });
+    });
+
+    // Selection border moved → 8 rects (4 old border strips, 4 new).
+    group.bench_function("selection_border_move", |b| {
+        let prev = selection::OverlayDamage {
+            surface_size: Some((w, h)),
+            start_pos: Some((100, 100)),
+            current_pos: Some((500, 400)),
+        };
+        b.iter(|| {
+            selection::overlay_present_damage_rects(
+                black_box(prev),
+                black_box(w),
+                black_box(h),
+                black_box(Some((100, 100))),
+                black_box(Some((600, 500))),
+            )
+        });
+    });
+
+    group.finish();
+}
+
+
 
 criterion_group!(
     benches,
@@ -2069,6 +2263,9 @@ criterion_group!(
     bench_monitor_scale_ratio,
     bench_scaled_gap,
     bench_overlay_frame_update,
+    bench_render_selection_overlay_frame,
+    bench_pack_rgba_to_softbuffer,
+    bench_overlay_present_damage_rects,
     bench_crop_packed_region,
     // tray
     bench_build_default_icon_pixels,
