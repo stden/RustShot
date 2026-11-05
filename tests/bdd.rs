@@ -80,6 +80,22 @@ struct RustShotWorld {
     pack_hi: u32,
     pack_lo: u32,
     pack_u64_result: Option<u64>,
+
+    // --- cli helpers ---
+    cli_args: Vec<String>,
+    format_flag_result: Option<bool>,
+    screen_list_strings: Vec<String>,
+    screen_list_result: Option<String>,
+    selection_stderr_input: String,
+    selection_stderr_result: Option<Option<String>>,
+
+    // --- screen finding ---
+    screen_rects: Vec<(i32, i32, u32, u32)>,
+    cursor_query: (i32, i32),
+    find_screen_result: Option<Option<usize>>,
+    preferred_screens: Vec<(i32, i32, u32, u32, bool)>,
+    preferred_cursor: Option<(i32, i32)>,
+    preferred_screen_result: Option<Option<usize>>,
 }
 
 fn app_mode_name(mode: cli::AppMode) -> &'static str {
@@ -956,6 +972,216 @@ fn then_packed_lo(world: &mut RustShotWorld, expected: u32) {
 fn then_packed_u64(world: &mut RustShotWorld, expected: u64) {
     let packed = world.pack_u64_result.expect("pack_u32_pair did not run");
     assert_eq!(packed, expected);
+}
+
+
+// ===========================================================================
+// CLI helpers
+// ===========================================================================
+
+#[given(regex = r#"^the CLI args are \[([^\]]*)\]$"#)]
+fn given_cli_args(world: &mut RustShotWorld, args_str: String) {
+    world.cli_args = args_str
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+}
+
+#[when("the CLI args are checked for a format flag")]
+fn when_check_format_flag(world: &mut RustShotWorld) {
+    world.format_flag_result =
+        Some(cli::cli_format_flag_present_in(world.cli_args.clone()));
+}
+
+#[then("a format flag is present in the args")]
+fn then_format_flag_present(world: &mut RustShotWorld) {
+    assert!(
+        world.format_flag_result.expect("format flag check did not run"),
+        "expected a format flag"
+    );
+}
+
+#[then("no format flag is present in the args")]
+fn then_no_format_flag(world: &mut RustShotWorld) {
+    assert!(
+        !world.format_flag_result.expect("format flag check did not run"),
+        "expected no format flag"
+    );
+}
+
+#[given(regex = r#"^the screen list contains \[([^\]]*)\]$"#)]
+fn given_screen_list(world: &mut RustShotWorld, list_str: String) {
+    world.screen_list_strings = list_str
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+}
+
+#[when("the screen list is formatted for output")]
+fn when_format_screen_list(world: &mut RustShotWorld) {
+    world.screen_list_result =
+        Some(cli::format_screen_list_output(world.screen_list_strings.clone()));
+}
+
+#[then(regex = r#"^the screen list output contains "([^"]+)"$"#)]
+fn then_screen_list_contains(world: &mut RustShotWorld, expected: String) {
+    let out = world
+        .screen_list_result
+        .as_ref()
+        .expect("screen list was not formatted");
+    assert!(
+        out.contains(&expected),
+        "output does not contain {expected:?}: {out:?}"
+    );
+}
+
+#[then("the screen list output is empty")]
+fn then_screen_list_empty(world: &mut RustShotWorld) {
+    let out = world
+        .screen_list_result
+        .as_ref()
+        .expect("screen list was not formatted");
+    assert!(out.is_empty(), "expected empty output, got {out:?}");
+}
+
+#[when(regex = r#"^the selection stderr message "([^"]*)" is classified$"#)]
+fn when_selection_stderr(world: &mut RustShotWorld, msg: String) {
+    world.selection_stderr_input = msg.clone();
+    world.selection_stderr_result = Some(cli::selection_stderr_message(&msg));
+}
+
+#[then("the selection error result is absent")]
+fn then_stderr_absent(world: &mut RustShotWorld) {
+    let r = world
+        .selection_stderr_result
+        .as_ref()
+        .expect("stderr message was not classified");
+    assert!(r.is_none(), "expected None but got {r:?}");
+}
+
+#[then("the selection error result is present")]
+fn then_stderr_present(world: &mut RustShotWorld) {
+    let r = world
+        .selection_stderr_result
+        .as_ref()
+        .expect("stderr message was not classified");
+    assert!(r.is_some(), "expected Some(_) but got None");
+}
+
+// ===========================================================================
+// Screen finding helpers
+// ===========================================================================
+
+#[given(regex = r"^the screen layout is \[([^\]]*)\]$")]
+fn given_screen_layout(world: &mut RustShotWorld, layout_str: String) {
+    world.screen_rects = parse_i32_u32_u32_u32_list(&layout_str);
+}
+
+#[when(regex = r"^the screen at cursor position \((-?\d+), (-?\d+)\) is searched$")]
+fn when_find_screen_at(world: &mut RustShotWorld, cx: i32, cy: i32) {
+    world.cursor_query = (cx, cy);
+    world.find_screen_result = Some(selection::find_screen_index_at_position(
+        world.screen_rects.clone(),
+        (cx, cy),
+    ));
+}
+
+#[then(regex = r"^screen index (\d+) is found$")]
+fn then_screen_found(world: &mut RustShotWorld, expected: usize) {
+    let r = world
+        .find_screen_result
+        .expect("screen search did not run");
+    assert_eq!(r, Some(expected), "expected screen index {expected}");
+}
+
+#[then("no screen is found at that position")]
+fn then_no_screen_found(world: &mut RustShotWorld) {
+    let r = world
+        .find_screen_result
+        .expect("screen search did not run");
+    assert!(r.is_none(), "expected None but found screen {:?}", r);
+}
+
+#[given(regex = r"^the preferred screen layout is \[([^\]]*)\]$")]
+fn given_preferred_layout(world: &mut RustShotWorld, layout_str: String) {
+    world.preferred_screens = parse_i32_u32_u32_u32_bool_list(&layout_str);
+}
+
+#[when(regex = r"^the preferred screen for cursor at \((-?\d+), (-?\d+)\) is determined$")]
+fn when_preferred_with_cursor(world: &mut RustShotWorld, cx: i32, cy: i32) {
+    world.preferred_cursor = Some((cx, cy));
+    world.preferred_screen_result = Some(selection::preferred_screen_index(
+        world.preferred_screens.clone(),
+        Some((cx, cy)),
+    ));
+}
+
+#[when("the preferred screen with no cursor is determined")]
+fn when_preferred_no_cursor(world: &mut RustShotWorld) {
+    world.preferred_cursor = None;
+    world.preferred_screen_result = Some(selection::preferred_screen_index(
+        world.preferred_screens.clone(),
+        None,
+    ));
+}
+
+#[then(regex = r"^the preferred screen index is (\d+)$")]
+fn then_preferred_index(world: &mut RustShotWorld, expected: usize) {
+    let r = world
+        .preferred_screen_result
+        .expect("preferred screen was not determined");
+    assert_eq!(r, Some(expected));
+}
+
+#[then("no preferred screen exists")]
+fn then_no_preferred(world: &mut RustShotWorld) {
+    let r = world
+        .preferred_screen_result
+        .expect("preferred screen was not determined");
+    assert!(r.is_none(), "expected None but got {:?}", r);
+}
+
+// ---------------------------------------------------------------------------
+// Parsing helpers for screen layout strings like [(0,0,1920,1080),(1920,0,1920,1080)]
+// ---------------------------------------------------------------------------
+
+fn parse_i32_u32_u32_u32_list(s: &str) -> Vec<(i32, i32, u32, u32)> {
+    if s.trim().is_empty() {
+        return Vec::new();
+    }
+    s.split("), (")
+        .map(|entry| {
+            let entry = entry.trim_matches(|c| c == '(' || c == ')' || c == ' ');
+            let parts: Vec<&str> = entry.splitn(4, ',').collect();
+            (
+                parts[0].trim().parse().unwrap(),
+                parts[1].trim().parse().unwrap(),
+                parts[2].trim().parse().unwrap(),
+                parts[3].trim().parse().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn parse_i32_u32_u32_u32_bool_list(s: &str) -> Vec<(i32, i32, u32, u32, bool)> {
+    if s.trim().is_empty() {
+        return Vec::new();
+    }
+    s.split("), (")
+        .map(|entry| {
+            let entry = entry.trim_matches(|c| c == '(' || c == ')' || c == ' ');
+            let parts: Vec<&str> = entry.splitn(5, ',').collect();
+            (
+                parts[0].trim().parse().unwrap(),
+                parts[1].trim().parse().unwrap(),
+                parts[2].trim().parse().unwrap(),
+                parts[3].trim().parse().unwrap(),
+                parts[4].trim() == "true",
+            )
+        })
+        .collect()
 }
 
 fn main() {

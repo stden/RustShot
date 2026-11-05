@@ -3471,6 +3471,21 @@ mod tests {
                 w, h, buf_len
             );
         }
+
+        /// For every non-zero input, `encoded_dimension` returns an even value
+        /// that is at least 64 and at least as large as the input (rounded up).
+        /// Zero is the only fixed point: `encoded_dimension(0) == 0`.
+        #[test]
+        fn prop_encoded_dimension_h264_constraints(value in any::<u32>()) {
+            let result = encoded_dimension(value);
+            if value == 0 {
+                prop_assert_eq!(result, 0);
+            } else {
+                prop_assert!(result % 2 == 0, "result {} must be even for input {}", result, value);
+                prop_assert!(result >= 64, "result {} must be >= 64 for input {}", result, value);
+                prop_assert!(result >= value, "result {} must be >= input {}", result, value);
+            }
+        }
     }
 
     #[test]

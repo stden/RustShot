@@ -86,3 +86,47 @@ Feature: Selection overlay helper functions
     Given the current surface size is not set
     When the next surface size of 0 x 100 is requested
     Then a surface resize to 1 x 100 is needed
+
+  # --- find_screen_index_at_position ---
+
+  Scenario: Cursor inside the only screen returns index 0
+    Given the screen layout is [(0, 0, 1920, 1080)]
+    When the screen at cursor position (960, 540) is searched
+    Then screen index 0 is found
+
+  Scenario: Cursor outside all screens returns no result
+    Given the screen layout is [(0, 0, 1920, 1080)]
+    When the screen at cursor position (5000, 5000) is searched
+    Then no screen is found at that position
+
+  Scenario: Cursor on the second of two screens returns index 1
+    Given the screen layout is [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)]
+    When the screen at cursor position (2500, 300) is searched
+    Then screen index 1 is found
+
+  Scenario: Cursor exactly at origin of the first screen returns index 0
+    Given the screen layout is [(0, 0, 1920, 1080)]
+    When the screen at cursor position (0, 0) is searched
+    Then screen index 0 is found
+
+  # --- preferred_screen_index ---
+
+  Scenario: Cursor on second screen wins over primary
+    Given the preferred screen layout is [(0, 0, 1920, 1080, true), (1920, 0, 1920, 1080, false)]
+    When the preferred screen for cursor at (2500, 300) is determined
+    Then the preferred screen index is 1
+
+  Scenario: No cursor falls back to primary screen
+    Given the preferred screen layout is [(0, 0, 1920, 1080, false), (1920, 0, 1920, 1080, true)]
+    When the preferred screen with no cursor is determined
+    Then the preferred screen index is 1
+
+  Scenario: No cursor no primary falls back to first screen
+    Given the preferred screen layout is [(0, 0, 1920, 1080, false), (1920, 0, 1920, 1080, false)]
+    When the preferred screen with no cursor is determined
+    Then the preferred screen index is 0
+
+  Scenario: Empty screen list returns no preferred screen
+    Given the preferred screen layout is []
+    When the preferred screen with no cursor is determined
+    Then no preferred screen exists

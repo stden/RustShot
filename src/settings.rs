@@ -1,4 +1,4 @@
-//! Application settings persistence and settings dialog.
+﻿//! Application settings persistence and settings dialog.
 //!
 //! Settings are stored as a JSON file in the OS app-data directory
 //! (`AppData/Roaming/RustShot/settings.json` on Windows).
@@ -2591,6 +2591,24 @@ mod tests {
                 "auto_start mismatch after roundtrip"
             );
         }
+        /// For any arbitrary byte string, parse_settings_json must never panic.
+        #[test]
+        fn prop_parse_settings_json_never_panics(
+            input in proptest::string::string_regex(".*").unwrap(),
+        ) {
+            let s = parse_settings_json(&input);
+            prop_assert!(["png", "jpg", "bmp"].contains(&s.default_format.as_str()));
+            prop_assert!(s.recording_fps > 0);
+        }
+
+        /// normalize_default_format always returns one of the three supported formats.
+        #[test]
+        fn prop_normalize_default_format_always_valid(
+            input in proptest::string::string_regex("[a-zA-Z0-9]{0,10}").unwrap(),
+        ) {
+            let result = normalize_default_format(&input);
+            prop_assert!(["png", "jpg", "bmp"].contains(&result));
+        }
     }
 
     #[test]
@@ -2615,6 +2633,7 @@ mod tests {
         assert_eq!(find_json_value("{\"unterminated", "k"), None);
 
         let temp_dir = std::env::temp_dir().join(format!(
+
             "rustshot_settings_write_err_{}",
             std::process::id()
         ));
