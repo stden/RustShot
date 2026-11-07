@@ -3481,7 +3481,7 @@ mod tests {
             if value == 0 {
                 prop_assert_eq!(result, 0);
             } else {
-                prop_assert!(result % 2 == 0, "result {} must be even for input {}", result, value);
+                prop_assert!(result.is_multiple_of(2), "result {} must be even for input {}", result, value);
                 prop_assert!(result >= 64, "result {} must be >= 64 for input {}", result, value);
                 prop_assert!(result >= value, "result {} must be >= input {}", result, value);
             }

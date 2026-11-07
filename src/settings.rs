@@ -2633,7 +2633,6 @@ mod tests {
         assert_eq!(find_json_value("{\"unterminated", "k"), None);
 
         let temp_dir = std::env::temp_dir().join(format!(
-
             "rustshot_settings_write_err_{}",
             std::process::id()
         ));
