@@ -974,7 +974,6 @@ fn then_packed_u64(world: &mut RustShotWorld, expected: u64) {
     assert_eq!(packed, expected);
 }
 
-
 // ===========================================================================
 // CLI helpers
 // ===========================================================================
@@ -990,14 +989,15 @@ fn given_cli_args(world: &mut RustShotWorld, args_str: String) {
 
 #[when("the CLI args are checked for a format flag")]
 fn when_check_format_flag(world: &mut RustShotWorld) {
-    world.format_flag_result =
-        Some(cli::cli_format_flag_present_in(world.cli_args.clone()));
+    world.format_flag_result = Some(cli::cli_format_flag_present_in(world.cli_args.clone()));
 }
 
 #[then("a format flag is present in the args")]
 fn then_format_flag_present(world: &mut RustShotWorld) {
     assert!(
-        world.format_flag_result.expect("format flag check did not run"),
+        world
+            .format_flag_result
+            .expect("format flag check did not run"),
         "expected a format flag"
     );
 }
@@ -1005,7 +1005,9 @@ fn then_format_flag_present(world: &mut RustShotWorld) {
 #[then("no format flag is present in the args")]
 fn then_no_format_flag(world: &mut RustShotWorld) {
     assert!(
-        !world.format_flag_result.expect("format flag check did not run"),
+        !world
+            .format_flag_result
+            .expect("format flag check did not run"),
         "expected no format flag"
     );
 }
@@ -1021,8 +1023,9 @@ fn given_screen_list(world: &mut RustShotWorld, list_str: String) {
 
 #[when("the screen list is formatted for output")]
 fn when_format_screen_list(world: &mut RustShotWorld) {
-    world.screen_list_result =
-        Some(cli::format_screen_list_output(world.screen_list_strings.clone()));
+    world.screen_list_result = Some(cli::format_screen_list_output(
+        world.screen_list_strings.clone(),
+    ));
 }
 
 #[then(regex = r#"^the screen list output contains "([^"]+)"$"#)]
@@ -1090,17 +1093,13 @@ fn when_find_screen_at(world: &mut RustShotWorld, cx: i32, cy: i32) {
 
 #[then(regex = r"^screen index (\d+) is found$")]
 fn then_screen_found(world: &mut RustShotWorld, expected: usize) {
-    let r = world
-        .find_screen_result
-        .expect("screen search did not run");
+    let r = world.find_screen_result.expect("screen search did not run");
     assert_eq!(r, Some(expected), "expected screen index {expected}");
 }
 
 #[then("no screen is found at that position")]
 fn then_no_screen_found(world: &mut RustShotWorld) {
-    let r = world
-        .find_screen_result
-        .expect("screen search did not run");
+    let r = world.find_screen_result.expect("screen search did not run");
     assert!(r.is_none(), "expected None but found screen {:?}", r);
 }
 
