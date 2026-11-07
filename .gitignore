@@ -75,3 +75,8 @@ coverage-target/
 secrets/
 
 .vscode
+
+# Local mise overrides
+mise.local.toml
+mise.local.lock
+.mise/locks/mise.local/

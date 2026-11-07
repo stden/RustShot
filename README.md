@@ -202,6 +202,23 @@ rustshot --window            # 🪟 Just the focused window, nothing else
 
 ## 🛠️ Development
 
+Use [mise](https://mise.jdx.dev/) to install the configured Rust toolchain and RTK:
+
+```bash
+rtk proxy mise trust
+rtk proxy mise install --locked
+rtk proxy mise run ci
+rtk proxy mise run build
+```
+
+Read `mise.toml` before you trust a checkout.
+The `rust-toolchain.toml` file selects Rust for both mise and direct Cargo commands.
+The `ci` task runs the local format, Clippy, duplication and test checks.
+Use `rtk proxy mise tasks ls` to list the other tasks.
+Keep `rust-toolchain.toml`, `mise.toml` and `mise.lock` in Git.
+Put personal overrides in the ignored `mise.local.toml` file.
+Linux builds still require the X11 and GTK libraries listed in the CI workflow.
+
 ```bash
 cargo check            # ✅ Does it compile?
 cargo test             # 🧪 Do the tests pass?

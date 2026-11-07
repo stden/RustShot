@@ -20,7 +20,7 @@ section() {
 }
 
 pinned_upstream_image() {
-    section default | grep -Eq '^  image: "rust:1\.95\.0-slim-trixie@sha256:[a-f0-9]{64}"$'
+    section default | grep -Eq '^  image: "rust:1\.99\.1-slim-trixie@sha256:[a-f0-9]{64}"$'
 }
 
 no_shared_build_state() {

@@ -1,6 +1,6 @@
 default:
   # Verified Docker Official Image manifest; custom registry tags are not trusted.
-  image: "rust:1.95.0-slim-trixie@sha256:e14e87345b4d5964ddcc3491d27ee046a0f23820f340c3c1e24da6880141f7c0"
+  image: "rust:1.99.1-slim-trixie@sha256:7eab7ce19273ce785e0ca7578bdf7bc1fcbae621775a8197379a04c9f6e03cd5"
   timeout: 5 minutes
   cache: []
 
@@ -47,7 +47,7 @@ build:ci-image:
     - /kaniko/executor
         --context "${CI_PROJECT_DIR}"
         --dockerfile "${CI_PROJECT_DIR}/Dockerfile.ci"
-        --destination "${CI_REGISTRY_IMAGE}/ci:1.95.0-sccache"
+        --destination "${CI_REGISTRY_IMAGE}/ci:1.99.1-sccache"
         --destination "${CI_REGISTRY_IMAGE}/ci:latest"
         --cache=false
   allow_failure: true
