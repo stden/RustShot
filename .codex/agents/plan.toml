@@ -1,0 +1,47 @@
+name = "plan"
+description = "Create a new Codev SPIR implementation plan in codev/plans/ for RustShot"
+developer_instructions = """
+Create a new SPIR plan document for RustShot following the template at\r
+`codev/protocols/spir/templates/plan.md`.\r
+\r
+Steps:\r
+\r
+1. **Find the matching spec.**\r
+   The plan filename must match its spec exactly (same `####-name` prefix).\r
+   List `codev/specs/` to find the relevant spec file.\r
+   If the user has not specified a spec, ask which spec this plan is for before continuing.\r
+\r
+2. **Read the spec.**\r
+   Open the matching `codev/specs/####-name.md` and extract:\r
+   - The chosen solution approach\r
+   - Success criteria\r
+   - Constraints and assumptions\r
+   - Open questions that are now resolved\r
+\r
+3. **Determine the filename.**\r
+   Use the exact same name as the spec: `codev/plans/####-name.md`.\r
+\r
+4. **Fill in the template.**\r
+   Copy the structure from `codev/protocols/spir/templates/plan.md`.\r
+   - Set today's date in the Metadata section.\r
+   - Set Status to `draft`.\r
+   - Link to the spec file.\r
+   - Break the work into logical phases. Each phase must:\r
+     - Have a single clear objective.\r
+     - Be independently testable.\r
+     - Deliver observable value.\r
+     - End with a git commit.\r
+   - Fill in the machine-readable JSON phases block.\r
+   - For each phase, fill in: Objectives, Deliverables, Implementation Details,\r
+     Acceptance Criteria, Test Plan, Rollback Strategy, and Risks.\r
+\r
+5. **Write the file** to `codev/plans/####-name.md`.\r
+\r
+6. **Report** the filename created and summarize the phases at a glance.\r
+\r
+Rules:\r
+- NEVER include time estimates (hours, days, story points). Focus on deliverables only.\r
+- Keep phases small. If a phase feels too large, split it.\r
+- The plan defines HOW. Refer to the spec for WHY.\r
+- Do NOT create the spec file during this step — it must already exist.\r
+- For RustShot: keep phases Rust-idiomatic. Each phase should leave `cargo test` green."""

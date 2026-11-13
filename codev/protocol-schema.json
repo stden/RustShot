@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codev.dev/protocol-schema.json",
+  "title": "Codev Protocol Definition",
+  "description": "Schema for porch protocol definitions (SPIR, TICK, BUGFIX, etc.)",
+  "type": "object",
+  "required": ["name", "phases"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference"
+    },
+    "name": {
+      "type": "string",
+      "description": "Protocol name (e.g., 'spir', 'tick', 'bugfix')",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "alias": {
+      "type": "string",
+      "description": "Alternative name for the protocol (e.g., 'spider' for spir)"
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version of the protocol",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-z0-9.]+)?$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the protocol"
+    },
+    "phases": {
+      "type": "array",
+      "description": "Ordered list of protocol phases",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/phase" }
+    },
+    "signals": {
+      "type": "object",
+      "description": "Signals that can be emitted during protocol execution",
+      "additionalProperties": { "$ref": "#/$defs/signal" }
+    },
+    "phase_completion": {
+      "type": "object",
+      "description": "Checks run when a plan phase completes",
+      "additionalProperties": {
+        "type": "string",
+        "description": "Shell command to run"
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Default values for phase properties",
+      "properties": {
+        "max_iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 7
+        },
+        "verify": { "$ref": "#/$defs/verifyConfig" }
+      }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique phase identifier",
+          "pattern": "^[a-z][a-z0-9_-]*$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable phase name"
+        },
+        "description": {
+          "type": "string",
+          "description": "What this phase does"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["once", "build_verify", "per_plan_phase"],
+          "description": "Phase execution type",
+          "default": "build_verify"
+        },
+        "build": { "$ref": "#/$defs/buildConfig" },
+        "verify": { "$ref": "#/$defs/verifyConfig" },
+        "max_iterations": {
+          "type": "integer",
+          "description": "Maximum build-verify iterations before failing",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 7
+        },
+        "on_complete": { "$ref": "#/$defs/onCompleteConfig" },
+        "checks": {
+          "type": "object",
+          "description": "Named checks to run during this phase",
+          "additionalProperties": { "$ref": "#/$defs/check" }
+        },
+        "gate": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Gate name (simple format)",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            {
+              "$ref": "#/$defs/gateConfig",
+              "description": "Gate with options (extended format)"
+            }
+          ]
+        },
+        "transition": { "$ref": "#/$defs/transitionConfig" },
+        "next": {
+          "oneOf": [
+            { "type": "string", "description": "Next phase id" },
+            { "type": "null", "description": "Terminal phase" }
+          ]
+        }
+      }
+    },
+    "buildConfig": {
+      "type": "object",
+      "description": "Configuration for the build step",
+      "required": ["prompt", "artifact"],
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "Prompt file name (e.g., 'specify.md')"
+        },
+        "artifact": {
+          "type": "string",
+          "description": "Artifact path pattern with ${PROJECT_ID} variable"
+        }
+      }
+    },
+    "verifyConfig": {
+      "type": "object",
+      "description": "Configuration for 3-way verification",
+      "required": ["type", "models"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Review type (maps to consult --type)",
+          "enum": ["spec", "plan", "impl", "pr", "phase", "integration"]
+        },
+        "models": {
+          "type": "array",
+          "description": "Models to consult",
+          "items": {
+            "type": "string",
+            "enum": ["gemini", "codex", "claude"]
+          },
+          "minItems": 1
+        },
+        "parallel": {
+          "type": "boolean",
+          "description": "Run consultations in parallel",
+          "default": true
+        }
+      }
+    },
+    "onCompleteConfig": {
+      "type": "object",
+      "description": "Actions to perform after successful verification",
+      "properties": {
+        "commit": {
+          "type": "boolean",
+          "description": "Commit artifact to git",
+          "default": false
+        },
+        "push": {
+          "type": "boolean",
+          "description": "Push commit to remote",
+          "default": false
+        }
+      }
+    },
+    "check": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Simple shell command"
+        },
+        {
+          "type": "object",
+          "description": "Check with options",
+          "required": ["command"],
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "Shell command to run"
+            },
+            "description": {
+              "type": "string",
+              "description": "Human-readable description"
+            },
+            "on_fail": {
+              "type": "string",
+              "enum": ["fail", "retry", "warn"],
+              "description": "Action on failure",
+              "default": "fail"
+            },
+            "max_retries": {
+              "type": "integer",
+              "description": "Maximum retry attempts",
+              "minimum": 0,
+              "maximum": 10,
+              "default": 0
+            },
+            "optional": {
+              "type": "boolean",
+              "description": "Don't fail protocol if check fails",
+              "default": false
+            }
+          }
+        }
+      ]
+    },
+    "transitionConfig": {
+      "type": "object",
+      "description": "Transition rules for per_plan_phase types",
+      "properties": {
+        "on_complete": {
+          "type": "string",
+          "description": "Phase to transition to after each plan phase"
+        },
+        "on_all_phases_complete": {
+          "type": "string",
+          "description": "Phase to transition to when all plan phases complete"
+        }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "description": "Signal definition",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "transitions_to": {
+          "type": "string",
+          "description": "State to transition to when signal received"
+        },
+        "requires": {
+          "type": "string",
+          "description": "Required parameter name"
+        }
+      }
+    },
+    "gateConfig": {
+      "type": "object",
+      "description": "Gate with extended configuration",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Gate identifier",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description"
+        },
+        "requires": {
+          "type": "array",
+          "description": "Check names that must pass before gate can be approved",
+          "items": { "type": "string" }
+        },
+        "next": {
+          "oneOf": [
+            { "type": "string", "description": "Next phase after gate approval" },
+            { "type": "null", "description": "Terminal gate" }
+          ]
+        }
+      }
+    }
+  }
+}

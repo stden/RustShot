@@ -1,0 +1,30 @@
+<svg width="600" height="420" viewBox="0 0 600 420" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif">
+  <rect width="600" height="420" fill="#fafafa" rx="8"/>
+  <text x="300" y="30" text-anchor="middle" font-size="16" font-weight="bold" fill="#212121">Testing Pyramid</text>
+  <!-- Unit Tests -->
+  <polygon points="30,390 570,390 510,310 90,310" fill="#1565c0" opacity="0.9"/>
+  <text x="300" y="358" text-anchor="middle" font-size="14" fill="white" font-weight="bold">Unit Tests</text>
+  <text x="300" y="376" text-anchor="middle" font-size="11" fill="#b3d9ff">1 900+ tests  -  src/**/#[cfg(test)]  -  runs in &lt;15 s</text>
+  <!-- Integration Tests -->
+  <polygon points="90,308 510,308 450,228 150,228" fill="#1976d2" opacity="0.9"/>
+  <text x="300" y="272" text-anchor="middle" font-size="13" fill="white" font-weight="bold">Integration Tests</text>
+  <text x="300" y="288" text-anchor="middle" font-size="11" fill="#b3d9ff">tests/bench_functions.rs  -  public API</text>
+  <!-- Property Tests -->
+  <polygon points="150,226 450,226 390,146 210,146" fill="#0d47a1" opacity="0.9"/>
+  <text x="300" y="190" text-anchor="middle" font-size="13" fill="white" font-weight="bold">Property Tests (proptest)</text>
+  <text x="300" y="206" text-anchor="middle" font-size="11" fill="#b3d9ff">12 tests  -  invariants for all inputs</text>
+  <!-- BDD Scenarios -->
+  <polygon points="210,144 390,144 330,64 270,64" fill="#002171" opacity="0.9"/>
+  <text x="300" y="106" text-anchor="middle" font-size="12" fill="white" font-weight="bold">BDD Scenarios</text>
+  <text x="300" y="122" text-anchor="middle" font-size="10" fill="#90caf9">105 scenarios</text>
+  <!-- Annotations -->
+  <text x="582" y="358" text-anchor="end" font-size="10" fill="#546e7a">fastest</text>
+  <text x="582" y="376" text-anchor="end" font-size="10" fill="#546e7a">most tests</text>
+  <text x="582" y="272" text-anchor="end" font-size="10" fill="#546e7a">~100 tests</text>
+  <text x="582" y="193" text-anchor="end" font-size="10" fill="#546e7a">~256 runs</text>
+  <text x="582" y="206" text-anchor="end" font-size="10" fill="#546e7a">per property</text>
+  <text x="582" y="113" text-anchor="end" font-size="10" fill="#546e7a">slowest</text>
+  <text x="582" y="126" text-anchor="end" font-size="10" fill="#546e7a">most readable</text>
+  <line x1="270" y1="64" x2="200" y2="42" stroke="#90caf9" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="197" y="38" text-anchor="end" font-size="10" fill="#546e7a">tests/features/*.feature</text>
+</svg>
