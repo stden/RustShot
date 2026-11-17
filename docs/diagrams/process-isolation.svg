@@ -1,0 +1,44 @@
+<svg width="1000" height="550" viewBox="0 0 1000 550" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif" role="img" aria-labelledby="title description">
+  <title id="title">RustShot process boundaries</title>
+  <desc id="description">The tray captures foreground windows and owns their clipboard images. Selection children copy regions directly on Windows and macOS or send pixels to the Linux tray. Recording stays in a child process, stopped by stdin EOF.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0 9 3.5 0 7Z" fill="#475569"/></marker>
+  </defs>
+  <rect width="1000" height="550" rx="12" fill="#f8fafc"/>
+  <text x="500" y="35" text-anchor="middle" font-size="22" font-weight="bold" fill="#0f172a">RustShot process boundaries</text>
+  <text x="500" y="59" text-anchor="middle" font-size="14" fill="#475569">One executable; separate event loops for the tray and overlays</text>
+  <rect x="20" y="80" width="390" height="340" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <text x="215" y="110" text-anchor="middle" font-size="18" font-weight="bold" fill="#1e40af">Tray process</text>
+  <text x="215" y="140" text-anchor="middle" font-size="14" fill="#1e3a8a">main.rs + tray.rs: hotkeys and menu</text>
+  <rect x="40" y="165" width="350" height="100" rx="8" fill="#dbeafe"/>
+  <text x="215" y="190" text-anchor="middle" font-size="15" font-weight="bold" fill="#1e40af">Alt+PrintScreen</text>
+  <text x="215" y="213" text-anchor="middle" font-size="14" fill="#1e3a8a">capture.rs: capture foreground window</text>
+  <text x="215" y="235" text-anchor="middle" font-size="14" fill="#1e3a8a">clipboard.rs: copy, then save in background</text>
+  <rect x="40" y="285" width="350" height="70" rx="8" fill="#dbeafe"/>
+  <text x="215" y="310" text-anchor="middle" font-size="15" font-weight="bold" fill="#1e40af">Linux region clipboard owner</text>
+  <text x="215" y="334" text-anchor="middle" font-size="14" fill="#1e3a8a">Read selected pixels; keep clipboard alive</text>
+  <text x="215" y="390" text-anchor="middle" font-size="14" fill="#1e3a8a">child_process.rs: supervise children</text>
+  <rect x="590" y="80" width="390" height="340" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="785" y="110" text-anchor="middle" font-size="18" font-weight="bold" fill="#166534">Child process</text>
+  <rect x="610" y="140" width="350" height="120" rx="8" fill="#dcfce7"/>
+  <text x="785" y="166" text-anchor="middle" font-size="15" font-weight="bold" fill="#166534">--select / selection.rs</text>
+  <text x="785" y="190" text-anchor="middle" font-size="14" fill="#14532d">One fullscreen overlay per monitor</text>
+  <text x="785" y="214" text-anchor="middle" font-size="14" fill="#14532d">Windows / macOS: copy to clipboard</text>
+  <text x="785" y="238" text-anchor="middle" font-size="14" fill="#14532d">Linux: send selected pixels to tray</text>
+  <rect x="610" y="285" width="350" height="115" rx="8" fill="#dcfce7"/>
+  <text x="785" y="311" text-anchor="middle" font-size="15" font-weight="bold" fill="#166534">--select-record / record.rs</text>
+  <text x="785" y="335" text-anchor="middle" font-size="14" fill="#14532d">Select region, then run capture worker</text>
+  <text x="785" y="359" text-anchor="middle" font-size="14" fill="#14532d">Windows Media Foundation: H.264 MP4</text>
+  <text x="785" y="383" text-anchor="middle" font-size="14" fill="#14532d">On stdin EOF: stop and finalize file</text>
+  <path d="M410 145 H590" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="500" y="132" text-anchor="middle" font-size="13" fill="#334155">Spawn child</text>
+  <path d="M590 225 L410 310" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+  <text x="500" y="232" text-anchor="middle" font-size="13" fill="#334155">Linux stdout</text>
+  <text x="500" y="251" text-anchor="middle" font-size="12" fill="#475569">Width, height, RGBA</text>
+  <path d="M410 350 H590" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="500" y="332" text-anchor="middle" font-size="13" fill="#334155">Close stdin to stop</text>
+  <rect x="20" y="440" width="960" height="90" rx="10" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="45" y="466" font-size="14" fill="#7c2d12">PrintScreen: selected region goes to the clipboard without saving a file.</text>
+  <text x="45" y="490" font-size="14" fill="#7c2d12">Alt+PrintScreen: foreground window goes to the clipboard, then a worker saves a copy.</text>
+  <text x="45" y="514" font-size="14" fill="#7c2d12">Ctrl+Shift+R: start or stop the recording child; its worker finalizes the MP4 before exit.</text>
+</svg>

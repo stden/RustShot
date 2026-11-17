@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="310" viewBox="0 0 900 310" font-family="Segoe UI, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Channel order and row order are separate transformations</title>
+  <desc id="desc">BGRA to RGBA swaps blue and red while retaining green and alpha. Top-down to bottom-up reverses rows. These are independent operations; the Windows recording path already captures BGRA.</desc>
+  <rect width="900" height="310" rx="18" fill="#f6f8fc"/>
+  <g font-size="20" fill="#14223d" font-weight="bold">
+    <text x="28" y="38">CHANNEL ORDER</text><text x="503" y="38">ROW ORDER</text>
+  </g>
+  <g font-size="24" font-weight="bold" text-anchor="middle">
+    <rect x="30" y="66" width="76" height="56" rx="8" fill="#356dff"/><text x="68" y="103" fill="#fff">B</text>
+    <rect x="112" y="66" width="76" height="56" rx="8" fill="#21a179"/><text x="150" y="103" fill="#fff">G</text>
+    <rect x="194" y="66" width="76" height="56" rx="8" fill="#ef4458"/><text x="232" y="103" fill="#fff">R</text>
+    <rect x="276" y="66" width="76" height="56" rx="8" fill="#667794"/><text x="314" y="103" fill="#fff">A</text>
+    <text x="190" y="164" fill="#667794">↓ swap R and B ↓</text>
+    <rect x="30" y="188" width="76" height="56" rx="8" fill="#ef4458"/><text x="68" y="225" fill="#fff">R</text>
+    <rect x="112" y="188" width="76" height="56" rx="8" fill="#21a179"/><text x="150" y="225" fill="#fff">G</text>
+    <rect x="194" y="188" width="76" height="56" rx="8" fill="#356dff"/><text x="232" y="225" fill="#fff">B</text>
+    <rect x="276" y="188" width="76" height="56" rx="8" fill="#667794"/><text x="314" y="225" fill="#fff">A</text>
+  </g>
+  <path d="M437 55 V255" stroke="#d6ddeb" stroke-width="2"/>
+  <g font-size="19" text-anchor="middle" fill="#14223d">
+    <rect x="505" y="66" width="138" height="48" rx="7" fill="#dce7ff"/><text x="574" y="97">Top row</text>
+    <rect x="505" y="121" width="138" height="48" rx="7" fill="#d9f5ec"/><text x="574" y="152">Middle row</text>
+    <rect x="505" y="176" width="138" height="48" rx="7" fill="#ffedcf"/><text x="574" y="207">Bottom row</text>
+    <rect x="721" y="66" width="150" height="48" rx="7" fill="#ffedcf"/><text x="796" y="97">Bottom row</text>
+    <rect x="721" y="121" width="150" height="48" rx="7" fill="#d9f5ec"/><text x="796" y="152">Middle row</text>
+    <rect x="721" y="176" width="150" height="48" rx="7" fill="#dce7ff"/><text x="796" y="207">Top row</text>
+    <text x="682" y="151" font-size="32" fill="#667794">→</text>
+  </g>
+  <text x="450" y="282" text-anchor="middle" font-size="19" fill="#475569">Identify the source layout before choosing a conversion.</text>
+</svg>

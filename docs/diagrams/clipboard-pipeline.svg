@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="320" viewBox="0 0 900 320" font-family="Segoe UI, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Alt+PrintScreen copies first and saves afterward</title>
+  <desc id="desc">The hotkey handler captures the foreground window and copies the pixels to the clipboard synchronously. A worker then saves the same image. A disk error does not undo the clipboard copy.</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto"><path d="M0 0 8 3.5 0 7Z" fill="#64748b"/></marker></defs>
+  <rect width="900" height="320" rx="20" fill="#f4f7ff"/>
+  <text x="32" y="38" font-size="21" font-weight="bold" fill="#14223d">ONE IMAGE, TWO DESTINATIONS</text>
+  <rect x="30" y="75" width="220" height="100" rx="13" fill="#dce7ff"/>
+  <text x="140" y="112" text-anchor="middle" font-size="22" font-weight="bold" fill="#2450b5">Capture window</text>
+  <text x="140" y="143" text-anchor="middle" font-size="18" fill="#25416f">Foreground + pixels</text>
+  <path d="M250 125 H326" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)"/>
+  <rect x="330" y="75" width="240" height="100" rx="13" fill="#d9f5ec"/>
+  <text x="450" y="112" text-anchor="middle" font-size="22" font-weight="bold" fill="#126c50">Copy to clipboard</text>
+  <text x="450" y="143" text-anchor="middle" font-size="18" fill="#235e4c">Ready for Ctrl+V</text>
+  <path d="M570 125 H646" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)"/>
+  <rect x="650" y="75" width="220" height="100" rx="13" fill="#ffedcf"/>
+  <text x="760" y="112" text-anchor="middle" font-size="22" font-weight="bold" fill="#915009">Save in worker</text>
+  <text x="760" y="143" text-anchor="middle" font-size="18" fill="#79501c">Configured file format</text>
+  <path d="M37 205 H563" stroke="#356dff" stroke-width="3"/>
+  <text x="300" y="235" text-anchor="middle" font-size="18" fill="#2450b5">Hotkey thread: capture and copy before disk work</text>
+  <path d="M657 205 H863" stroke="#dd9229" stroke-width="3"/>
+  <text x="760" y="235" text-anchor="middle" font-size="18" fill="#915009">Background thread</text>
+  <text x="450" y="287" text-anchor="middle" font-size="19" font-weight="bold" fill="#14223d">If saving fails, the copied image is still available.</text>
+</svg>

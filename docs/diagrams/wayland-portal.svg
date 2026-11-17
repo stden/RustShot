@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420" font-family="Segoe UI, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Wayland full-desktop screenshot lifecycle</title>
+  <desc id="desc">RustShot subscribes to the response before requesting a screenshot. The portal returns a local image URI. RustShot loads and saves the image, removing a distinct portal copy after success or retaining it when saving fails. Cancelled and denied requests return errors.</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto"><path d="M0 0 8 3.5 0 7Z" fill="#64748b"/></marker></defs>
+  <rect width="960" height="420" rx="18" fill="#f4f7fc"/>
+  <text x="28" y="38" font-size="23" font-weight="bold" fill="#14223d">WAYLAND: REQUEST, LOAD, SAVE</text>
+  <g font-size="20" fill="#14223d">
+    <rect x="28" y="75" width="260" height="110" rx="12" fill="#dce7ff"/>
+    <text x="47" y="107" font-weight="bold">Connect and listen</text>
+    <text x="47" y="137" font-size="17">Subscribe to the response</text>
+    <text x="47" y="162" font-size="17">before making the request</text>
+    <path d="M296 130 H339" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <rect x="347" y="75" width="260" height="110" rx="12" fill="#e9e3fc"/>
+    <text x="366" y="107" font-weight="bold">Ask the desktop portal</text>
+    <text x="366" y="137" font-size="17">Desktop controls permission</text>
+    <text x="366" y="162" font-size="17">Success returns a local URI</text>
+    <path d="M615 130 H658" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <rect x="666" y="75" width="266" height="110" rx="12" fill="#dce7ff"/>
+    <text x="685" y="107" font-weight="bold">Load image and save</text>
+    <text x="685" y="137" font-size="17">Use the requested output</text>
+    <text x="685" y="162" font-size="17">path and resolved format</text>
+    <path d="M800 193 V225 H297 V266" fill="none" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <path d="M800 225 V266" fill="none" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <text x="450" y="248" font-size="17" fill="#126c50">Save succeeds</text>
+    <text x="815" y="248" font-size="17" fill="#915009">Save fails</text>
+    <rect x="97" y="275" width="400" height="100" rx="12" fill="#d9f5ec"/>
+    <text x="116" y="307" font-weight="bold">Keep the requested output</text>
+    <text x="116" y="336" font-size="17">Remove the portal copy if it is a different file</text>
+    <rect x="552" y="275" width="380" height="100" rx="12" fill="#ffedcf"/>
+    <text x="571" y="307" font-weight="bold">Retain the portal image</text>
+    <text x="571" y="336" font-size="17">Report its path in the save error</text>
+  </g>
+  <text x="480" y="400" text-anchor="middle" font-size="17" fill="#52627b">Cancellation, denial, and unsupported target requests return errors before saving.</text>
+</svg>

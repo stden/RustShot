@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="390" viewBox="0 0 960 390" font-family="Segoe UI, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Choose a screenshot by its destination</title>
+  <desc id="desc">PrintScreen selects a region and copies it to the clipboard. On Windows, Alt+PrintScreen copies the foreground window and saves a file in the background. CLI capture saves an image file and prints its path.</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto"><path d="M0 0 8 3.5 0 7Z" fill="#64748b"/></marker></defs>
+  <rect width="960" height="390" rx="18" fill="#f4f7fc"/>
+  <text x="28" y="38" font-size="23" font-weight="bold" fill="#14223d">SCREENSHOT ACTIONS AND OUTPUTS</text>
+  <g fill="#52627b" font-size="16" font-weight="bold">
+    <text x="40" y="77">ACTION</text><text x="318" y="77">CAPTURE</text><text x="638" y="77">DESTINATION</text>
+  </g>
+  <g font-size="19" fill="#14223d">
+    <rect x="28" y="93" width="242" height="75" rx="10" fill="#d9f5ec"/>
+    <text x="47" y="123" font-weight="bold">PrintScreen</text><text x="47" y="149" font-size="17">Tray region capture</text>
+    <path d="M279 130 H302" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <rect x="310" y="93" width="270" height="75" rx="10" fill="#e7faf3"/>
+    <text x="328" y="137">Select a region</text>
+    <path d="M590 130 H622" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <rect x="630" y="93" width="302" height="75" rx="10" fill="#d9f5ec"/>
+    <text x="648" y="123" font-weight="bold">Clipboard only</text><text x="648" y="149" font-size="17">Paste into another application</text>
+    <rect x="28" y="185" width="242" height="75" rx="10" fill="#dce7ff"/>
+    <text x="47" y="215" font-weight="bold">Alt+PrintScreen</text><text x="47" y="241" font-size="17">Windows tray capture</text>
+    <path d="M279 222 H302" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <rect x="310" y="185" width="270" height="75" rx="10" fill="#eaf0ff"/>
+    <text x="328" y="229">Capture foreground window</text>
+    <path d="M590 222 H622" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <rect x="630" y="185" width="302" height="75" rx="10" fill="#dce7ff"/>
+    <text x="648" y="215" font-weight="bold">Clipboard + image file</text><text x="648" y="241" font-size="17">Copy first; save in a worker</text>
+    <rect x="28" y="277" width="242" height="75" rx="10" fill="#ffedcf"/>
+    <text x="47" y="307" font-weight="bold">CLI capture</text><text x="47" y="333" font-size="17">--cli or an output flag</text>
+    <path d="M279 314 H302" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <rect x="310" y="277" width="270" height="75" rx="10" fill="#fff5e5"/>
+    <text x="328" y="321">Capture the requested target</text>
+    <path d="M590 314 H622" stroke="#64748b" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <rect x="630" y="277" width="302" height="75" rx="10" fill="#ffedcf"/>
+    <text x="648" y="307" font-weight="bold">Image file + printed path</text><text x="648" y="333" font-size="17">No clipboard copy</text>
+  </g>
+</svg>
